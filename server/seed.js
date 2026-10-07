@@ -33,13 +33,21 @@ function seed(now){
     ['g_value','Value Hunters','Patient buyers of quality businesses trading below fair value.','Deep value','invite','demo_sofia','demo_sofia', 30],
   ];
   const RL = { g_techmomentum:'growth', g_dividend:'conservative', g_value:'balanced' };
-  groups.forEach(([id, name, description, strategy, membership, ownerPid, leadPid, age]) => put('groups', id, { name, description, strategy, membership, ownerPid, leadPid, riskLevel: RL[id], groupPro: true, createdTs: now - age * D }));
+  const RULES = {
+    g_techmomentum: { joinMode:'open', maxMembers:25, minAccount:1000, rulesText:'1. Every new position goes to a vote unless it is under 10% of the portfolio.\n2. Be respectful: debate ideas, not people.\n3. No promoting stocks you are paid to talk about.',
+      proposeRoles:['owner','admin','lead','analyst'], quorum:0.5, passRule:'majority', votingDays:3, voteWaitDays:0, maxPositionPct:0.10, allowed:'any', allowedList:[], approvalMinutes:30, riskReview:true, defaultCopyPct:1, hidden:false, feeMonthly:null },
+    g_dividend: { joinMode:'open', maxMembers:40, minAccount:5000, rulesText:'We invest for income. Positions must pay a dividend or be a broad index fund. Monthly review of every holding.',
+      proposeRoles:['owner','admin','lead','analyst'], quorum:0.5, passRule:'two-thirds', votingDays:7, voteWaitDays:7, maxPositionPct:0.15, allowed:'list', allowedList:['SCHD','KO','JNJ','O','XOM','V','COST','SPY','JPM'], approvalMinutes:60, riskReview:false, defaultCopyPct:0.5, hidden:false, feeMonthly:null },
+    g_value: { joinMode:'request', maxMembers:15, minAccount:2500, rulesText:'Write up your thesis before proposing a position. We hold for at least a year.', proposeRoles:['owner','admin','lead','analyst'], quorum:0.6, passRule:'majority', votingDays:5, voteWaitDays:14, maxPositionPct:0.12, allowed:'any', allowedList:[], approvalMinutes:30, riskReview:false, defaultCopyPct:1, hidden:false, feeMonthly:null }
+  };
+  const CODES = { g_techmomentum:'TECHCREW', g_dividend:'DIVCLUB1', g_value:'VALUEHNT' };
+  groups.forEach(([id, name, description, strategy, membership, ownerPid, leadPid, age]) => put('groups', id, { name, description, strategy, ownerPid, leadPid, riskLevel: RL[id], groupPro: true, createdTs: now - age * D, rules: RULES[id], inviteCode: CODES[id] }));
   const mem = [
-    ['g_techmomentum','demo_maya','owner'],['g_techmomentum','demo_priya','admin'],['g_techmomentum','demo_dan','member'],['g_techmomentum','demo_jake','member'],['g_techmomentum','demo_sofia','observer'],
+    ['g_techmomentum','demo_maya','owner'],['g_techmomentum','demo_priya','analyst'],['g_techmomentum','demo_dan','member'],['g_techmomentum','demo_jake','risk'],['g_techmomentum','demo_sofia','observer'],
     ['g_dividend','demo_lena','owner'],['g_dividend','demo_marcus','lead'],['g_dividend','demo_dan','member'],['g_dividend','demo_priya','member'],
     ['g_value','demo_sofia','owner'],['g_value','demo_jake','member'],
   ];
-  mem.forEach(([gid, pid, role], i) => put('memberships', gid + '__' + pid, { gid, pid, role, copyPct: 1, joinedTs: now - (35 - i) * D }));
+  mem.forEach(([gid, pid, role], i) => put('memberships', gid + '__' + pid, { gid, pid, role, copyPct: gid === 'g_dividend' ? 0.5 : 1, joinedTs: now - (35 - i) * D, rulesAcceptedTs: now - (35 - i) * D }));
   const posts = [
     ['p1','demo_priya', null, 'Wrote up my case for $GOOGL: search is fine, cloud margins are the story. Adding on weakness.', 2*H, { sym:'GOOGL', side:'buy', shares:10, price:194.2 }],
     ['p2','demo_marcus', null, 'Dividend raise season. $KO and $JNJ both delivered. Reinvesting every penny.', 5*H, null],

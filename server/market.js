@@ -32,10 +32,11 @@ function session(mode, now = Date.now()){
   const open = weekday && e.mins >= 570 && e.mins < 960;
   return { open, closeAt: open ? now + (960 - e.mins) * 60000 : null };
 }
-function approvalWindow(mode, now = Date.now()){
+function approvalWindow(mode, now = Date.now(), minutes = 30){
   const s = session(mode, now);
-  if (s.open && s.closeAt - now > 5 * 60000) return { mode: 'window', expiresTs: Math.min(now + 30 * 60000, s.closeAt - 5 * 60000) };
+  if (s.open && s.closeAt - now > 5 * 60000) return { mode: 'window', expiresTs: Math.min(now + minutes * 60000, s.closeAt - 5 * 60000) };
   return { mode: 'open', expiresTs: now + 18 * 3600000 };
 }
 function canFillNow(mode, now = Date.now()){ const s = session(mode, now); return s.open && s.closeAt - now > 5 * 60000; }
-module.exports = { LIST, MAP, hash, price, session, approvalWindow, canFillNow };
+const ETFS = ['SPY','QQQ','SCHD'];
+module.exports = { ETFS, LIST, MAP, hash, price, session, approvalWindow, canFillNow };

@@ -4,7 +4,7 @@ const { Pool } = require('pg');
 const crypto = require('crypto');
 
 const COLS = ['profiles','portfolios','groups','memberships','posts','reactions','comments','follows','proposals','votes',
-  'copyRequests','trades','copies','reports','joinRequests'];
+  'copyRequests','trades','copies','reports','joinRequests','reviews','suggestions'];
 const LIMITED = { posts: 400, trades: 400, comments: 400 };
 const table = col => 'doc_' + col.replace(/[A-Z]/g, c => '_' + c.toLowerCase());
 
@@ -21,6 +21,15 @@ async function migrate(){
   await pool.query(`CREATE TABLE IF NOT EXISTS users (id text PRIMARY KEY, username text UNIQUE NOT NULL, display_name text NOT NULL, pass_hash text NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`);
   await pool.query(`CREATE TABLE IF NOT EXISTS sessions (token text PRIMARY KEY, user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at timestamptz NOT NULL)`);
   await pool.query(`CREATE TABLE IF NOT EXISTS settings (key text PRIMARY KEY, value jsonb NOT NULL)`);
+  for (const col of ['is_admin boolean NOT NULL DEFAULT false', 'disabled boolean NOT NULL DEFAULT false', 'invite_code text', 'terms_accepted_at timestamptz', 'terms_version text', 'last_seen_at timestamptz'])
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS ${col}`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS invite_codes (code text PRIMARY KEY, label text, max_uses int, uses int NOT NULL DEFAULT 0, active boolean NOT NULL DEFAULT true, created_at timestamptz NOT NULL DEFAULT now())`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS password_resets (token_hash text PRIMARY KEY, user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at timestamptz NOT NULL, used boolean NOT NULL DEFAULT false)`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS feedback (id text PRIMARY KEY, user_id text, screen text, body text NOT NULL, ua text, status text NOT NULL DEFAULT 'open', created_at timestamptz NOT NULL DEFAULT now())`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS client_errors (id bigserial PRIMARY KEY, user_id text, message text, stack text, url text, ua text, created_at timestamptz NOT NULL DEFAULT now())`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS push_subs (endpoint text PRIMARY KEY, user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE, sub jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS events (id bigserial PRIMARY KEY, user_id text, name text NOT NULL, props jsonb, ts timestamptz NOT NULL DEFAULT now())`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS events_ts ON events (ts)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS doc_memberships_gid ON doc_memberships ((data->>'gid'))`);
   await pool.query(`CREATE INDEX IF NOT EXISTS doc_copy_requests_member ON doc_copy_requests ((data->>'memberPid'))`);
 }
@@ -83,8 +92,9 @@ async function snapshot(){
     const r = await pool.query(`SELECT id, data FROM ${table(c)}` + (lim ? ` ORDER BY (data->>'ts')::bigint DESC NULLS LAST LIMIT ${lim}` : ''));
     out[c] = r.rows.map(x => withId(x.id, x.data));
   }
-  const s = await pool.query(`SELECT value FROM settings WHERE key = 'clock'`);
-  return { collections: out, settings: { clock: s.rows[0] ? s.rows[0].value : 'live' } };
+  const s = await pool.query(`SELECT key, value FROM settings WHERE key IN ('clock','announcement','inviteOnly')`);
+  const st = Object.fromEntries(s.rows.map(r => [r.key, r.value]));
+  return { collections: out, settings: { clock: st.clock || 'live', announcement: st.announcement || null, inviteOnly: st.inviteOnly !== false } };
 }
 
 module.exports = { pool, COLS, table, migrate, withTx, snapshot, newId };

@@ -46,6 +46,8 @@ a{color:var(--blue); text-decoration:none}
 .num{font-family:var(--f-num); font-variant-numeric:tabular-nums}
 .muted{color:var(--muted)}
 .gain{color:var(--gain)} .loss{color:var(--loss)}
+.linkbtn{background:none;border:0;padding:0;color:var(--blue);font:inherit;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+.linkbtn.muted{color:var(--muted)}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 
 /* shell */
@@ -241,7 +243,7 @@ const Market = (() => {
   function series(sym, spanMs, points = 60, now = Date.now()){
     const out = []; for (let i = points - 1; i >= 0; i--) out.push(priceAt(sym, now - spanMs * i / (points - 1))); return out;
   }
-  return { LIST, MAP, price, dayChange, series, hash };
+  return { LIST, MAP, ETFS_UI: ['SPY','QQQ','SCHD'], price, dayChange, series, hash };
 })();
 
 /* =====================================================================
@@ -271,17 +273,17 @@ const Clock = (() => {
    on the server, which prices trades and enforces permissions.
    ===================================================================== */
 const Store = (() => {
-  const COLS = ['profiles','portfolios','groups','memberships','posts','reactions','comments','follows','proposals','votes','copyRequests','trades','copies','reports','joinRequests'];
+  const COLS = ['profiles','portfolios','groups','memberships','posts','reactions','comments','follows','proposals','votes','copyRequests','trades','copies','reports','joinRequests','reviews','suggestions'];
   const cache = Object.fromEntries(COLS.map(c => [c, new Map()]));
   const listeners = new Set();
-  let me = { signedIn:false }, myPid = null, canWrite = false, canEdit = false, ready = false, hasDb = false, viewSaved = null, ws = null;
+  let settings = { announcement:null, inviteOnly:true }, me = { signedIn:false }, myPid = null, canWrite = false, canEdit = false, ready = false, hasDb = false, viewSaved = null, ws = null;
   const START_CASH = 100000;
   const fail = msg => { const e = new Error(msg); e.userFacing = true; return e; };
   const emit = () => listeners.forEach(fn => { try { fn(); } catch(e){ console.error(e); } });
 
   function applyChanges(ch){
     for (const c of ch || []){
-      if (c.setting){ if (c.setting === 'clock') Clock._set(c.value); continue; }
+      if (c.setting){ if (c.setting === 'clock') Clock._set(c.value); else settings[c.setting] = c.value; continue; }
       if (c.wipe){ if (cache[c.col]) cache[c.col] = new Map(); continue; }
       if (!cache[c.col]) continue;
       if (c.data) cache[c.col].set(c.id, c.data); else cache[c.col].delete(c.id);
@@ -292,7 +294,7 @@ const Store = (() => {
     const r = await fetch('/api/state', { cache:'no-store' }); if (!r.ok) throw new Error('state ' + r.status);
     const j = await r.json();
     for (const c of COLS) cache[c] = new Map((j.collections[c] || []).map(d => [d.id, d]));
-    Clock._set(j.settings && j.settings.clock);
+    Clock._set(j.settings && j.settings.clock); settings = Object.assign(settings, j.settings || {});
   }
   async function loadMe(){
     me = await fetch('/api/me', { cache:'no-store', credentials:'same-origin' }).then(r => r.json());
@@ -345,20 +347,32 @@ const Store = (() => {
   function membersOf(gid){ return all('memberships').filter(m => m.gid === gid); }
   function membership(gid, pid = myPid){ return get('memberships', gid + '__' + pid); }
   function myGroups(){ return all('memberships').filter(m => m.pid === myPid).map(m => get('groups', m.gid)).filter(Boolean); }
-  const ROLE_LABEL = { owner:'Owner', admin:'Admin', lead:'Lead Trader', member:'Member', observer:'Observer' };
+  const ROLE_LABEL = { owner:'Owner', admin:'Admin', lead:'Lead Trader', junior:'Junior Trader', analyst:'Analyst', risk:'Risk Manager', moderator:'Moderator', member:'Member', observer:'Observer' };
+  const ROLE_INFO = { owner:'Runs the group: settings, members and roles', admin:'Helps manage settings and members', lead:'Trades for the group; members approve each trade', junior:'Suggests trades for the Lead Trader to approve',
+    analyst:'Creates trade proposals for the group to vote on', risk:'Reviews group trades before members see them, and can pause one for a vote', moderator:'Keeps discussion on track and removes posts', member:'Votes and copies group trades with approval', observer:'Follows along without voting or copying' };
+  const DEFAULT_RULES = { joinMode:'open', maxMembers:null, minAccount:0, rulesText:'', proposeRoles:['owner','admin','lead','analyst'], quorum:0, passRule:'majority', votingDays:3, voteWaitDays:0, maxPositionPct:null, allowed:'any', allowedList:[], approvalMinutes:30, riskReview:false, defaultCopyPct:1, hidden:false, feeMonthly:null };
+  function rulesOf(g){ const r = Object.assign({}, DEFAULT_RULES, (g && g.rules) || {}); if (!(g && g.rules && g.rules.joinMode) && g && g.membership === 'invite') r.joinMode = 'request'; return r; }
+  const votingAge = (m, rules) => !rules.voteWaitDays || Date.now() - (m.joinedTs || 0) >= rules.voteWaitDays * 86400000;
   const canTradeFor = role => ['owner','admin','lead'].includes(role);
-  const canPropose = role => ['owner','admin','lead'].includes(role);
+  const canPropose = (role, rules) => !!role && (rules || DEFAULT_RULES).proposeRoles.includes(role);
+  const canModerate = role => ['owner','admin','moderator'].includes(role);
+  const canReview = role => ['risk','owner'].includes(role);
   const canVote = role => !!role && role !== 'observer';
   const canManage = role => ['owner','admin'].includes(role);
   function tally(prid){
     const pr = get('proposals', prid); if (!pr) return null;
-    const eligible = membersOf(pr.gid).filter(m => canVote(m.role)).map(m => m.pid);
+    const rules = rulesOf(get('groups', pr.gid));
+    const eligibleM = membersOf(pr.gid).filter(m => canVote(m.role) && votingAge(m, rules)); const eligible = eligibleM.map(m => m.pid);
     const vs = all('votes').filter(v => v.prid === prid && eligible.includes(v.pid));
     const c = { yes:0, no:0, abstain:0 }; vs.forEach(v => c[v.vote] = (c[v.vote] || 0) + 1);
     const allVoted = vs.length >= eligible.length && eligible.length > 0;
     const closed = pr.status !== 'open' || Date.now() > pr.deadlineTs || allVoted;
-    const result = pr.status !== 'open' ? pr.status : (c.yes > c.no ? 'passed' : 'failed');
-    return { ...c, eligible: eligible.length, cast: vs.length, closed, result, mine: (get('votes', prid + '__' + myPid) || {}).vote };
+    const quorumMet = !rules.quorum || (eligible.length && vs.length / eligible.length >= rules.quorum - 1e-9);
+    const decided = c.yes + c.no, ratio = decided ? c.yes / decided : 0;
+    const passes = quorumMet && decided > 0 && (rules.passRule === 'two-thirds' ? ratio >= 2 / 3 - 1e-9 : ratio > 0.5);
+    const myM = membership(pr.gid);
+    return { ...c, eligible: eligible.length, cast: vs.length, closed, quorumMet, rules, result: pr.status !== 'open' ? pr.status : (passes ? 'passed' : 'failed'), mine: (get('votes', prid + '__' + myPid) || {}).vote,
+      waitDays: myM && canVote(myM.role) && !votingAge(myM, rules) ? Math.ceil((rules.voteWaitDays * 86400000 - (Date.now() - myM.joinedTs)) / 86400000) : 0 };
   }
   function requestState(r, now = Date.now()){
     if (r.status === 'pending' && r.mode === 'window' && now > r.expiresTs) return 'expired';
@@ -443,14 +457,31 @@ const Store = (() => {
   }
 
 
+  async function http(method, path, body){
+    let r, j;
+    try { r = await fetch(path, { method, credentials:'same-origin', headers:{ 'content-type':'application/json' }, body: body ? JSON.stringify(body) : undefined }); j = await r.json(); }
+    catch(e){ throw fail('Connection problem. Check your internet and try again.'); }
+    if (!r.ok) throw fail(j.error || 'Something went wrong. Try again.');
+    return j;
+  }
   /* ---------- actions (all run on the server) ---------- */
   const isMe = pid => !pid || pid === myPid;
   return {
     init, subscribe: fn => (listeners.add(fn), () => listeners.delete(fn)),
     get ready(){ return ready; }, get myPid(){ return myPid; }, get canWrite(){ return canWrite; }, get canEdit(){ return canEdit; }, get viewing(){ return !!viewSaved; }, get hasDb(){ return hasDb; },
-    get signedIn(){ return !!me.signedIn; }, get username(){ return me.username; }, setViewAs,
+    get signedIn(){ return !!me.signedIn; }, get username(){ return me.username; }, get settings(){ return settings; }, get pushKey(){ return me.pushKey; }, get inviteOnly(){ return me.inviteOnly !== false; }, setViewAs,
+    rulesOf, ROLE_INFO, canModerate, canReview, http,
+    signupFull: o => auth('/api/signup', o), resetPassword: (username, code, password) => auth('/api/reset-password', { username, code, password }),
+    changePassword: (current, password) => http('POST', '/api/change-password', { current, password }),
+    deleteAccount: async password => { await http('POST', '/api/delete-account', { password }); await loadMe(); await loadState(); emit(); },
+    feedback: (text, screen) => http('POST', '/api/feedback', { text, screen }),
+    updateGroup: (gid, o) => api('updateGroup', Object.assign({ gid }, o)), removeMember: (gid, pid) => api('removeMember', { gid, pid }), transferOwnership: (gid, pid) => api('transferOwnership', { gid, pid }),
+    newInviteCode: gid => api('newInviteCode', { gid }), groupByCode: code => api('groupByCode', { code }),
+    releaseReview: id => api('releaseReview', { id }), pauseReview: (id, reason) => api('pauseReview', { id, reason }), demoReview: (gid, op) => api('demoReview', { gid, op }),
+    suggestTrade: o => api('suggestTrade', o), decideSuggestion: (id, approve) => api('decideSuggestion', { id, approve }),
+    setNotifPrefs: o => api('setNotifPrefs', o),
     all, get, displayName, portfolioValue, membersOf, membership, myGroups, tally, requestState, myPending, ROLE_LABEL,
-    canTradeFor, canPropose, canVote, canManage, isFollowing, isDemo, isPro, isCopying, copiersOf, performance, notifications, unreadCount, START_CASH,
+    canTradeFor, canPropose, canVote, canManage, ROLE_INFO_KEYS: ['owner','admin','lead','junior','analyst','risk','moderator','member','observer'], isFollowing, isDemo, isPro, isCopying, copiersOf, performance, notifications, unreadCount, START_CASH,
     signup: (username, password, name, risk) => auth('/api/signup', { username, password, name, risk }),
     login: (username, password) => auth('/api/login', { username, password }),
     logout: async () => { await fetch('/api/logout', { method:'POST', credentials:'same-origin' }); await loadMe(); emit(); },
@@ -462,7 +493,7 @@ const Store = (() => {
     groupTrade: (gid, leaderPid, sym, side, shares, note) => isMe(leaderPid) ? api('groupTrade', { gid, sym, side, shares, note }) : api('demoGroupTrade', { gid, sym, side, shares, note }),
     approve: (id, frac = 1) => api('approve', { id, frac }), decline: id => api('decline', { id }), cancelQueued: id => api('cancelQueued', { id }),
     housekeeping: () => {},
-    createGroup: o => api('createGroup', o), join: (gid, role) => api('join', { gid, role }), leave: gid => api('leave', { gid }),
+    createGroup: o => api('createGroup', o), join: (gid, role, extra) => api('join', Object.assign({ gid, role }, extra || {})), leave: gid => api('leave', { gid }),
     setRole: (gid, pid, role) => api('setRole', { gid, pid, role }), setCopyPct: (gid, pct) => api('setCopyPct', { gid, pct }),
     propose: (gid, o) => api('propose', Object.assign({ gid }, o)), vote: (prid, v) => api('vote', { prid, vote: v }), closeProposal: prid => api('closeProposal', { prid }),
     executeProposal: (prid, leaderPid) => leaderPid && leaderPid === myPid ? api('executeProposal', { prid }) : api('demoExec', { prid }),
@@ -471,7 +502,7 @@ const Store = (() => {
     follow: pid => api('follow', { pid }), unfollow: pid => api('unfollow', { pid }),
     upgradePro: () => api('upgradePro'), cancelPro: () => api('cancelPro'), copyInvestor: pid => api('copyInvestor', { pid }), stopCopying: pid => api('stopCopying', { pid }),
     report: (gid, reason, details) => api('report', { gid, reason, details }), resolveReport: id => api('resolveReport', { id }),
-    requestJoin: gid => api('requestJoin', { gid }), decideJoin: (id, approve) => api('decideJoin', { id, approve }),
+    requestJoin: (gid, acceptRules) => api('requestJoin', { gid, acceptRules }), decideJoin: (id, approve) => api('decideJoin', { id, approve }),
     simulateJoinDecisions: () => api('demoJoins'), simulateInviteJoins: gid => api('demoInvites', { gid }),
     simulateApprovals: gid => api('demoApprovals', { gid: gid || null }), simulateVotes: (prid, yes) => api('demoVotes', { prid, yes }),
     resetAll: () => api('resetAll'), setClock: mode => api('setClock', { mode }), metrics
@@ -506,7 +537,7 @@ const ICON = {
   demo:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/><circle cx="12" cy="12" r="3"/></svg>'
 };
 
-const ui = { feedTab:'everyone', openComments:new Set(), drafts:{}, chartSpan:'1d', seenReqs:null, onb:0, presenter:null, risk:'balanced', tour:null, copyFrac:{} };
+const ui = { adminTab:'testers', admin:null, usage:null, pushState:null, inviteFor:null, inviteCode:null, inviteBy:null, feedTab:'everyone', openComments:new Set(), drafts:{}, chartSpan:'1d', seenReqs:null, onb:0, presenter:null, risk:'balanced', tour:null, copyFrac:{} };
 const DISCLOSE = "Copying a trade doesn't guarantee the same price or result. Investing involves risk, including loss of principal. Simulated results don't reflect real trading.";
 const fracWord = f => f >= 0.995 ? 'all' : Math.abs(f - 0.5) < 0.02 ? 'half' : Math.abs(f - 0.25) < 0.02 ? 'a quarter' : Math.abs(f - 0.75) < 0.02 ? 'three-quarters' : Math.round(f * 100) + '%';
 const RISK = { conservative:['Steady income','Dividends and stability first'], balanced:['Balanced','A mix of growth and income'], growth:['Growth','Higher growth, bigger swings'] };
@@ -525,7 +556,7 @@ function renderNav(){
     items.map(([k, l, i]) => `<a class="nav ${on(k)}" href="${href(k)}">${ICON[i]}<span>${l}</span>${k === 'inbox' && n ? `<span class="badge">${n}</span>` : ''}</a>`).join('') +
     `<a class="nav ${r === 'notifications' ? 'on' : ''}" href="#/notifications">${ICON.bell}<span>Notifications</span>${un ? `<span class="badge">${un}</span>` : ''}</a>` +
     (!Store.signedIn && Store.ready ? `<button class="btn" data-act="signin" style="margin:10px 12px">Sign in</button>` : '') +
-    (Store.canEdit ? `<a class="nav ${r === 'demo' ? 'on' : ''}" href="#/demo">${ICON.demo}<span>Demo controls</span></a><a class="nav ${r === 'metrics' ? 'on' : ''}" href="#/metrics">${ICON.metrics}<span>Pilot metrics</span></a>` : '') + sess;
+    (Store.canEdit ? `<a class="nav ${r === 'demo' ? 'on' : ''}" href="#/demo">${ICON.demo}<span>Demo controls</span></a><a class="nav ${r === 'metrics' ? 'on' : ''}" href="#/metrics">${ICON.metrics}<span>Pilot metrics</span></a><a class="nav ${r === 'admin' ? 'on' : ''}" href="#/admin">${ICON.me}<span>Beta admin</span></a>` : '') + sess;
   $('#bottomnav').innerHTML = items.map(([k, l, i]) => `<a class="${on(k)}" href="${href(k)}">${ICON[i]}<span>${l}</span>${k === 'inbox' && n ? `<span class="badge">${n}</span>` : ''}</a>`).join('');
   $('#topbar').innerHTML = `<div class="brand"><span class="mark">P</span>Pocket</div><div style="display:flex;gap:8px;align-items:center">${sess}${!Store.signedIn && Store.ready ? '<button class="btn sm" data-act="signin">Sign in</button>' : ''}${Store.get('profiles', Store.myPid) ? bell : ''}${Store.canEdit ? `<a href="#/demo" class="btn ghost sm" aria-label="Demo controls">${ICON.demo.replace('<svg','<svg width="18" height="18"')}</a>` : ''}</div>`;
 }
@@ -570,7 +601,7 @@ function approvalCard(r){
       <div><span>Your shares</span><b>${shs(Math.floor(r.shares * (ui.copyFrac[r.id] || 1) * 1000) / 1000)}</b></div>
       <div><span>Est. ${r.side === 'buy' ? 'cost' : 'proceeds'}</span><b data-est="${r.sym}" data-sh="${r.shares * (ui.copyFrac[r.id] || 1)}">${usd(r.shares * (ui.copyFrac[r.id] || 1) * Market.price(r.sym))}</b></div>
     </div>
-    ${ui.tour == null && Store.canWrite ? `<div style="display:flex;align-items:center;gap:10px;margin:-4px 0 12px;flex-wrap:wrap"><span class="small muted">Copy</span><div class="seg">${[[0.5,'Half'],[1,'Full']].map(([k, l]) => `<button class="${(ui.copyFrac[r.id] || 1) === k ? 'on' : ''}" data-act="cfrac" data-id="${r.id}" data-k="${k}">${l}</button>`).join('')}</div><span class="small muted">of the suggested amount</span></div>` : ''}
+    ${ui.tour != null || Store.canWrite ? `<div style="display:flex;align-items:center;gap:10px;margin:-4px 0 12px;flex-wrap:wrap"><span class="small muted">Copy</span><div class="seg">${[[0.5,'Half'],[1,'Full']].map(([k, l]) => `<button class="${(ui.copyFrac[r.id] || 1) === k ? 'on' : ''}" data-act="cfrac" data-id="${r.id}" data-k="${k}" ${ui.tour != null ? 'disabled' : ''}>${l}</button>`).join('')}</div><span class="small muted">of the suggested amount</span></div>` : ''}
     ${(() => { const pf = Store.get('portfolios', r.memberPid); if (r.side !== 'buy' || !pf) return ''; const cost = r.shares * Market.price(r.sym); return cost > pf.cash + 0.01 ? `<div class="banner ember" style="margin:0 0 12px;font-size:14px">You have ${usd(pf.cash)} in cash, so this would partly fill: about ${shs(Math.floor(pf.cash / Market.price(r.sym) * 1000) / 1000)} of ${shs(r.shares)} shares.</div>` : ''; })()}
     <p class="hint" style="margin:0 0 12px">${DISCLOSE}</p>
     <div class="acts">${ui.tour != null ? `<button class="btn ember" disabled>Approve</button><button class="btn ghost" disabled>Decline</button><span class="hint">In the app, the member decides here.</span>` : Store.canWrite ? `<button class="btn ember" data-act="approve" data-id="${r.id}">${isOpen ? 'Approve for the open' : 'Approve'}${(ui.copyFrac[r.id] || 1) < 1 ? ' half' : ''}</button><button class="btn ghost" data-act="decline" data-id="${r.id}">Decline</button>` : '<span class="muted small">View-only</span>'}</div>
@@ -585,7 +616,7 @@ function postCard(p){
   return `<article class="post"><div class="meta">${avatar(p.pid, 'sm')}<div class="grow">${nameLink(p.pid)} <span class="muted small">${ago(p.ts)}</span></div></div>
     ${p.text ? `<div class="body">${linkify(p.text)}</div>` : '<div style="height:10px"></div>'}${tr}
     <div class="bar"><button class="${mine ? 'on' : ''}" data-act="like" data-id="${p.id}" aria-pressed="${mine}">${mine ? '♥' : '♡'} ${likes.length || ''}</button><button data-act="comments" data-id="${p.id}">Comments ${cs.length || ''}</button>${(p.pid === Store.myPid || Store.canEdit) && Store.canWrite ? `<button data-act="delpost" data-id="${p.id}" style="margin-left:auto">Delete</button>` : ''}</div>
-    ${open ? `<div class="comments">${cs.map(c => `<div class="small">${nameLink(c.pid)} <span class="muted">${ago(c.ts)}</span>${(c.pid === Store.myPid || Store.canEdit) && Store.canWrite ? ` <a href="#" data-act="delcomment" data-id="${c.id}" class="muted">Delete</a>` : ''}<div>${linkify(c.text)}</div></div>`).join('') || '<div class="muted small">No comments yet.</div>'}
+    ${open ? `<div class="comments">${cs.map(c => `<div class="small">${nameLink(c.pid)} <span class="muted">${ago(c.ts)}</span>${(c.pid === Store.myPid || Store.canEdit) && Store.canWrite ? ` <button class="linkbtn muted" data-act="delcomment" data-id="${c.id}">Delete</button>` : ''}<div>${linkify(c.text)}</div></div>`).join('') || '<div class="muted small">No comments yet.</div>'}
       ${Store.canWrite && Store.get('profiles', Store.myPid) ? `<div style="display:flex;gap:8px"><input class="input" data-draft="c:${p.id}" placeholder="Add a comment" aria-label="Add a comment"><button class="btn sm" data-act="comment" data-id="${p.id}">Post</button></div>` : ''}</div>` : ''}
   </article>`;
 }
@@ -613,7 +644,7 @@ function vOnboard(){
       <div class="row"><div class="grow"><b>Brokerage account</b><div class="small muted">Held by our broker partner, with identity verification</div></div><button class="btn sm ghost" disabled>Available at launch</button></div></div>` : ''}
     <div style="display:flex;gap:10px;margin-top:8px">${i > 0 ? `<button class="btn ghost" data-act="onb" data-k="${i - 1}">Back</button>` : ''}
     ${i < steps.length - 1 ? `<button class="btn" data-act="onb" data-k="${i + 1}">Next</button>` : `<button class="btn" data-act="start">Create my account</button>`}</div>
-    <p class="small" style="margin-top:14px">Already have an account? <a href="#" data-act="signin">Sign in</a></p>
+    <p class="small" style="margin-top:14px">Already have an account? <button class="linkbtn" data-act="signin">Sign in</button></p>
     <p class="hint" style="margin-top:14px">Prices are simulated for this demo. No real money is involved.</p></div>`;
 }
 function vHome(){
@@ -633,7 +664,7 @@ function vHome(){
     <div class="actions"><button class="btn" data-act="trade">Trade</button><a class="btn ghost" href="#/groups">Find a group</a></div></div>
   ${!Store.isPro() ? `<div class="banner" style="margin-top:16px"><div style="flex:1"><b>Upgrade to Pro</b><div class="small">Join groups as a full member, copy investors, and see how you track your group. $9.99 a month.</div></div><button class="btn sm" data-act="upgrade">See Pro</button></div>` : ''}
   <section class="block"><header><h2>Holdings</h2><span class="muted small num">Cash ${usd(pf.cash)}</span></header>
-    <div class="list">${hold.length ? hold.map(h => { const px = Market.price(h.s), g = h.cost ? h.val / h.cost - 1 : 0; return `<a class="row" href="#/stock/${h.s}"><div class="grow"><div class="sym">${h.s}</div><div class="small muted">${shs(h.shares)} shares</div></div><div class="r"><div class="num" data-hv="${h.s}" data-sh="${h.shares}">${usd(h.shares * px)}</div><div class="small num ${sgn(g)}">${pct(g)}</div></div></a>`; }).join('') : `<div class="empty">No holdings yet. <a href="#" data-act="trade">Place your first trade</a> or join a group to copy its Lead Trader.</div>`}</div></section>
+    <div class="list">${hold.length ? hold.map(h => { const px = Market.price(h.s), g = h.cost ? h.val / h.cost - 1 : 0; return `<a class="row" href="#/stock/${h.s}"><div class="grow"><div class="sym">${h.s}</div><div class="small muted">${shs(h.shares)} shares</div></div><div class="r"><div class="num" data-hv="${h.s}" data-sh="${h.shares}">${usd(h.shares * px)}</div><div class="small num ${sgn(g)}">${pct(g)}</div></div></a>`; }).join('') : `<div class="empty">No holdings yet. <button class="linkbtn" data-act="trade">Place your first trade</button> or join a group to copy its Lead Trader.</div>`}</div></section>
   ${groups.length ? `<section class="block"><header><h2>Your groups</h2><a class="small" href="#/groups">All groups</a></header><div class="list">${groups.map(groupRow).join('')}</div></section>` : ''}
   ${groups.length ? `<a class="panel" href="#/digest" style="display:flex;gap:14px;align-items:center;padding:16px 18px;margin-top:26px;color:var(--text)"><span class="avatar" style="background:var(--ember);color:#1b1206;border-radius:12px">7d</span><div class="grow"><b>Your weekly digest</b><div class="small muted">Group trades, your copy rate, open votes and how you track your groups</div></div><span class="small">Open</span></a>` : ''}
   <section class="block"><header><h2>Markets</h2><span class="muted small">Simulated prices</span></header><div class="list">${marketRows()}</div></section>
@@ -649,7 +680,7 @@ function showInstallTip(){
 }
 function vReadOnlyHome(){
   return `<div class="panel" style="padding:24px;margin-bottom:18px"><div class="mark" style="width:44px;height:44px;font-size:20px;border-radius:13px">P</div>
-    <h1 style="margin-top:16px">See Pocket Investing in two minutes</h1><p class="muted">Take a guided tour as Dan, a sample member of an investing group. You'll see the approval request, group voting, the feed and how members track their group. Or create a free account and try it yourself with simulated money.</p>
+    <h1 style="margin-top:16px">See Pocket Investing in two minutes</h1><p class="muted">Take a guided tour as Dan, a sample member of an investing group. You'll see an approval request, the Risk Manager's review, group rules and voting, the feed and how members track their group.${Store.inviteOnly ? ' Have an invite code? Create an account and try it with simulated money.' : ' Or create a free account and try it with simulated money.'}</p>
     <div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn ember" data-act="tour">Start the tour</button>${Store.signedIn ? '' : `<a class="btn ghost" href="#/join">Create a free account</a><button class="btn ghost" data-act="signin">Sign in</button>`}</div></div>
   <section class="block"><header><h2>Markets</h2><span class="muted small">Simulated prices</span></header><div class="list">${marketRows()}</div></section>`;
 }
@@ -700,7 +731,7 @@ function personRow(p){
 }
 function vGroups(){
   const mine = Store.myGroups(); const mineIds = new Set(mine.map(g => g.id));
-  const others = Store.all('groups').filter(g => !mineIds.has(g.id)).sort((a, b) => Store.membersOf(b.id).length - Store.membersOf(a.id).length);
+  const others = Store.all('groups').filter(g => !mineIds.has(g.id) && !Store.rulesOf(g).hidden).sort((a, b) => Store.membersOf(b.id).length - Store.membersOf(a.id).length);
   return `<div class="pagehead"><div><h1>Groups</h1><p class="muted">Invest with a group: vote on strategy and copy its Lead Trader, trade by trade.</p></div>${Store.canWrite && Store.get('profiles', Store.myPid) ? `<button class="btn" data-act="newgroup">Create group</button>` : ''}</div>
   ${mine.length ? `<section class="block" style="margin-top:0"><header><h2>Your groups</h2></header><div class="list">${mine.map(groupRow).join('')}</div></section>` : ''}
   ${(() => { const rp = (Store.get('profiles', Store.myPid) || {}).riskProfile; const sug = rp ? others.filter(g => g.riskLevel === rp) : []; return sug.length ? `<section class="block"><header><h2>Suggested for your style</h2><span class="tag">${esc(RISK[rp][0])}</span></header><div class="list">${sug.map(groupRow).join('')}</div></section>` : ''; })()}
@@ -714,30 +745,37 @@ function vGroup(gid, tab){
   const head = `<div class="pagehead"><div><a href="#/groups" class="small">← Groups</a><h1 style="margin-top:6px">${esc(g.name)}</h1>
       <p class="muted" style="max-width:62ch">${esc(g.description || '')}</p>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">${g.strategy ? `<span class="tag">${esc(g.strategy)}</span>` : ''}<span class="tag">${ms.length} members</span><span class="tag">Lead Trader: ${esc(Store.displayName(g.leadPid))}</span>${role ? `<span class="tag blue">You: ${esc(Store.ROLE_LABEL[role])}</span>` : ''}</div></div>
-    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">${hasMe && Store.canWrite && (!role || (role === 'observer' && Store.isPro())) ? (g.membership === 'invite' && !role ? (Store.get('joinRequests', gid + '__' + Store.myPid) ? `<span class="tag ember">${{ pending:'Request sent', declined:'Request declined', approved:'Request approved' }[Store.get('joinRequests', gid + '__' + Store.myPid).status]}</span>` : `<button class="btn" data-act="reqjoin" data-id="${gid}">Request to join</button>`) : `<button class="btn" data-act="join" data-id="${gid}">${role ? 'Become a full member' : 'Join group'}</button>`) : ''}
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">${joinButton(g, role, hasMe)}
       ${role === 'observer' && !Store.isPro() && Store.canWrite ? `<button class="btn" data-act="join" data-id="${gid}">Become a full member</button>` : ''}
       ${role && Store.canTradeFor(role) && Store.canWrite ? `<button class="btn ember" data-act="trade" data-gid="${gid}">Trade for the group</button>` : ''}
+      ${role === 'junior' && Store.canWrite ? `<button class="btn ember" data-act="suggest" data-id="${gid}">Suggest a trade</button>` : ''}
       ${role && Store.canWrite ? `<button class="btn ghost sm" data-act="invite" data-id="${gid}">Invite friends</button>` : ''}
       ${hasMe && Store.canWrite && role !== 'owner' ? `<button class="btn ghost sm" data-act="report" data-id="${gid}">Report</button>` : ''}</div></div>`;
-  const tabs = `<nav class="tabs">${[['activity','Activity'],['performance','Performance'],['proposals','Proposals'],['members','Members']].map(([k, l]) => `<a class="${tab === k ? 'on' : ''}" href="#/group/${gid}/${k}">${l}</a>`).join('')}</nav>`;
+  const tabs = `<nav class="tabs">${[['activity','Activity'],['performance','Performance'],['proposals','Proposals'],['members','Members'],['rules', Store.canManage(role) ? 'Settings' : 'Rules']].map(([k, l]) => `<a class="${tab === k ? 'on' : ''}" href="#/group/${gid}/${k}">${l}</a>`).join('')}</nav>`;
   let body = '';
   if (tab === 'activity'){
     const mine = Store.myPending().filter(r => r.gid === gid);
     const items = groupItems([gid]);
-    body = `${mine.map(approvalCard).join('')}${mine.length ? '<div style="height:16px"></div>' : ''}
+    body = `${reviewCards(g, role)}${suggestionCards(g, role)}${mine.map(approvalCard).join('')}${mine.length ? '<div style="height:16px"></div>' : ''}
       <div class="list">${role ? composer('g:' + gid, 'Post to the group', 'gpost', `data-gid="${gid}"`) : ''}${items.map(it => renderItem(it, false)).join('') || '<div class="empty">No group activity yet.</div>'}</div>`;
   } else if (tab === 'performance'){
     body = perfView(gid, role);
+  } else if (tab === 'rules'){
+    body = rulesView(g, role);
   } else if (tab === 'proposals'){
     const prs = Store.all('proposals').filter(p => p.gid === gid).sort((a, b) => { const ta = Store.tally(a.id), tb = Store.tally(b.id); return (ta.closed - tb.closed) || b.createdTs - a.createdTs; });
-    body = `${role && Store.canPropose(role) && Store.canWrite ? `<div style="margin-bottom:14px"><button class="btn" data-act="newprop" data-gid="${gid}">New proposal</button></div>` : role ? '<p class="hint">Owners, Admins and Lead Traders create proposals. Members vote.</p>' : ''}
+    const R = Store.rulesOf(g);
+    body = `<p class="hint" style="margin-top:0">${R.quorum ? `Quorum: ${Math.round(R.quorum * 100)}% of members must vote. ` : ''}Passes with ${R.passRule === 'two-thirds' ? 'two-thirds' : 'a majority'} of yes and no votes.${R.voteWaitDays ? ` New members can vote after ${R.voteWaitDays} days.` : ''}</p>
+      ${role && Store.canPropose(role, R) && Store.canWrite ? `<div style="margin-bottom:14px"><button class="btn" data-act="newprop" data-gid="${gid}">New proposal</button></div>` : role ? `<p class="hint">${R.proposeRoles.map(x => Store.ROLE_LABEL[x]).join(', ')} can create proposals. Members vote.</p>` : ''}
       <div class="list">${prs.map(p => proposalCard(p, role)).join('') || '<div class="empty">No proposals yet.</div>'}</div>`;
   } else {
     const order = ['owner','admin','lead','member','observer'];
     body = `${role ? `<div class="panel" style="padding:16px 18px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap"><div><b>Your copy size</b><div class="small muted">Share of your capital used when sizing the group's trades for you.</div></div><div class="seg">${[0.5, 1].map(x => `<button class="${(my.copyPct ?? 1) === x ? 'on' : ''}" data-act="copypct" data-gid="${gid}" data-k="${x}">${x * 100}%</button>`).join('')}</div></div>` : ''}
       ${(() => { const jr = Store.all('joinRequests').filter(j => j.gid === gid && j.status === 'pending'); return Store.canManage(role) && jr.length ? `<section style="margin-bottom:16px"><header class="pagehead" style="margin:0 0 10px"><h3>Requests to join</h3></header><div class="list">${jr.map(j => `<div class="row">${avatar(j.pid)}<div class="grow">${nameLink(j.pid)}<div class="small muted">Asked ${ago(j.ts)} ago</div></div><button class="btn sm" data-act="joinyes" data-id="${j.id}">Approve</button><button class="btn sm ghost" data-act="joinno" data-id="${j.id}">Decline</button></div>`).join('')}</div></section>` : ''; })()}
       <div class="list">${ms.sort((a, b) => order.indexOf(a.role) - order.indexOf(b.role)).map(m => `<div class="row">${avatar(m.pid)}<div class="grow">${nameLink(m.pid)}<div class="small muted">Joined ${ago(m.joinedTs)} ago${m.invitedBy ? ' from ' + esc(Store.displayName(m.invitedBy)) + "'s invite" : ''}</div></div>
-        ${Store.canManage(role) && m.role !== 'owner' && m.pid !== Store.myPid && Store.canWrite ? `<select class="input" style="width:auto;padding:7px 10px;font-size:14px" data-act="role" data-gid="${gid}" data-pid="${m.pid}" aria-label="Role">${['admin','lead','member','observer'].map(r => `<option value="${r}" ${m.role === r ? 'selected' : ''}>${Store.ROLE_LABEL[r]}</option>`).join('')}</select>` : `<span class="tag ${m.role === 'lead' ? 'ember' : m.role === 'owner' || m.role === 'admin' ? 'blue' : ''}">${Store.ROLE_LABEL[m.role]}</span>`}</div>`).join('')}</div>
+        ${Store.canManage(role) && m.role !== 'owner' && m.pid !== Store.myPid && Store.canWrite ? `<select class="input" style="width:auto;padding:7px 10px;font-size:14px" data-act="role" data-gid="${gid}" data-pid="${m.pid}" aria-label="Role">${['admin','lead','junior','analyst','risk','moderator','member','observer'].map(r => `<option value="${r}" ${m.role === r ? 'selected' : ''}>${Store.ROLE_LABEL[r]}</option>`).join('')}</select><button class="btn sm ghost" data-act="rmmember" data-gid="${gid}" data-pid="${m.pid}" aria-label="Remove ${esc(Store.displayName(m.pid))}">Remove</button>` : `<span class="tag ${['lead','risk'].includes(m.role) ? 'ember' : ['owner','admin'].includes(m.role) ? 'blue' : ''}">${Store.ROLE_LABEL[m.role]}</span>`}</div>`).join('')}</div>
+      ${role === 'owner' && Store.canWrite && ms.length > 1 ? `<div class="panel" style="padding:16px 18px;margin-top:16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap"><div style="flex:1;min-width:200px"><b>Transfer ownership</b><div class="small muted">You become an Admin. The new Owner needs Pro.</div></div><select class="input" id="xfer" style="width:auto">${ms.filter(m => m.pid !== Store.myPid).map(m => `<option value="${m.pid}">${esc(Store.displayName(m.pid))}</option>`).join('')}</select><button class="btn sm ghost" data-act="xfer" data-gid="${gid}">Transfer</button></div>` : ''}
+      <section class="block"><header><h2>What each role does</h2></header><div class="list">${Store.ROLE_INFO_KEYS.map(k => `<div class="row"><span class="tag" style="min-width:110px;justify-content:center">${Store.ROLE_LABEL[k]}</span><div class="grow small">${Store.ROLE_INFO[k]}</div></div>`).join('')}</div></section>
       ${role && role !== 'owner' && Store.canWrite ? `<p style="margin-top:16px"><button class="btn ghost sm" data-act="leave" data-id="${gid}">Leave group</button></p>` : ''}`;
   }
   return head + tabs + body;
@@ -759,13 +797,59 @@ function perfView(gid, role){
     <div class="small muted">${r.state === 'filled' ? 'Your fill ' + usd(r.req.fillPrice) : 'Lead Trader return ' + pct(r.lead)}</div></div>
     <div class="r"><span class="tag ${TAG[r.state][1]}">${TAG[r.state][0]}</span><div class="small num ${sgn(r.mine ?? 0)}" style="margin-top:4px">${r.mine == null ? '—' : pct(r.mine)}</div></div></div>`).join('')}</div></section>`;
 }
+function joinButton(g, role, hasMe){
+  if (!hasMe || !Store.canWrite) return '';
+  const R = Store.rulesOf(g);
+  if (role === 'observer') return `<button class="btn" data-act="join" data-id="${g.id}">Become a full member</button>`;
+  if (role) return '';
+  if (R.joinMode === 'request'){ const jr = Store.get('joinRequests', g.id + '__' + Store.myPid); return jr ? `<span class="tag ember">${{ pending:'Request sent', declined:'Request declined', approved:'Request approved' }[jr.status]}</span>` : `<button class="btn" data-act="reqjoin" data-id="${g.id}">Request to join</button>`; }
+  if (R.joinMode === 'invite' && ui.inviteFor !== g.id) return '<span class="tag">Invite only</span>';
+  return `<button class="btn" data-act="join" data-id="${g.id}">Join group</button>`;
+}
+function tourReviewSample(g){
+  const now = Date.now(), px = Market.price('GOOGL'), lead = Store.get('portfolios', g.leadPid);
+  return { id:'tour-review', gid: g.id, leaderPid: g.leadPid, sym:'GOOGL', side:'buy', shares: Math.floor((Store.portfolioValue(lead) * 0.07) / px * 1000) / 1000, price: px, status:'pending', createdTs: now - 3 * 60000, expiresTs: now + 12 * 60000, sample: true };
+}
+function reviewCards(g, role){
+  let rvs = Store.all('reviews').filter(r => r.gid === g.id && r.status === 'pending').sort((a, b) => b.createdTs - a.createdTs);
+  if (ui.tour != null && TOUR[ui.tour] && TOUR[ui.tour].sampleReview && !rvs.length && g.id === 'g_techmomentum') rvs = [tourReviewSample(g)];
+  if (!rvs.length || !role) return '';
+  if (ui.tour != null) return rvs.map(r => `<article class="approval" style="margin-bottom:12px"><div class="ring" data-ring data-exp="${r.expiresTs}" data-start="${r.createdTs}"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="27" fill="none" stroke="var(--line)" stroke-width="5"/><circle cx="32" cy="32" r="27" fill="none" stroke="var(--ember)" stroke-width="5" stroke-linecap="round" stroke-dasharray="169.6" stroke-dashoffset="0"/></svg><div class="t" data-cd>${left(r.expiresTs - Date.now())}</div></div>
+    <div><span class="tag ember" style="margin-bottom:6px">Risk Manager review</span><h3>${esc(Store.displayName(r.leaderPid))} ${r.side === 'buy' ? 'bought' : 'sold'} ${shs(r.shares)} ${esc(r.sym)} at ${usd(r.price)}</h3>
+    <p class="muted small" style="margin:4px 0 12px">Members don't see this trade yet. The Risk Manager releases it, or pauses it for a group vote. If nobody acts, it's released automatically when the timer ends.</p>
+    <div class="acts"><button class="btn ember" disabled>Release to members</button><button class="btn ghost" disabled>Pause for a vote</button><span class="hint">Only the Risk Manager sees these buttons.</span></div></div></article>`).join('');
+  return rvs.map(r => `<article class="approval" style="margin-bottom:12px"><div class="ring" data-ring data-exp="${r.expiresTs}" data-start="${r.createdTs}"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="27" fill="none" stroke="var(--line)" stroke-width="5"/><circle cx="32" cy="32" r="27" fill="none" stroke="var(--ember)" stroke-width="5" stroke-linecap="round" stroke-dasharray="169.6" stroke-dashoffset="0"/></svg><div class="t" data-cd>${left(r.expiresTs - Date.now())}</div></div>
+    <div><span class="tag ember" style="margin-bottom:6px">Risk Manager review</span><h3>${esc(Store.displayName(r.leaderPid))} ${r.side === 'buy' ? 'bought' : 'sold'} ${shs(r.shares)} ${esc(r.sym)} at ${usd(r.price)}</h3>
+    <p class="muted small" style="margin:4px 0 12px">${Store.canReview(role) ? 'Release it to members, or pause it for a group vote. If nobody acts, it is released automatically when the timer ends.' : 'The Risk Manager is reviewing this trade before members get approval requests.'}</p>
+    ${Store.canReview(role) && Store.canWrite ? `<div class="acts"><button class="btn ember" data-act="rvrelease" data-id="${r.id}">Release to members</button><button class="btn ghost" data-act="rvpause" data-id="${r.id}">Pause for a vote</button></div>` : ''}</div></article>`).join('');
+}
+function suggestionCards(g, role){
+  const sgs = Store.all('suggestions').filter(x => x.gid === g.id && (x.status === 'pending' || (x.pid === Store.myPid && Date.now() - (x.decidedTs || x.ts) < 3 * 86400000))).sort((a, b) => b.ts - a.ts);
+  if (!sgs.length || !role) return '';
+  return `<section style="margin-bottom:16px"><header class="pagehead" style="margin:0 0 10px"><h3>Trade suggestions</h3></header><div class="list">${sgs.map(x => `<div class="row">${avatar(x.pid, 'sm')}<div class="grow"><div>${nameLink(x.pid)} suggests <b>${x.side === 'buy' ? 'buying' : 'selling'} ${esc(x.sym)}</b> at ${Math.round(x.pct * 1000) / 10}% of the portfolio</div>${x.note ? `<div class="small muted">${esc(x.note)}</div>` : ''}<div class="small muted">${ago(x.ts)} ago${x.status !== 'pending' ? ' — ' + (x.status === 'approved' ? 'approved and traded' : 'declined') : ''}</div></div>
+    ${x.status === 'pending' && Store.canTradeFor(role) && Store.canWrite ? `<button class="btn sm ember" data-act="sgyes" data-id="${x.id}">Approve and trade</button><button class="btn sm ghost" data-act="sgno" data-id="${x.id}">Decline</button>` : x.status === 'pending' ? '<span class="tag">Waiting for the Lead Trader</span>' : ''}</div>`).join('')}</div></section>`;
+}
+function rulesView(g, role){
+  const R = Store.rulesOf(g), mg = Store.canManage(role) && Store.canWrite;
+  const row = (a, b) => `<div class="row"><div class="grow muted">${a}</div><b style="text-align:right">${b}</b></div>`;
+  const allowed = R.allowed === 'etf' ? 'ETFs only (SPY, QQQ, SCHD)' : R.allowed === 'list' ? R.allowedList.join(', ') : 'Any stock or ETF';
+  return `${mg ? '<div style="margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap"><button class="btn" data-act="editrules" data-id="' + g.id + '">Edit settings</button><button class="btn ghost" data-act="invite" data-id="' + g.id + '">Invite link</button></div>' : ''}
+  ${R.rulesText ? `<section class="block" style="margin-top:0"><header><h2>Group rules</h2></header><div class="panel" style="padding:16px 18px;white-space:pre-wrap">${esc(R.rulesText)}</div></section>` : ''}
+  <section class="block"><header><h2>Joining</h2></header><div class="list">${row('How people join', { open:'Anyone can join', request:'Request to join, Owner or Admin approves', invite:'Invite link only' }[R.joinMode])}${row('Member limit', R.maxMembers ? R.maxMembers + ' members' : 'No limit')}${row('Minimum account value', R.minAccount ? usd(R.minAccount, 0) : 'None')}${row('Shown in Discover', R.hidden ? 'No, hidden' : 'Yes')}</div></section>
+  <section class="block"><header><h2>Voting</h2></header><div class="list">${row('Who can propose', R.proposeRoles.map(x => Store.ROLE_LABEL[x]).join(', '))}${row('Quorum', R.quorum ? Math.round(R.quorum * 100) + '% of members' : 'None')}${row('To pass', R.passRule === 'two-thirds' ? 'Two-thirds of yes and no votes' : 'Majority of yes and no votes')}${row('Default voting period', R.votingDays + ' day' + (R.votingDays === 1 ? '' : 's'))}${row('New members can vote after', R.voteWaitDays ? R.voteWaitDays + ' days' : 'Right away')}</div></section>
+  <section class="block"><header><h2>Trading</h2></header><div class="list">${row('Largest trade without a vote', R.maxPositionPct ? Math.round(R.maxPositionPct * 100) + '% of the portfolio' : 'No limit')}${row('Allowed investments', esc(allowed))}${row('Approval window', R.approvalMinutes + ' minutes')}${row('Risk Manager review', R.riskReview ? 'Every group trade' : 'Off')}${row('Starting copy size for new members', R.defaultCopyPct === 1 ? '100%' : '50%')}</div></section>
+  <section class="block"><header><h2>Paid group</h2></header><div class="list">${row('Monthly member fee', '<span class="tag">Available after adviser registration</span>')}</div></section>`;
+}
 function groupTradeRow(p){
-  const reqs = Store.all('copyRequests').filter(r => r.gid === p.groupId && r.leaderPid === p.pid && Math.abs(r.createdTs - p.ts) < 120000 && r.sym === p.trade.sym);
+  const rvx = p.reviewId && Store.get('reviews', p.reviewId);
+  const reqs = Store.all('copyRequests').filter(r => r.gid === p.groupId && r.leaderPid === p.pid && r.sym === p.trade.sym && (rvx ? r.tradeId === rvx.tradeId : Math.abs(r.createdTs - p.ts) < 120000));
   const st = reqs.map(r => Store.requestState(r));
   const filled = st.filter(s => s === 'filled' || s === 'queued').length, pending = st.filter(s => s === 'pending').length;
+  const rv = p.reviewId && Store.get('reviews', p.reviewId);
+  const rvNote = rv ? ({ pending:'<div class="banner" style="margin:8px 0;font-size:14px">Held for Risk Manager review. Members get approval requests once it is released.</div>', paused:'<div class="banner ember" style="margin:8px 0;font-size:14px">Paused by the Risk Manager for a group vote.</div>', blocked:'<div class="banner" style="margin:8px 0;font-size:14px">The group voted not to copy this trade.</div>', released: rv.how === 'vote' ? '<div class="small muted" style="margin-bottom:6px">Released after a group vote.</div>' : rv.how === 'auto' ? '<div class="small muted" style="margin-bottom:6px">Released automatically after 15 minutes.</div>' : '<div class="small muted" style="margin-bottom:6px">Released by the Risk Manager.</div>' }[rv.status] || '') : '';
   return `<article class="post"><div class="meta">${avatar(p.pid, 'sm')}<div class="grow">${nameLink(p.pid)} <span class="tag ember" style="margin-left:4px">Lead Trader</span> <span class="muted small">${ago(p.ts)}</span></div></div>
     ${p.text ? `<div class="body">${linkify(p.text)}</div>` : '<div style="height:10px"></div>'}
-    <div class="chip"><span class="tag ${p.trade.side === 'buy' ? 'blue' : 'ember'}">${p.trade.side === 'buy' ? 'Bought' : 'Sold'}</span><a class="sym" href="#/stock/${esc(p.trade.sym)}">${esc(p.trade.sym)}</a><span class="num">${shs(p.trade.shares)} @ ${usd(p.trade.price)}</span></div>
+    <div class="chip"><span class="tag ${p.trade.side === 'buy' ? 'blue' : 'ember'}">${p.trade.side === 'buy' ? 'Bought' : 'Sold'}</span><a class="sym" href="#/stock/${esc(p.trade.sym)}">${esc(p.trade.sym)}</a><span class="num">${shs(p.trade.shares)} @ ${usd(p.trade.price)}</span></div>${rvNote}
     ${reqs.length ? `<div class="small"><b>${filled} of ${reqs.length}</b> members copied${pending ? `, <span style="color:var(--ember-ink)">${pending} still deciding</span>` : ''}</div>
     <div class="tally" style="height:6px"><div class="y" style="width:${filled / reqs.length * 100}%"></div><div style="width:${pending / reqs.length * 100}%;background:var(--ember)"></div></div>` : ''}</article>`;
 }
@@ -784,15 +868,16 @@ function renderItem(it, showGroup){
 }
 function proposalCard(p, role){
   const t = Store.tally(p.id); const tot = Math.max(1, t.cast);
-  const TYPE = { trade:'Trade idea', strategy:'Strategy change', policy:'Policy change', role:'Role change' };
-  const canV = Store.canVote(role) && !t.closed && Store.canWrite;
+  const TYPE = { trade:'Trade idea', strategy:'Strategy change', policy:'Policy change', role:'Role change', review:'Risk review' };
+  const canV = Store.canVote(role) && !t.closed && Store.canWrite && !t.waitDays;
   return `<article class="post"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><span class="tag">${TYPE[p.type] || 'Proposal'}</span>
       ${t.closed ? `<span class="tag ${t.result === 'passed' ? 'blue' : ''}">${t.result === 'passed' ? 'Passed' : 'Did not pass'}</span>` : `<span class="tag ember">${timeLeft(p.deadlineTs)}</span>`}</div>
     <h3 style="margin-top:10px">${esc(p.title)}</h3>${p.details ? `<div class="body">${linkify(p.details)}</div>` : ''}
     ${p.tradeSym ? `<div class="chip" style="display:inline-flex;gap:8px;align-items:center;padding:7px 11px;border-radius:12px;background:var(--surface-2);border:1px solid var(--line);font-size:14px;margin:6px 0 8px"><span class="tag ${p.tradeSide === 'sell' ? 'ember' : 'blue'}">${p.tradeSide === 'sell' ? 'Sell' : 'Buy'}</span><a class="sym" href="#/stock/${esc(p.tradeSym)}">${esc(p.tradeSym)}</a><span class="num">${Math.round(p.tradePct * 1000) / 10}% of the portfolio</span></div>` : ''}
     <div class="small muted">Proposed by ${esc(Store.displayName(p.authorPid))}, ${ago(p.createdTs)} ago</div>
     <div class="tally"><div class="y" style="width:${t.yes / tot * 100}%"></div><div class="n" style="width:${t.no / tot * 100}%"></div><div class="a" style="width:${t.abstain / tot * 100}%"></div></div>
-    <div class="small num"><span class="gain">${t.yes} yes</span> &nbsp; <span class="loss">${t.no} no</span> &nbsp; <span class="muted">${t.abstain} abstain — ${t.cast} of ${t.eligible} voted</span></div>
+    <div class="small num"><span class="gain">${t.yes} yes</span> &nbsp; <span class="loss">${t.no} no</span> &nbsp; <span class="muted">${t.abstain} abstain — ${t.cast} of ${t.eligible} voted${t.rules.quorum ? (t.quorumMet ? ', quorum met' : `, quorum ${Math.round(t.rules.quorum * 100)}% not yet met`) : ''}</span></div>
+    ${t.waitDays && !t.closed ? `<div class="small muted" style="margin-top:8px">You can vote in this group in ${t.waitDays} day${t.waitDays === 1 ? '' : 's'}.</div>` : ''}
     ${canV ? `<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">${['yes','no','abstain'].map(v => `<button class="btn sm ${t.mine === v ? '' : 'ghost'}" data-act="vote" data-id="${p.id}" data-k="${v}" aria-pressed="${t.mine === v}">${v[0].toUpperCase() + v.slice(1)}</button>`).join('')}
       ${Store.canManage(role) ? `<button class="btn sm ghost" data-act="closeprop" data-id="${p.id}" style="margin-left:auto">Close vote</button>` : ''}</div>` : (t.mine ? `<div class="small muted" style="margin-top:8px">You voted ${t.mine}.</div>` : '')}
     ${p.tradeSym && t.closed && t.result === 'passed' ? (p.executed ? `<div class="banner" style="margin:12px 0 0"><div style="flex:1">Executed by ${esc(Store.displayName(p.executedBy))} ${ago(p.executedTs)} ago. Members received approval requests.</div><a class="btn sm ghost" href="#/group/${p.gid}/activity">See trade</a></div>`
@@ -839,7 +924,11 @@ function vProfile(pid){
     <div class="row"><div class="grow"><b>Investing style</b><div class="small muted">Used to suggest groups</div></div>${Store.canWrite ? `<select class="input" style="width:auto;padding:7px 10px;font-size:14px" data-act="setrisk" aria-label="Investing style">${Object.entries(RISK).map(([k, [a]]) => `<option value="${k}" ${p.riskProfile === k ? 'selected' : ''}>${a}</option>`).join('')}</select>` : ''}</div>
     <div class="row"><div class="grow"><b>Trading account</b><div class="small muted">Simulated, with ${usd(Store.START_CASH, 0)} to start</div></div><span class="tag blue">Active</span></div>
     <div class="row"><div class="grow"><b>Brokerage account</b><div class="small muted">Connect through our broker partner, with identity verification</div></div><button class="btn sm ghost" disabled>Available at launch</button></div>
-    ${Store.signedIn && !Store.viewing ? `<div class="row"><div class="grow"><b>Signed in as ${esc(Store.username || '')}</b></div><button class="btn sm ghost" data-act="signout">Sign out</button></div>` : ''}
+    ${Store.signedIn && !Store.viewing ? `<a class="row" href="#/settings"><div class="grow"><b>Notifications</b><div class="small muted">Phone alerts, what to notify you about, quiet hours</div></div><span class="small">Open</span></a>
+      <div class="row"><div class="grow"><b>Trade history</b><div class="small muted">Download every trade and fill as a spreadsheet</div></div><a class="btn sm ghost" href="/api/export/trades.csv" download>Download CSV</a></div>
+      <div class="row"><div class="grow"><b>Password</b></div><button class="btn sm ghost" data-act="chpw">Change password</button></div>
+      <div class="row"><div class="grow"><b>Signed in as ${esc(Store.username || '')}</b></div><button class="btn sm ghost" data-act="signout">Sign out</button></div>
+      <div class="row"><div class="grow"><b>Delete account</b><div class="small muted">Removes your profile, posts and activity</div></div><button class="btn sm ghost" data-act="delacct" style="color:var(--loss);border-color:var(--loss)">Delete</button></div>` : ''}
     ${Store.all('copies').filter(c => c.from === pid).map(c => `<div class="row"><div class="grow"><b>Copying ${esc(Store.displayName(c.to))}</b><div class="small muted">Each trade asks for your approval</div></div><button class="btn sm ghost" data-act="uncopy" data-id="${c.to}">Stop</button></div>`).join('')}
   </div></section>` : ''}
   ${top.length ? `<section class="block"><header><h2>Top holdings</h2></header><div class="list">${top.map(h => `<a class="row" href="#/stock/${h.s}"><div class="grow sym">${h.s}</div><div class="num muted">${(h.v / Store.portfolioValue(pf) * 100).toFixed(1)}% of portfolio</div></a>`).join('')}</div></section>` : ''}
@@ -856,13 +945,15 @@ function vDemo(){
   return `<div class="pagehead"><div><h1>Demo controls</h1><p class="muted">Drive the sample investors during a presentation. Only demo admins see this page.</p></div><div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn ember" data-act="presenter">Start presenter mode</button><button class="btn ghost" data-act="tour">Preview the viewer tour</button></div></div>
   <section class="panel" style="padding:20px"><h2>Market clock</h2><p class="muted small">Live follows real US market hours. Use the demo clock to show the approval window or the buy-at-open option at any time of day. The clock applies to everyone using the demo.</p>
     <div class="seg">${[['live','Live'],['open','Market open'],['late','3:57 PM']].map(([k, l]) => `<button class="${m === k ? 'on' : ''}" data-act="clock" data-k="${k}">${l}</button>`).join('')}</div></section>
-  <section class="panel" style="padding:20px;margin-top:16px"><h2>Have a Lead Trader trade</h2><p class="muted small">The Lead Trader's order fills, and every member gets an approval request sized to their capital. Join the group first to receive one yourself.</p>
+  <section class="panel" style="padding:20px;margin-top:16px"><h2>Have a Lead Trader trade</h2><p class="muted small">The Lead Trader's order fills, and every member gets an approval request sized to their capital (after Risk Manager review, if the group uses it). Group rules apply, such as position limits and allowed investments. Join the group first to receive one yourself.</p>
     ${leadGroups.length ? `<div class="grid2"><div class="field"><label for="d-g">Group</label><select class="input" id="d-g">${leadGroups.map(g => `<option value="${g.id}">${esc(g.name)} (${esc(Store.displayName(g.leadPid))})</option>`).join('')}</select></div>
       <div class="field"><label for="d-s">Stock</label><select class="input" id="d-s">${Market.LIST.map(t => `<option value="${t.s}">${t.s} — ${esc(t.n)}</option>`).join('')}</select></div>
       <div class="field"><label for="d-side">Side</label><select class="input" id="d-side"><option value="buy">Buy</option><option value="sell">Sell</option></select></div>
       <div class="field"><label for="d-amt">Amount (dollars)</label><input class="input" id="d-amt" type="number" min="1" value="8000"></div></div>
       <div class="field"><label for="d-note">Note to the group (optional)</label><input class="input" id="d-note" placeholder="Why this trade"></div>
       <button class="btn ember" data-act="demotrade">Place the Lead Trader's trade</button>` : '<p class="muted">No groups with a sample Lead Trader yet.</p>'}</section>
+  <section class="panel" style="padding:20px;margin-top:16px"><h2>Risk Manager review</h2><p class="muted small">Tech Momentum Crew holds every group trade for its Risk Manager (Jake) before members see it. Release the latest held trade, or pause it for a group vote.</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">${Store.all('reviews').filter(r => r.status === 'pending').length ? `<button class="btn ember" data-act="demorelease" data-gid="g_techmomentum">Jake releases the trade</button><button class="btn ghost" data-act="demopause" data-gid="g_techmomentum">Jake pauses it for a vote</button>` : '<span class="hint">No trades are waiting for review.</span>'}</div></section>
   <section class="panel" style="padding:20px;margin-top:16px"><h2>Have an investor trade</h2><p class="muted small">A personal trade that's shared to the feed. Everyone copying that investor gets an approval request. Copy them from their profile first to receive one yourself.</p>
     <div class="grid2"><div class="field"><label for="i-p">Investor</label><select class="input" id="i-p">${demoPeople.map(p => `<option value="${p.id}">${esc(p.name)} (${Store.copiersOf(p.id).length} copying)</option>`).join('')}</select></div>
       <div class="field"><label for="i-s">Stock</label><select class="input" id="i-s">${Market.LIST.map(t => `<option value="${t.s}">${t.s} — ${esc(t.n)}</option>`).join('')}</select></div>
@@ -922,7 +1013,14 @@ function vMetrics(){
   const M = Store.metrics(); const P = x => x == null ? '—' : (x * 100).toFixed(0) + '%';
   const tile = (label, value, note) => `<div class="panel" style="padding:16px 18px"><div class="small muted">${label}</div><div class="num" style="font-size:28px;font-weight:700;margin:4px 0">${value}</div>${note ? `<div class="small muted">${note}</div>` : ''}</div>`;
   const tiles = (arr) => `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px">${arr.join('')}</div>`;
-  return `<div class="pagehead"><div><h1>Pilot metrics</h1><p class="muted">What we'll measure in the pilot, calculated live from this demo. In the pilot, these come from real users.</p></div></div>
+  if (ui.usage === null){ ui.usage = 'loading'; Store.http('GET', '/api/admin/usage').then(u => { ui.usage = u; render(); }, () => { ui.usage = 'error'; render(); }); }
+  const U = typeof ui.usage === 'object' && ui.usage ? ui.usage : null;
+  const realUsage = U ? `<section class="block" style="margin-top:0"><header><h2>Real usage from testers</h2><button class="btn sm ghost" data-act="usage-refresh">Refresh</button></header>${tiles([
+      tile('Testers', U.users, U.signups7 + ' joined this week'), tile('Active today', U.dau, 'Daily active users'), tile('Active this week', U.wau, 'Weekly active users'), tile('7-day retention', U.retention ? Math.round(U.retention.kept / U.retention.cohort * 100) + '%' : '—', U.retention ? `${U.retention.kept} of ${U.retention.cohort} came back in week 2` : 'Needs testers older than 7 days'),
+      tile('Phone alerts on', U.pushUsers, 'Testers with notifications enabled')])}
+    ${U.daily.length ? `<div class="panel" style="padding:16px 18px;margin-top:12px"><div class="small muted" style="margin-bottom:8px">Active testers by day</div><div style="display:flex;align-items:flex-end;gap:6px;height:90px">${U.daily.map(d => `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px"><div style="width:100%;max-width:26px;height:${Math.max(4, d.n / Math.max(...U.daily.map(x => x.n)) * 70)}px;background:var(--blue);border-radius:4px 4px 0 0"></div><span style="font-size:10px" class="muted">${esc(d.day.slice(4))}</span></div>`).join('')}</div></div>` : ''}
+    <div class="grid2" style="margin-top:12px"><div class="list">${U.actions.map(a => `<div class="row"><div class="grow small">${esc(a.name.replace('action:', ''))}</div><b class="num small">${a.n}</b></div>`).join('') || '<div class="empty">No actions this week.</div>'}</div><div class="list">${U.views.map(a => `<div class="row"><div class="grow small">${esc(a.name.replace('view:', ''))} screen</div><b class="num small">${a.n}</b></div>`).join('') || '<div class="empty">No screen views this week.</div>'}</div></div></section>` : '';
+  return `<div class="pagehead"><div><h1>Pilot metrics</h1><p class="muted">Real tester activity first, then the product metrics calculated from everything in the demo, sample investors included.</p></div></div>${realUsage}
   <section class="block" style="margin-top:0"><header><h2>Growth and revenue</h2></header>${tiles([
     tile('Accounts', M.accounts, 'Sample investors plus real sign-ins'), tile('Pro conversion', P(M.proRate), 'Plan: 3% at launch, rising to 8%'),
     tile('Groups on Group Pro', M.groupPro + ' of ' + M.groups, 'Group Pro is $19.99 a month'), tile('Subscription run rate', usd(M.runRate, 0), 'Pro and Group Pro, annualized')])}</section>
@@ -938,16 +1036,91 @@ function vMetrics(){
     ${[['Monthly active users','~24,000'],['Pro subscribers','~1,100'],['Funded accounts','~6,000'],['Active groups','~1,700'],['Run-rate revenue','~$260,000 a year']].map(([a, b]) => `<div class="row"><div class="grow">${a}</div><b class="num">${b}</b></div>`).join('')}</div></section>`;
 }
 function inviteSheet(gid){
-  const g = Store.get('groups', gid); const code = (Market.hash(gid + Store.myPid) % 1e8).toString(36).toUpperCase();
-  const link = 'pocketinvesting.com/join/' + code;
+  const g = Store.get('groups', gid); const link = location.origin + '/#/invite/' + (g.inviteCode || '') + '/' + (Store.myPid || '');
   const joined = Store.all('memberships').filter(m => m.gid === gid && m.invitedBy === Store.myPid);
+  const mg = Store.canManage((Store.membership(gid) || {}).role);
   openModal(`<header><h2>Invite friends to ${esc(g.name)}</h2><button class="x" data-close aria-label="Close">×</button></header>
-    <p class="muted" style="margin-top:0">Anyone with this link can join the group. Friends who join from it are credited to you.</p>
-    <div style="display:flex;gap:8px"><input class="input num" id="iv-l" readonly value="${esc(link)}" aria-label="Invite link"><button class="btn" id="iv-c">Copy</button></div>
+    <p class="muted" style="margin-top:0">Anyone with this link can join${Store.rulesOf(g).joinMode === 'request' ? ' after an Owner or Admin approves them' : ''}. Friends who join from it are credited to you.</p>
+    <div style="display:flex;gap:8px"><input class="input" id="iv-l" readonly value="${esc(link)}" aria-label="Invite link" style="font-size:14px"><button class="btn" id="iv-c">Copy</button></div>
     <div class="est" style="margin-top:14px"><span>Joined from your invites</span><b class="num">${joined.length}</b></div>
     ${joined.length ? `<div class="list">${joined.map(m => `<div class="row">${avatar(m.pid, 'sm')}<div class="grow">${esc(Store.displayName(m.pid))}</div><span class="small muted">${ago(m.joinedTs)} ago</span></div>`).join('')}</div>` : ''}
-    <p class="hint" style="margin-top:12px">Demo link: it shows the flow but doesn't open a live page yet.</p>`, sh => {
+    ${mg ? '<p style="margin-top:14px"><button class="btn sm ghost" id="iv-r">Reset the link</button> <span class="hint">Old links stop working.</span></p>' : ''}`, sh => {
     sh.querySelector('#iv-c').onclick = async () => { const i = sh.querySelector('#iv-l'); i.select(); try { await navigator.clipboard.writeText(link); toast('Invite link copied.'); } catch(e){ try { document.execCommand('copy'); toast('Invite link copied.'); } catch(e2){ toast('Select the link and copy it.'); } } };
+    const r = sh.querySelector('#iv-r'); if (r) r.onclick = async () => { try { await Store.newInviteCode(gid); closeModal(); toast('New invite link created.'); inviteSheet(gid); } catch(e){ errToast(e); } };
+  });
+}
+function vInvite(code, by){
+  const g = Store.all('groups').find(x => (x.inviteCode || '').toUpperCase() === String(code || '').toUpperCase());
+  if (!g) return `<div class="panel empty">That invite link isn't valid anymore. Ask for a new one.</div>`;
+  ui.inviteFor = g.id; ui.inviteCode = g.inviteCode; ui.inviteBy = by || null;
+  if (!Store.signedIn){ try { sessionStorage.setItem('pi_after_auth', '#/group/' + g.id); } catch(e){} }
+  setTimeout(() => { location.hash = '#/group/' + g.id; }, 0);
+  return '<div class="loading">Opening the group…</div>';
+}
+function vNotifySettings(){
+  if (!Store.signedIn) return vProfile(null);
+  const p = Store.get('profiles', Store.myPid) || {}, n = p.notif || {};
+  const q = n.quiet || { on:false, start:'22:00', end:'07:00' }, muted = new Set(n.mutedGroups || []);
+  const ps = ui.pushState; if (ps === null){ ui.pushState = 'loading'; pushStatus().then(x => { ui.pushState = x; render(); }); }
+  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent || ''), standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || navigator.standalone;
+  const tog = (id, on, label, hint) => `<label class="row" style="cursor:pointer"><div class="grow"><b>${label}</b>${hint ? `<div class="small muted">${hint}</div>` : ''}</div><input type="checkbox" id="${id}" ${on ? 'checked' : ''} style="width:22px;height:22px"></label>`;
+  const pushRow = ps === 'unsupported' ? (ios && !standalone ? 'On iPhone, add Pocket to your Home Screen first, then open it from there to turn on notifications.' : "This browser doesn't support notifications.")
+    : ps === 'denied' ? 'Notifications are blocked for this site. Turn them on in your browser or phone settings.' : ps === 'on' ? 'On for this device.' : ps === 'loading' || ps === null ? 'Checking…' : 'Off for this device.';
+  return `<div class="pagehead"><div><a href="#/u/${Store.myPid}" class="small">← Profile</a><h1 style="margin-top:6px">Notifications</h1><p class="muted">Approval requests have a short window, so phone alerts matter.</p></div></div>
+  <section class="panel" style="padding:18px 20px"><h2>Phone alerts</h2><p class="muted small" style="margin:6px 0 12px">${pushRow}</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">${ps === 'off' ? '<button class="btn ember" data-act="pushon">Turn on notifications</button>' : ''}${ps === 'on' ? '<button class="btn ghost" data-act="pushtest">Send a test</button><button class="btn ghost" data-act="pushoff">Turn off on this device</button>' : ''}</div></section>
+  <section class="block"><header><h2>What to alert me about</h2></header><div class="list">
+    ${tog('n-ap', n.approvals !== false, 'Approval requests', 'Group trades, investors you copy, Risk Manager reviews and trade suggestions')}
+    ${tog('n-vo', n.votes !== false, 'New votes in my groups', '')}
+    ${tog('n-so', n.social !== false, 'Followers, copiers and join requests', '')}</div></section>
+  <section class="block"><header><h2>Quiet hours</h2></header><div class="list">
+    ${tog('n-qon', !!q.on, 'Pause alerts overnight', '')}
+    <div class="row"><div class="grow muted">From</div><input class="input" id="n-qs" type="time" value="${esc(q.start)}" style="width:auto"></div>
+    <div class="row"><div class="grow muted">Until</div><input class="input" id="n-qe" type="time" value="${esc(q.end)}" style="width:auto"></div>
+    ${tog('n-aq', n.approvalsInQuiet !== false, 'Still alert me for approval requests', "Approvals expire, so we recommend keeping this on")}</div></section>
+  ${Store.myGroups().length ? `<section class="block"><header><h2>Groups</h2></header><div class="list">${Store.myGroups().map(g => tog('n-g-' + g.id, !muted.has(g.id), esc(g.name), '')).join('')}</div></section>` : ''}
+  <p style="margin-top:18px"><button class="btn" data-act="savenotif">Save settings</button></p>`;
+}
+async function pushStatus(){
+  if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return 'unsupported';
+  if (Notification.permission === 'denied') return 'denied';
+  try { const reg = await navigator.serviceWorker.ready; const sub = await reg.pushManager.getSubscription(); return sub ? 'on' : 'off'; } catch(e){ return 'off'; }
+}
+function b64ToU8(b){ const p = '='.repeat((4 - b.length % 4) % 4); const raw = atob((b + p).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from([...raw].map(c => c.charCodeAt(0))); }
+async function pushOn(){
+  const perm = await Notification.requestPermission(); if (perm !== 'granted') throw Object.assign(new Error('Notifications were not allowed.'), { userFacing: true });
+  const reg = await navigator.serviceWorker.ready;
+  const sub = (await reg.pushManager.getSubscription()) || (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToU8(Store.pushKey) }));
+  await Store.http('POST', '/api/push/subscribe', { subscription: sub.toJSON() });
+}
+async function pushOff(){ const reg = await navigator.serviceWorker.ready; const sub = await reg.pushManager.getSubscription(); if (sub){ await Store.http('POST', '/api/push/unsubscribe', { endpoint: sub.endpoint }).catch(() => {}); await sub.unsubscribe(); } }
+function vAdmin(){
+  if (!Store.canEdit) return `<div class="empty">The beta admin is available to demo admins.</div>`;
+  if (!ui.admin){ loadAdmin(); return '<div class="loading">Loading beta admin…</div>'; }
+  const A = ui.admin, tab = ui.adminTab;
+  const T = [['testers','Testers ' + A.users.length],['invites','Invites'],['feedback','Feedback ' + A.feedback.filter(f => f.status === 'open').length],['errors','Errors ' + A.errors.length],['settings','Settings']];
+  const when = t => t ? ago(new Date(t).getTime()) + ' ago' : 'never';
+  let body = '';
+  if (tab === 'testers') body = `<div class="list">${A.users.map(u => `<div class="row" style="flex-wrap:wrap"><div class="grow" style="min-width:200px"><b>${esc(u.display_name)}</b> <span class="muted small">@${esc(u.username)}</span> ${u.env_admin || u.is_admin ? '<span class="tag blue">Admin</span>' : ''} ${u.disabled ? '<span class="tag">Turned off</span>' : ''}
+      <div class="small muted">Joined ${when(u.created_at)}, last seen ${when(u.last_seen_at)}${u.invite_code ? ', invite ' + esc(u.invite_code) : ''}${u.push ? ', alerts on' : ''}</div></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn sm ghost" data-act="adm" data-op="reset" data-id="${u.id}" data-n="${esc(u.username)}">Reset code</button>
+      ${u.env_admin ? '' : `<button class="btn sm ghost" data-act="adm" data-op="${u.is_admin ? 'unadmin' : 'admin'}" data-id="${u.id}">${u.is_admin ? 'Remove admin' : 'Make admin'}</button><button class="btn sm ghost" data-act="adm" data-op="${u.disabled ? 'enable' : 'disable'}" data-id="${u.id}">${u.disabled ? 'Turn on' : 'Turn off'}</button>`}</div></div>`).join('') || '<div class="empty">No testers yet.</div>'}</div>`;
+  else if (tab === 'invites') body = `<div style="margin-bottom:14px"><button class="btn" data-act="adm-newinv">New invite code</button></div><div class="list">${A.invites.map(c => `<div class="row" style="flex-wrap:wrap"><div class="grow" style="min-width:200px"><b class="num">${esc(c.code)}</b> ${c.label ? '<span class="muted">' + esc(c.label) + '</span>' : ''}<div class="small muted">${c.uses} used${c.max_uses ? ' of ' + c.max_uses : ''}${c.active ? '' : ', turned off'}</div></div>
+      <button class="btn sm ghost" data-act="adm-copylink" data-k="${esc(c.code)}">Copy sign-up link</button><button class="btn sm ghost" data-act="adm-invtoggle" data-k="${esc(c.code)}">${c.active ? 'Turn off' : 'Turn on'}</button></div>`).join('') || '<div class="empty">No invite codes yet. Create one for each tester or group of testers.</div>'}</div>`;
+  else if (tab === 'feedback') body = `<div class="list">${A.feedback.map(f => `<div class="row" style="align-items:flex-start"><div class="grow"><div class="small muted">${esc(f.username || 'Signed-out visitor')}, ${when(f.created_at)}, on ${esc(f.screen || '?')}</div><div style="white-space:pre-wrap;margin-top:4px">${esc(f.body)}</div></div><button class="btn sm ${f.status === 'open' ? '' : 'ghost'}" data-act="adm-fb" data-id="${f.id}">${f.status === 'open' ? 'Mark done' : 'Reopen'}</button></div>`).join('') || '<div class="empty">No feedback yet.</div>'}</div>`;
+  else if (tab === 'errors') body = `${A.errors.length ? '<div style="margin-bottom:14px"><button class="btn ghost" data-act="adm-errclear">Clear all</button></div>' : ''}<div class="list">${A.errors.map(e => `<div class="row" style="align-items:flex-start"><div class="grow" style="min-width:0"><b class="small">${esc(e.message)}</b><div class="small muted">${esc(e.username || 'visitor')}, ${when(e.created_at)}, ${esc(e.url || '')}</div>${e.stack ? `<pre style="white-space:pre-wrap;font-size:12px;margin:6px 0 0;max-height:120px;overflow:auto;color:var(--muted)">${esc(e.stack)}</pre>` : ''}<div class="small muted">${esc(e.ua || '')}</div></div></div>`).join('') || '<div class="empty">No errors reported. Good news.</div>'}</div>`;
+  else body = `<section class="panel" style="padding:18px 20px"><h2>Invite only</h2><p class="muted small">When on, new accounts need an invite code. Admins listed in ADMIN_USERNAMES can always sign up.</p><div class="seg"><button class="${A.inviteOnly ? 'on' : ''}" data-act="adm-io" data-k="1">On</button><button class="${A.inviteOnly ? '' : 'on'}" data-act="adm-io" data-k="0">Off</button></div></section>
+    <section class="panel" style="padding:18px 20px;margin-top:16px"><h2>Announcement</h2><p class="muted small">Shown at the top of every screen until each tester dismisses it.</p><textarea class="input" id="adm-ann" maxlength="300" placeholder="e.g. New version: please test buy-at-open today">${esc((A.announcement || {}).text || '')}</textarea><div style="display:flex;gap:10px;margin-top:10px"><button class="btn" data-act="adm-ann">Post</button>${A.announcement ? '<button class="btn ghost" data-act="adm-annclear">Remove</button>' : ''}</div></section>`;
+  return `<div class="pagehead"><div><h1>Beta admin</h1><p class="muted">Testers, invite codes, feedback and error reports.</p></div><button class="btn ghost sm" data-act="adm-refresh">Refresh</button></div>
+    <nav class="tabs">${T.map(([k, l]) => `<a href="#/admin" class="${tab === k ? 'on' : ''}" data-act="adm-tab" data-k="${k}">${l}</a>`).join('')}</nav>${body}`;
+}
+async function loadAdmin(){ try { ui.admin = await Store.http('GET', '/api/admin/overview'); } catch(e){ errToast(e); ui.admin = { users:[], invites:[], feedback:[], errors:[], inviteOnly:true, announcement:null }; } render(); }
+function newInviteSheet(){
+  openModal(`<header><h2>New invite code</h2><button class="x" data-close aria-label="Close">×</button></header>
+    <div class="field"><label for="ni-l">Label (who it's for)</label><input class="input" id="ni-l" maxlength="60" placeholder="e.g. Tony, or Investment club pilot"></div>
+    <div class="grid2"><div class="field"><label for="ni-m">Uses allowed</label><input class="input" id="ni-m" type="number" min="1" placeholder="Unlimited"></div><div class="field"><label for="ni-c">Custom code (optional)</label><input class="input" id="ni-c" maxlength="16" autocapitalize="characters" placeholder="Auto"></div></div>
+    <button class="btn" id="ni-go" style="width:100%">Create code</button>`, sh => {
+    sh.querySelector('#ni-go').onclick = async () => { try { const r = await Store.http('POST', '/api/admin/invite', { label: sh.querySelector('#ni-l').value, maxUses: sh.querySelector('#ni-m').value, custom: sh.querySelector('#ni-c').value }); closeModal(); toast('Invite code ' + r.code + ' created.'); await loadAdmin(); } catch(e){ errToast(e); } };
   });
 }
 
@@ -973,12 +1146,21 @@ function render(){
     case 'demo': html = vDemo(); break;
     case 'notifications': html = vNotifications(); break;
     case 'join': html = Store.signedIn ? vHome() : vOnboard(); break;
+    case 'terms': html = vLegal('terms'); break;
+    case 'privacy': html = vLegal('privacy'); break;
+    case 'admin': html = vAdmin(); break;
+    case 'settings': html = vNotifySettings(); break;
+    case 'invite': html = vInvite(r.a, r.b); break;
+    case 'signup': try { if (r.a) sessionStorage.setItem('pi_invite_code', r.a); } catch(e){} html = Store.signedIn ? vHome() : vOnboard(); break;
     case 'digest': html = vDigest(); break;
     case 'metrics': html = vMetrics(); break;
     default: html = vHome();
   }
   const demoVals = route().name === 'demo' ? Object.fromEntries($$('#view select, #view input').map(e => [e.id, e.value])) : null;
+  const ann = Store.settings.announcement; let annOff = ''; try { annOff = localStorage.getItem('pi_ann_off') || ''; } catch(e){}
+  if (ann && ann.text && String(ann.ts) !== annOff && ui.tour == null) html = `<div class="banner ember" style="margin-bottom:16px"><div style="flex:1"><b>From the Pocket team</b><div class="small">${esc(ann.text)}</div></div><button class="btn sm ghost" data-act="annoff" data-k="${ann.ts}">Dismiss</button></div>` + html;
   view.innerHTML = html;
+  renderFeedbackButton();
   if (demoVals) for (const [id, v] of Object.entries(demoVals)){ const e = document.getElementById(id); if (e) e.value = v; }
   $$('[data-draft]', view).forEach(el => { if (ui.drafts[el.dataset.draft] != null) el.value = ui.drafts[el.dataset.draft]; });
   if (ak){ const el = view.querySelector(`[data-draft="${CSS.escape(ak)}"]`); if (el){ el.focus({ preventScroll:true }); try { el.setSelectionRange(sel[0], sel[1]); } catch(e){} } }
@@ -1111,7 +1293,7 @@ function groupSheet(){
     <div class="field"><label for="g-n">Group name</label><input class="input" id="g-n" maxlength="60" placeholder="e.g. Sunday Stock Club"></div>
     <div class="field"><label for="g-s">Strategy</label><input class="input" id="g-s" maxlength="120" placeholder="e.g. Long-term dividend growth"></div>
     <div class="field"><label for="g-d">Description</label><textarea class="input" id="g-d" maxlength="300" placeholder="What the group invests in and how it decides"></textarea></div>
-    <div class="field"><label for="g-m">Who can join</label><select class="input" id="g-m"><option value="open">Anyone</option><option value="invite">Invite only</option></select></div>
+    <div class="field"><label for="g-m">Who can join</label><select class="input" id="g-m"><option value="open">Anyone</option><option value="request">Request to join, I approve</option><option value="invite">Invite link only</option></select><span class="hint">You can set rules, limits and roles in the group's Settings tab.</span></div>
     <div class="est" style="display:block"><b>Group Pro: $19.99 a month per group</b><div class="small muted" style="margin-top:4px">Roles, voting, approval-based copying and member management. Simulated here; nothing is charged.</div></div>
     <p class="hint">You'll be the Owner and Lead Trader. Members copy your trades only when they approve each one.</p>
     <button class="btn" id="g-go" style="width:100%">Start Group Pro and create group</button>`, sh => {
@@ -1139,27 +1321,51 @@ function proposalSheet(gid){
   });
 }
 function authSheet(mode){
-  const signup = mode === 'signup';
-  openModal(`<header><h2>${signup ? 'Create your account' : 'Sign in'}</h2><button class="x" data-close aria-label="Close">×</button></header>
+  const signup = mode === 'signup', reset = mode === 'reset';
+  const inviteFromLink = (() => { try { return sessionStorage.getItem('pi_invite_code') || ''; } catch(e){ return ''; } })();
+  openModal(`<header><h2>${signup ? 'Create your account' : reset ? 'Reset your password' : 'Sign in'}</h2><button class="x" data-close aria-label="Close">×</button></header>
     ${signup ? `<p class="muted" style="margin-top:0">You'll start with ${usd(Store.START_CASH, 0)} in simulated cash. No real money is involved.</p>
-    <div class="field"><label for="a-n">Your name</label><input class="input" id="a-n" maxlength="40" autocomplete="name" placeholder="How others will see you"></div>` : ''}
+      <div class="field"><label for="a-n">Your name</label><input class="input" id="a-n" maxlength="40" autocomplete="name" placeholder="How others will see you"></div>` : ''}
+    ${reset ? '<p class="muted" style="margin-top:0">Ask the Pocket team for a reset code, then choose a new password.</p>' : ''}
     <div class="field"><label for="a-u">Username</label><input class="input" id="a-u" maxlength="24" autocomplete="username" autocapitalize="none" spellcheck="false"></div>
-    <div class="field"><label for="a-p">Password</label><input class="input" id="a-p" type="password" autocomplete="${signup ? 'new-password' : 'current-password'}">${signup ? '<span class="hint">At least 8 characters.</span>' : ''}</div>
+    ${reset ? '<div class="field"><label for="a-c">Reset code</label><input class="input" id="a-c" maxlength="12" autocapitalize="characters" spellcheck="false"></div>' : ''}
+    <div class="field"><label for="a-p">${reset ? 'New password' : 'Password'}</label><input class="input" id="a-p" type="password" autocomplete="${signup || reset ? 'new-password' : 'current-password'}">${signup || reset ? '<span class="hint">At least 8 characters.</span>' : ''}</div>
+    ${signup && Store.inviteOnly ? `<div class="field"><label for="a-i">Invite code</label><input class="input" id="a-i" maxlength="16" autocapitalize="characters" spellcheck="false" value="${esc(inviteFromLink)}"><span class="hint">The beta is invite only.</span></div>` : ''}
+    ${signup ? '<div class="field"><label style="display:flex;gap:10px;align-items:flex-start;font-weight:500"><input type="checkbox" id="a-t" style="margin-top:4px"> <span>I agree to the <a href="#/terms" target="_blank">Terms</a> and <a href="#/privacy" target="_blank">Privacy Policy</a>, and understand Pocket Investing uses simulated money during the beta.</span></label></div>' : ''}
     <div class="hint" id="a-err" style="color:var(--loss);min-height:1.2em;margin-bottom:8px"></div>
-    <button class="btn" id="a-go" style="width:100%">${signup ? 'Create account' : 'Sign in'}</button>
-    <p class="small" style="text-align:center;margin-top:12px">${signup ? 'Already have an account? <a href="#" id="a-sw">Sign in</a>' : 'New here? <a href="#" id="a-sw">Create an account</a>'}</p>`, sh => {
+    <button class="btn" id="a-go" style="width:100%">${signup ? 'Create account' : reset ? 'Set new password' : 'Sign in'}</button>
+    <p class="small" style="text-align:center;margin-top:12px">${signup ? 'Already have an account? <button class="linkbtn" data-sw="login">Sign in</button>' : reset ? '<button class="linkbtn" data-sw="login">Back to sign in</button>' : 'New here? <button class="linkbtn" data-sw="signup">Create an account</button><br><button class="linkbtn" data-sw="reset">Forgot your password?</button>'}</p>`, sh => {
+    const v = id => (sh.querySelector('#' + id) || {}).value || '';
     const go = async () => {
       const b = sh.querySelector('#a-go'); b.disabled = true; sh.querySelector('#a-err').textContent = '';
       try {
-        if (signup) await Store.signup(sh.querySelector('#a-u').value, sh.querySelector('#a-p').value, sh.querySelector('#a-n').value, ui.risk);
-        else await Store.login(sh.querySelector('#a-u').value, sh.querySelector('#a-p').value);
-        closeModal(); ui.seenReqs = null; toast(signup ? 'Your account is ready with $100,000 in simulated cash.' : 'Welcome back.'); location.hash = '#/home'; render();
+        if (signup) await Store.signupFull({ username: v('a-u'), password: v('a-p'), name: v('a-n'), risk: ui.risk, invite: v('a-i'), terms: sh.querySelector('#a-t').checked });
+        else if (reset) await Store.resetPassword(v('a-u'), v('a-c'), v('a-p'));
+        else await Store.login(v('a-u'), v('a-p'));
+        closeModal(); ui.seenReqs = null; toast(signup ? 'Your account is ready with $100,000 in simulated cash.' : reset ? 'Password updated. You are signed in.' : 'Welcome back.');
+        const back = (() => { try { return sessionStorage.getItem('pi_after_auth'); } catch(e){ return null; } })();
+        try { sessionStorage.removeItem('pi_after_auth'); } catch(e){}
+        location.hash = back || '#/home'; render();
       } catch(e){ b.disabled = false; sh.querySelector('#a-err').textContent = e.userFacing ? e.message : 'Something went wrong. Try again.'; }
     };
     sh.querySelector('#a-go').onclick = go;
-    sh.querySelectorAll('input').forEach(i => i.addEventListener('keydown', e => { if (e.key === 'Enter') go(); }));
-    sh.querySelector('#a-sw').onclick = e => { e.preventDefault(); authSheet(signup ? 'login' : 'signup'); };
+    sh.querySelectorAll('input:not([type=checkbox])').forEach(i => i.addEventListener('keydown', e => { if (e.key === 'Enter') go(); }));
+    sh.querySelectorAll('[data-sw]').forEach(a => a.onclick = e => { e.preventDefault(); authSheet(a.dataset.sw); });
   });
+}
+function vLegal(kind){
+  const terms = kind === 'terms';
+  return `<div class="panel" style="padding:24px;max-width:720px"><span class="tag ember">Draft for the beta. Final version to come from counsel.</span>
+    <h1 style="margin-top:14px">${terms ? 'Terms of use' : 'Privacy policy'}</h1>
+    ${terms ? `<p>Pocket Investing is in a private beta. All money, prices and returns in the app are simulated. Nothing in the app is investment advice or a recommendation to buy or sell any security.</p>
+      <p>Trades shown by other members, Lead Traders and groups reflect their own simulated activity. Copying a trade doesn't guarantee the same price or result, and past simulated results don't predict future results.</p>
+      <p>Be respectful. Don't post anything unlawful, misleading or promotional, and don't coordinate trading to move a price. We may remove content or turn off accounts that break these rules.</p>
+      <p>The beta is provided as is. Features may change or be removed, and data may be reset.</p>`
+    : `<p>We collect what you give us (your name, username and password, which is stored hashed), what you do in the app (posts, votes, simulated trades and settings), basic usage events so we can improve the product, and technical details when something goes wrong.</p>
+      <p>Other members can see your name, posts, group activity and simulated portfolio returns. We don't sell your information or show you ads.</p>
+      <p>You can download your trade history and delete your account at any time from your profile. Deleting your account removes your profile, posts and activity.</p>
+      <p>If you turn on notifications, your device's push address is stored so we can send alerts. You can turn them off in Settings.</p>`}
+    <p class="hint">Questions: contact the Pocket Investing team.</p></div>`;
 }
 function upgradeSheet(then){
   openModal(`<header><h2>Pocket Investing Pro</h2><button class="x" data-close aria-label="Close">×</button></header>
@@ -1173,17 +1379,25 @@ function upgradeSheet(then){
     sh.querySelector('#u-go').onclick = async () => { try { await Store.upgradePro(); closeModal(); toast("You're on Pro."); if (then) await then(); } catch(e){ errToast(e); } };
   });
 }
+function rulesAcceptHTML(g){ const R = Store.rulesOf(g); return R.rulesText ? `<div class="panel" style="padding:14px 16px;margin-bottom:12px;max-height:180px;overflow:auto;white-space:pre-wrap;font-size:14px">${esc(R.rulesText)}</div><label style="display:flex;gap:10px;align-items:center;margin-bottom:14px"><input type="checkbox" id="j-rules"> I agree to the group's rules</label>` : ''; }
+function joinExtras(sh, g){ const c = sh.querySelector('#j-rules'); return { acceptRules: c ? c.checked : true, code: ui.inviteFor === g.id ? ui.inviteCode : undefined, by: ui.inviteFor === g.id ? ui.inviteBy : undefined }; }
+function reqJoinSheet(gid){
+  const g = Store.get('groups', gid);
+  openModal(`<header><h2>Request to join ${esc(g.name)}</h2><button class="x" data-close aria-label="Close">×</button></header><p class="muted" style="margin-top:0">The Owner or an Admin reviews each request.</p>${rulesAcceptHTML(g)}<button class="btn" id="rq-go" style="width:100%">Send request</button>`, sh => {
+    sh.querySelector('#rq-go').onclick = async () => { try { await Store.requestJoin(gid, joinExtras(sh, g).acceptRules); closeModal(); toast('Request sent. The owner decides who joins.'); } catch(e){ errToast(e); } };
+  });
+}
 function joinSheet(gid){
   const g = Store.get('groups', gid); const my = Store.membership(gid);
   openModal(`<header><h2>Join ${esc(g.name)}</h2><button class="x" data-close aria-label="Close">×</button></header>
     <div class="list" style="margin-bottom:16px">
       <div class="row"><div class="grow"><b>Full member with Pro</b><div class="small muted">Vote on proposals and copy the Lead Trader's trades with your approval. $9.99 a month.</div></div></div>
       <div class="row"><div class="grow"><b>Observer, free</b><div class="small muted">Follow the group's trades and discussion without voting or copying.</div></div></div></div>
-    <button class="btn" id="j-pro" style="width:100%">Start Pro and join as a member</button>
+    ${my ? '' : rulesAcceptHTML(g)}<button class="btn" id="j-pro" style="width:100%">${Store.isPro() ? 'Join as a member' : 'Start Pro and join as a member'}</button>
     ${my ? '' : `<button class="btn ghost" id="j-obs" style="width:100%;margin-top:10px">Join as an observer</button>`}
     <p class="hint" style="text-align:center;margin-top:10px">Simulated subscription for this demo. Nothing is charged.</p>`, sh => {
-    sh.querySelector('#j-pro').onclick = async () => { try { await Store.upgradePro(); await Store.join(gid, 'member'); closeModal(); toast("You're on Pro and joined as a member. Group trades will ask for your approval."); } catch(e){ errToast(e); } };
-    const o = sh.querySelector('#j-obs'); if (o) o.onclick = async () => { try { await Store.join(gid, 'observer'); closeModal(); toast('You joined as an observer.'); } catch(e){ errToast(e); } };
+    sh.querySelector('#j-pro').onclick = async () => { try { const x = joinExtras(sh, g); if (!x.acceptRules) throw Object.assign(new Error("Please accept the group's rules to join."), { userFacing: true }); if (!Store.isPro()) await Store.upgradePro(); await Store.join(gid, 'member', x); closeModal(); toast("You're on Pro and joined as a member. Group trades will ask for your approval."); } catch(e){ errToast(e); } };
+    const o = sh.querySelector('#j-obs'); if (o) o.onclick = async () => { try { const x = joinExtras(sh, g); if (!x.acceptRules) throw Object.assign(new Error("Please accept the group's rules to join."), { userFacing: true }); await Store.join(gid, 'observer', x); closeModal(); toast('You joined as an observer.'); } catch(e){ errToast(e); } };
   });
 }
 function reportSheet(gid){
@@ -1196,6 +1410,88 @@ function reportSheet(gid){
     sh.querySelector('#r-go').onclick = async () => { try { await Store.report(gid, sh.querySelector('#r-r').value, sh.querySelector('#r-d').value); closeModal(); toast('Report sent to the trust and safety team.'); } catch(e){ errToast(e); } };
   });
 }
+function rulesSheet(gid){
+  const g = Store.get('groups', gid), R = Store.rulesOf(g);
+  const opt = (v, cur, l) => `<option value="${v}" ${String(cur) === String(v) ? 'selected' : ''}>${l}</option>`;
+  const roleChecks = ['admin','lead','junior','analyst','risk','moderator','member'].map(k => `<label style="display:inline-flex;gap:6px;align-items:center;margin:0 14px 8px 0"><input type="checkbox" class="pr-role" value="${k}" ${R.proposeRoles.includes(k) ? 'checked' : ''}> ${Store.ROLE_LABEL[k]}</label>`).join('');
+  openModal(`<header><h2>Group settings</h2><button class="x" data-close aria-label="Close">×</button></header>
+    <div class="field"><label for="s-n">Name</label><input class="input" id="s-n" maxlength="60" value="${esc(g.name)}"></div>
+    <div class="field"><label for="s-st">Strategy</label><input class="input" id="s-st" maxlength="120" value="${esc(g.strategy || '')}"></div>
+    <div class="field"><label for="s-d">Description</label><textarea class="input" id="s-d" maxlength="300">${esc(g.description || '')}</textarea></div>
+    <h3 style="margin:18px 0 10px">Joining</h3>
+    <div class="grid2"><div class="field"><label for="s-jm">How people join</label><select class="input" id="s-jm">${opt('open', R.joinMode, 'Anyone can join')}${opt('request', R.joinMode, 'Request, then approval')}${opt('invite', R.joinMode, 'Invite link only')}</select></div>
+      <div class="field"><label for="s-mx">Member limit</label><input class="input" id="s-mx" type="number" min="2" placeholder="No limit" value="${R.maxMembers || ''}"></div>
+      <div class="field"><label for="s-min">Minimum account value ($)</label><input class="input" id="s-min" type="number" min="0" step="500" value="${R.minAccount || 0}"></div>
+      <div class="field"><label for="s-hid">Shown in Discover</label><select class="input" id="s-hid">${opt('false', R.hidden, 'Yes')}${opt('true', R.hidden, 'No, hidden')}</select></div></div>
+    <div class="field"><label for="s-rt">Group rules members accept when joining</label><textarea class="input" id="s-rt" maxlength="2000" placeholder="Optional">${esc(R.rulesText || '')}</textarea></div>
+    <h3 style="margin:18px 0 10px">Voting</h3>
+    <div class="field"><label>Who can propose (Owners always can)</label><div>${roleChecks}</div></div>
+    <div class="grid2"><div class="field"><label for="s-q">Quorum</label><select class="input" id="s-q">${[0, 0.25, 0.5, 0.6, 0.75].map(v => opt(v, R.quorum, v ? Math.round(v * 100) + '% of members' : 'None')).join('')}</select></div>
+      <div class="field"><label for="s-pr">To pass</label><select class="input" id="s-pr">${opt('majority', R.passRule, 'Majority')}${opt('two-thirds', R.passRule, 'Two-thirds')}</select></div>
+      <div class="field"><label for="s-vd">Default voting period</label><select class="input" id="s-vd">${[1, 3, 5, 7].map(v => opt(v, R.votingDays, v + ' day' + (v === 1 ? '' : 's'))).join('')}</select></div>
+      <div class="field"><label for="s-vw">New members can vote after</label><select class="input" id="s-vw">${[0, 7, 14, 30].map(v => opt(v, R.voteWaitDays, v ? v + ' days' : 'Right away')).join('')}</select></div></div>
+    <h3 style="margin:18px 0 10px">Trading</h3>
+    <div class="grid2"><div class="field"><label for="s-mp">Largest trade without a vote</label><select class="input" id="s-mp">${opt('', R.maxPositionPct || '', 'No limit')}${[0.05, 0.1, 0.15, 0.2, 0.25].map(v => opt(v, R.maxPositionPct, Math.round(v * 100) + '% of the portfolio')).join('')}</select></div>
+      <div class="field"><label for="s-al">Allowed investments</label><select class="input" id="s-al">${opt('any', R.allowed, 'Any stock or ETF')}${opt('etf', R.allowed, 'ETFs only')}${opt('list', R.allowed, 'A set list')}</select></div>
+      <div class="field"><label for="s-aw">Approval window</label><select class="input" id="s-aw">${[15, 30, 60].map(v => opt(v, R.approvalMinutes, v + ' minutes')).join('')}</select></div>
+      <div class="field"><label for="s-rr">Risk Manager review</label><select class="input" id="s-rr">${opt('false', R.riskReview, 'Off')}${opt('true', R.riskReview, 'Every group trade')}</select><span class="hint">Needs a member with the Risk Manager role.</span></div>
+      <div class="field"><label for="s-cp">Starting copy size for new members</label><select class="input" id="s-cp">${opt(1, R.defaultCopyPct, '100%')}${opt(0.5, R.defaultCopyPct, '50%')}</select></div></div>
+    <div class="field" id="s-list-f"><label>Allowed list</label><div style="display:flex;flex-wrap:wrap">${Market.LIST.map(t => `<label style="display:inline-flex;gap:6px;align-items:center;margin:0 14px 8px 0"><input type="checkbox" class="al-sym" value="${t.s}" ${R.allowedList.includes(t.s) ? 'checked' : ''}> ${t.s}</label>`).join('')}</div></div>
+    <h3 style="margin:18px 0 10px">Paid group</h3><p class="hint" style="margin-top:0">Monthly member fees are available after adviser registration.</p>
+    <div class="hint" id="s-err" style="color:var(--loss);min-height:1.2em"></div>
+    <button class="btn" id="s-go" style="width:100%">Save settings</button>`, sh => {
+    const q = id => sh.querySelector('#' + id); const syncL = () => q('s-list-f').style.display = q('s-al').value === 'list' ? '' : 'none'; q('s-al').onchange = syncL; syncL();
+    q('s-go').onclick = async () => {
+      const mx = q('s-mx').value.trim(), mp = q('s-mp').value;
+      const rules = { joinMode: q('s-jm').value, maxMembers: mx ? Math.round(Number(mx)) : null, minAccount: Math.max(0, Number(q('s-min').value) || 0), hidden: q('s-hid').value === 'true', rulesText: q('s-rt').value,
+        proposeRoles: ['owner'].concat($$('.pr-role', sh).filter(c => c.checked).map(c => c.value)), quorum: Number(q('s-q').value), passRule: q('s-pr').value, votingDays: Number(q('s-vd').value), voteWaitDays: Number(q('s-vw').value),
+        maxPositionPct: mp ? Number(mp) : null, allowed: q('s-al').value, allowedList: $$('.al-sym', sh).filter(c => c.checked).map(c => c.value), approvalMinutes: Number(q('s-aw').value), riskReview: q('s-rr').value === 'true', defaultCopyPct: Number(q('s-cp').value) };
+      if (rules.allowed === 'list' && !rules.allowedList.length){ q('s-err').textContent = 'Pick at least one allowed investment.'; return; }
+      try { await Store.updateGroup(gid, { rules, name: q('s-n').value, strategy: q('s-st').value, description: q('s-d').value }); closeModal(); toast('Group settings saved.'); } catch(e){ q('s-err').textContent = e.userFacing ? e.message : 'Something went wrong.'; }
+    };
+  });
+}
+function suggestSheet(gid){
+  const g = Store.get('groups', gid), R = Store.rulesOf(g);
+  const list = R.allowed === 'etf' ? Market.LIST.filter(t => Market.ETFS_UI.includes(t.s)) : R.allowed === 'list' ? Market.LIST.filter(t => R.allowedList.includes(t.s)) : Market.LIST;
+  openModal(`<header><h2>Suggest a trade</h2><button class="x" data-close aria-label="Close">×</button></header><p class="muted" style="margin-top:0">The Lead Trader reviews your suggestion. If they approve, it becomes a group trade.</p>
+    <div class="grid2"><div class="field"><label for="sg-s">Stock</label><select class="input" id="sg-s">${list.map(t => `<option value="${t.s}">${t.s} — ${esc(t.n)}</option>`).join('')}</select></div>
+    <div class="field"><label for="sg-side">Action</label><select class="input" id="sg-side"><option value="buy">Buy</option><option value="sell">Sell</option></select></div>
+    <div class="field"><label for="sg-p">Size</label><select class="input" id="sg-p"><option value="0.02">2% of the portfolio</option><option value="0.05" selected>5%</option><option value="0.1">10%</option></select></div></div>
+    <div class="field"><label for="sg-n">Why (optional)</label><textarea class="input" id="sg-n" maxlength="500" placeholder="Your reasoning"></textarea></div><button class="btn ember" id="sg-go" style="width:100%">Send suggestion</button>`, sh => {
+    sh.querySelector('#sg-go').onclick = async () => { try { await Store.suggestTrade({ gid, sym: sh.querySelector('#sg-s').value, side: sh.querySelector('#sg-side').value, pct: Number(sh.querySelector('#sg-p').value), note: sh.querySelector('#sg-n').value }); closeModal(); toast('Suggestion sent to the Lead Trader.'); } catch(e){ errToast(e); } };
+  });
+}
+function pwSheet(){
+  openModal(`<header><h2>Change password</h2><button class="x" data-close aria-label="Close">×</button></header>
+    <div class="field"><label for="pw-c">Current password</label><input class="input" id="pw-c" type="password" autocomplete="current-password"></div>
+    <div class="field"><label for="pw-n">New password</label><input class="input" id="pw-n" type="password" autocomplete="new-password"><span class="hint">At least 8 characters. Other devices will be signed out.</span></div>
+    <div class="hint" id="pw-e" style="color:var(--loss);min-height:1.2em"></div><button class="btn" id="pw-go" style="width:100%">Update password</button>`, sh => {
+    sh.querySelector('#pw-go').onclick = async () => { try { await Store.changePassword(sh.querySelector('#pw-c').value, sh.querySelector('#pw-n').value); closeModal(); toast('Password updated.'); } catch(e){ sh.querySelector('#pw-e').textContent = e.userFacing ? e.message : 'Something went wrong.'; } };
+  });
+}
+function deleteSheet(){
+  openModal(`<header><h2>Delete your account</h2><button class="x" data-close aria-label="Close">×</button></header>
+    <p>This permanently removes your profile, portfolio, posts, votes and activity. If you own a group with other members, transfer ownership first.</p>
+    <div class="field"><label for="del-p">Enter your password to confirm</label><input class="input" id="del-p" type="password" autocomplete="current-password"></div>
+    <div class="hint" id="del-e" style="color:var(--loss);min-height:1.2em"></div><button class="btn" id="del-go" style="width:100%;background:var(--loss)">Delete my account</button>`, sh => {
+    sh.querySelector('#del-go').onclick = async () => { try { await Store.deleteAccount(sh.querySelector('#del-p').value); closeModal(); toast('Your account has been deleted.'); location.hash = '#/home'; } catch(e){ sh.querySelector('#del-e').textContent = e.userFacing ? e.message : 'Something went wrong.'; } };
+  });
+}
+function feedbackSheet(){
+  const where = location.hash || '#/home';
+  openModal(`<header><h2>Send feedback</h2><button class="x" data-close aria-label="Close">×</button></header><p class="muted" style="margin-top:0">What happened, or what would make this better? We'll note that you were on <b>${esc(where)}</b>.</p>
+    <div class="field"><label for="fb-t" class="sr">Feedback</label><textarea class="input" id="fb-t" maxlength="4000" style="min-height:130px" placeholder="Describe what you saw, what you expected, or an idea"></textarea></div><button class="btn" id="fb-go" style="width:100%">Send</button>`, sh => {
+    sh.querySelector('#fb-go').onclick = async () => { try { await Store.feedback(sh.querySelector('#fb-t').value, where); closeModal(); toast('Thanks. The Pocket team will read this.'); } catch(e){ errToast(e); } };
+  });
+}
+function renderFeedbackButton(){
+  let b = document.getElementById('fbbtn');
+  if (!Store.signedIn || ui.tour != null || ui.presenter != null){ if (b) b.remove(); return; }
+  if (!b){ b = document.createElement('button'); b.id = 'fbbtn'; b.className = 'btn sm ghost'; b.textContent = 'Feedback'; b.setAttribute('data-act', 'feedback');
+    b.setAttribute('style', 'position:fixed;z-index:25;right:14px;bottom:calc(76px + env(safe-area-inset-bottom,0px));background:var(--surface);box-shadow:0 4px 14px rgba(10,16,30,.12)'); document.body.appendChild(b); }
+  b.style.bottom = window.matchMedia && window.matchMedia('(min-width: 960px)').matches ? '20px' : 'calc(76px + env(safe-area-inset-bottom,0px))';
+}
 function bioSheet(){
   const p = Store.get('profiles', Store.myPid) || {};
   openModal(`<header><h2>Edit bio</h2><button class="x" data-close aria-label="Close">×</button></header>
@@ -1205,11 +1501,53 @@ function bioSheet(){
 }
 
 /* ---------- actions ---------- */
-async function act(el, ev){
+async function act(el, ev){ /* eslint-disable-line */
   const a = el.dataset.act, id = el.dataset.id;
   const busy = async fn => { el.disabled = true; try { await fn(); } catch(e){ errToast(e); } finally { el.disabled = false; } };
   switch (a){
     case 'start': return authSheet('signup');
+    case 'usage-refresh': ui.usage = null; return render();
+    case 'annoff': try { localStorage.setItem('pi_ann_off', el.dataset.k); } catch(e){} return render();
+    case 'feedback': return feedbackSheet();
+    case 'chpw': return pwSheet();
+    case 'delacct': return deleteSheet();
+    case 'suggest': return suggestSheet(id);
+    case 'sgyes': return busy(async () => { const r = await Store.decideSuggestion(id, true); toast(r && r.held ? 'Approved and traded. Held for Risk Manager review.' : `Approved and traded. ${r ? r.sent : 0} member${r && r.sent === 1 ? '' : 's'} asked to approve.`); });
+    case 'sgno': return busy(async () => { await Store.decideSuggestion(id, false); toast('Suggestion declined.'); });
+    case 'rvrelease': return busy(async () => { const n = await Store.releaseReview(id); toast(`Released. ${n} member${n === 1 ? '' : 's'} asked to approve.`); });
+    case 'rvpause': return busy(async () => { const reason = prompt('Why pause this trade? Members will see this with the vote.', 'Position looks large for current volatility.'); if (reason === null) return; await Store.pauseReview(id, reason); toast('Paused. The group votes on whether to copy it.'); });
+    case 'editrules': return rulesSheet(id);
+    case 'rmmember': return busy(async () => { if (!confirm('Remove ' + Store.displayName(el.dataset.pid) + ' from the group?')) return; await Store.removeMember(el.dataset.gid, el.dataset.pid); toast('Member removed.'); });
+    case 'xfer': return busy(async () => { const pid = $('#xfer').value; if (!confirm('Make ' + Store.displayName(pid) + ' the Owner? You will become an Admin.')) return; await Store.transferOwnership(el.dataset.gid, pid); toast('Ownership transferred.'); });
+    case 'pushon': return busy(async () => { await pushOn(); ui.pushState = 'on'; toast('Notifications are on for this device.'); render(); });
+    case 'pushoff': return busy(async () => { await pushOff(); ui.pushState = 'off'; toast('Notifications are off for this device.'); render(); });
+    case 'pushtest': return busy(async () => { const r = await Store.http('POST', '/api/push/test'); toast(r.sent ? 'Test sent. It should arrive in a few seconds.' : 'No devices are set up for alerts yet.'); });
+    case 'savenotif': return busy(async () => {
+      const c = id => { const e = document.getElementById(id); return e ? e.checked : true; };
+      const muted = Store.myGroups().filter(g => !c('n-g-' + g.id)).map(g => g.id);
+      await Store.setNotifPrefs({ approvals: c('n-ap'), votes: c('n-vo'), social: c('n-so'), approvalsInQuiet: c('n-aq'), mutedGroups: muted, quiet: { on: c('n-qon'), start: $('#n-qs').value, end: $('#n-qe').value }, tz: Intl.DateTimeFormat().resolvedOptions().timeZone });
+      toast('Notification settings saved.');
+    });
+    case 'adm-tab': ev.preventDefault(); ui.adminTab = el.dataset.k; return render();
+    case 'adm-refresh': ui.admin = null; return render();
+    case 'adm': return busy(async () => {
+      const op = el.dataset.op;
+      if (op === 'disable' && !confirm('Turn off this account? They will be signed out and unable to sign in.')) return;
+      const r = await Store.http('POST', '/api/admin/user', { userId: id, op });
+      if (op === 'reset'){ openModal(`<header><h2>Reset code</h2><button class="x" data-close aria-label="Close">×</button></header><p>Give this code to <b>@${esc(el.dataset.n)}</b>. It works once, for 24 hours. They choose "Forgot your password?" on the sign-in screen.</p><div class="est"><b class="num" style="font-size:24px;letter-spacing:2px">${esc(r.code)}</b></div>`); }
+      else toast('Updated.');
+      await loadAdmin();
+    });
+    case 'adm-newinv': return newInviteSheet();
+    case 'adm-invtoggle': return busy(async () => { await Store.http('POST', '/api/admin/invite', { code: el.dataset.k, op: 'toggle' }); await loadAdmin(); });
+    case 'adm-copylink': { const link = location.origin + '/#/signup/' + el.dataset.k; try { await navigator.clipboard.writeText(link); toast('Sign-up link copied.'); } catch(e){ prompt('Copy this sign-up link:', link); } return; }
+    case 'adm-fb': return busy(async () => { await Store.http('POST', '/api/admin/feedback', { id }); await loadAdmin(); });
+    case 'adm-errclear': return busy(async () => { if (!confirm('Clear all error reports?')) return; await Store.http('POST', '/api/admin/errors/clear'); await loadAdmin(); });
+    case 'adm-io': return busy(async () => { await Store.http('POST', '/api/admin/settings', { inviteOnly: el.dataset.k === '1' }); await loadAdmin(); toast('Saved.'); });
+    case 'adm-ann': return busy(async () => { await Store.http('POST', '/api/admin/settings', { announcement: $('#adm-ann').value }); await loadAdmin(); toast('Announcement posted.'); });
+    case 'adm-annclear': return busy(async () => { await Store.http('POST', '/api/admin/settings', { announcement: '' }); await loadAdmin(); toast('Announcement removed.'); });
+    case 'demorelease': return busy(async () => { const r = await Store.demoReview(el.dataset.gid, 'release'); toast(`Risk Manager released the trade. ${r.sent} member${r.sent === 1 ? '' : 's'} asked to approve.`); });
+    case 'demopause': return busy(async () => { await Store.demoReview(el.dataset.gid, 'pause'); toast('Risk Manager paused the trade. The group is voting.'); });
     case 'signin': ev.preventDefault(); return authSheet('login');
     case 'signout': return busy(async () => { await Store.logout(); ui.seenReqs = null; toast('Signed out.'); location.hash = '#/home'; });
     case 'delpost': return busy(async () => { if (!confirm('Delete this post?')) return; await Store.deletePost(id); toast('Post deleted.'); });
@@ -1228,7 +1566,7 @@ async function act(el, ev){
     case 'span': ui.chartSpan = el.dataset.k; return render();
     case 'follow': return busy(() => Store.follow(id));
     case 'unfollow': return busy(() => Store.unfollow(id));
-    case 'join': if (!Store.isPro()) return joinSheet(id); return busy(async () => { await Store.join(id, 'member'); toast('You joined as a member. Group trades will ask for your approval.'); });
+    case 'join': if (!Store.isPro() || (!Store.membership(id) && Store.rulesOf(Store.get('groups', id)).rulesText)) return joinSheet(id); return busy(async () => { await Store.join(id, 'member', { code: ui.inviteFor === id ? ui.inviteCode : undefined, by: ui.inviteFor === id ? ui.inviteBy : undefined }); toast('You joined as a member. Group trades will ask for your approval.'); });
     case 'upgrade': return upgradeSheet();
     case 'cancelpro': return busy(async () => { if (!confirm('Cancel Pro? Group memberships become observer and copying stops.')) return; await Store.cancelPro(); toast('Pro cancelled. You are on the free plan.'); });
     case 'copy': if (!Store.isPro()) return upgradeSheet(() => Store.copyInvestor(id).then(() => toast(`You copy ${Store.displayName(id)}. Their trades will ask for your approval.`))); return busy(async () => { await Store.copyInvestor(id); toast(`You copy ${Store.displayName(id)}. Their trades will ask for your approval.`); });
@@ -1238,7 +1576,7 @@ async function act(el, ev){
     case 'onb': ui.onb = +el.dataset.k; return render();
     case 'risk': ui.risk = el.dataset.k; return render();
     case 'tipoff': try { localStorage.setItem('pi_install_tip', 'off'); } catch(e){} return render();
-    case 'reqjoin': return busy(async () => { await Store.requestJoin(id); toast('Request sent. The owner decides who joins.'); });
+    case 'reqjoin': if (Store.rulesOf(Store.get('groups', id)).rulesText) return reqJoinSheet(id); return busy(async () => { await Store.requestJoin(id, true); toast('Request sent. The owner decides who joins.'); });
     case 'joinyes': return busy(async () => { await Store.decideJoin(id, true); toast('Request approved.'); });
     case 'joinno': return busy(async () => { await Store.decideJoin(id, false); toast('Request declined.'); });
     case 'invite': return inviteSheet(id);
@@ -1288,21 +1626,22 @@ async function act(el, ev){
 document.addEventListener('click', ev => { const el = ev.target.closest('[data-act]'); if (!el || el.tagName === 'SELECT') return; if (el.tagName === 'A') ev.preventDefault(); act(el, ev); });
 document.addEventListener('change', ev => { const el = ev.target; if (el.dataset && el.dataset.act === 'setrisk'){ Store.setRisk(el.value).then(() => toast('Investing style updated.'), errToast); return; } if (el.dataset && el.dataset.act === 'role'){ Store.setRole(el.dataset.gid, el.dataset.pid, el.value).then(() => toast('Role updated.'), errToast); } });
 document.addEventListener('input', ev => { const el = ev.target; if (el.dataset && el.dataset.draft) ui.drafts[el.dataset.draft] = el.value; });
-window.addEventListener('hashchange', () => { closeModal(); window.scrollTo(0, 0); render(); if (route().name === 'notifications') setTimeout(() => Store.markSeen(), 1500); });
+window.addEventListener('hashchange', () => { closeModal(); window.scrollTo(0, 0); if (route().name !== 'admin') ui.admin = null; if (route().name !== 'metrics') ui.usage = null; if (route().name !== 'settings') ui.pushState = null; render(); if (route().name === 'notifications') setTimeout(() => Store.markSeen(), 1500); });
 
 /* ---------- viewer tour (read-only, nothing is written) ---------- */
 const TOUR = [
   { t:"You're Dan, a group member", say:"Dan has a simulated portfolio and belongs to two investing groups. Everything here is sample data, and nothing you tap changes it.", go:'#/home' },
-  { t:'An approval request', say:"Maya, the Lead Trader of Dan's group, just bought MSFT. Dan gets a request sized to his capital and has 30 minutes to approve. Nothing executes without him.", go:'#/inbox' },
+  { t:'An approval request', say:"Maya, the Lead Trader of Dan's group, just bought MSFT. Dan gets a request sized to his capital, on his phone too. He can copy half or the full amount, within the window his group sets: 30 minutes here. Nothing executes without him.", go:'#/inbox' },
   { t:'Inside a group', say:"The group's timeline mixes Lead Trader trades, member posts and votes. The bar under each trade shows how many members copied it.", go:'#/group/g_techmomentum/activity' },
-  { t:'Members vote', say:'Owners, Admins and Lead Traders propose trades and rule changes. Members vote, and a passed trade proposal becomes a trade every member can approve.', go:'#/group/g_techmomentum/proposals' },
-  { t:'Roles', say:'Each group has an Owner, Admins, a Lead Trader who trades for the group, Members who vote and copy, and Observers who just follow along.', go:'#/group/g_techmomentum/members' },
+  { t:'Risk Manager review', say:"This group holds every trade for its Risk Manager before members see it. Jake can release it, or pause it so the group votes on whether to copy it.", go:'#/group/g_techmomentum/activity', sampleReview: true },
+  { t:'Group rules', say:"Each group sets its own rules: how people join, a minimum account value, trades above 10% of the portfolio need a vote, which investments are allowed, and rules members accept when they join.", go:'#/group/g_techmomentum/rules' },
+  { t:'Members vote', say:"Trade ideas and rule changes go to a vote. Here, half the members must vote and a majority must agree. A passed trade idea becomes a trade every member can approve.", go:'#/group/g_techmomentum/proposals' },
+  { t:'Roles', say:"Nine roles keep a group organized, from Owner and Lead Trader to Analysts who propose trades, Junior Traders who suggest them, and the Risk Manager.", go:'#/group/g_techmomentum/members' },
   { t:'How Dan tracks his group', say:"Dan's copied trades against the Lead Trader's and the S&P 500. Trades he skipped show up as drift.", go:'#/group/g_techmomentum/performance' },
   { t:'The social feed', say:'Investors share ideas and trades. Anyone can follow an investor, or copy their trades individually with the same approval step.', go:'#/feed' },
   { t:'Copying one investor', say:"Maya's profile: her return, top holdings and posts. Pro members can copy her trades, approving each one.", go:'#/u/demo_maya' },
-  { t:'The weekly digest', say:"Every Monday, members get their week: group trades, their copy rate, votes waiting on them and how they're tracking.", go:'#/digest' },
   { t:'How Pocket makes money', say:'The app is free to start. Pro ($9.99 a month) unlocks full group membership, copying and performance tracking. Group owners pay $19.99 a month for Group Pro.', go:'#/home', after: () => upgradeSheet() },
-  { t:"That's the tour", say:'Individual investing, copying one investor, and investing together as a group, with member approval on every trade. Pocket Investing is raising a seed round to build the native app.', go:'#/home' }
+  { t:"That's the tour", say:'Invest on your own, copy an investor, or invest together as a group, with approval on every trade and a weekly digest to keep up. The beta is invite only: ask the Pocket team for an invite code.', go:'#/home' }
 ];
 async function tourGo(i){
   closeModal();
@@ -1330,13 +1669,18 @@ const PRESENT = [
   { t:'Your portfolio', say:'Every user starts with simulated cash. This is the individual side of the app: a portfolio, holdings and markets.', go: async () => { if (!Store.get('profiles', Store.myPid)) await Store.ensureMe(); location.hash = '#/home'; } },
   { t:'The social feed', say:'Investors share ideas and trades. You can follow them, comment, and copy an individual investor.', go: async () => { location.hash = '#/feed'; } },
   { t:'A group', say:'Groups have roles: an Owner, Admins, a Lead Trader who trades for the group, and Members who vote and copy.', go: async () => { location.hash = '#/group/g_techmomentum'; } },
-  { t:'The Pro upgrade', say:'Full membership is part of Pro, $9.99 a month. This is where the business model shows up in the product.', go: async () => { location.hash = '#/group/g_techmomentum'; await new Promise(r => setTimeout(r, 80)); if (!Store.membership('g_techmomentum') || Store.membership('g_techmomentum').role === 'observer'){ if (Store.isPro()) await Store.join('g_techmomentum', 'member'); else joinSheet('g_techmomentum'); } } },
+  { t:'The Pro upgrade', say:'Full membership is part of Pro, $9.99 a month. This is where the business model shows up in the product.', go: async () => { location.hash = '#/group/g_techmomentum'; await new Promise(r => setTimeout(r, 80)); if (!Store.membership('g_techmomentum') || Store.membership('g_techmomentum').role === 'observer'){ if (Store.isPro()) await Store.join('g_techmomentum', 'member', { acceptRules: true }); else joinSheet('g_techmomentum'); } } },
   { t:'The Lead Trader trades', say:"Maya buys for the group. Her order fills in her own account, and every member gets an approval request sized to their capital.", go: async () => {
-      closeModal(); if (!Store.isPro()){ await Store.upgradePro(); } if (!Store.membership('g_techmomentum') || Store.membership('g_techmomentum').role === 'observer') await Store.join('g_techmomentum', 'member');
+      closeModal(); if (!Store.isPro()){ await Store.upgradePro(); } if (!Store.membership('g_techmomentum') || Store.membership('g_techmomentum').role === 'observer') await Store.join('g_techmomentum', 'member', { acceptRules: true });
       await until(() => Store.isPro() && (Store.membership('g_techmomentum') || {}).role === 'member');
       if (Clock.mode() === 'live' && !Clock.canFillNow()){ await Store.setClock('open'); await until(() => Clock.mode() === 'open'); }
       const g = Store.get('groups', 'g_techmomentum'); const sym = ['AAPL','MSFT','GOOGL','AMZN','NVDA'][Math.floor(Math.random() * 5)];
+      if (!(Store.membership('g_techmomentum') || {}).rulesAcceptedTs && !(Store.membership('g_techmomentum'))) await Store.join('g_techmomentum', 'member', { acceptRules: true });
       await Store.groupTrade('g_techmomentum', g.leadPid, sym, 'buy', Math.floor(8000 / Market.price(sym) * 1000) / 1000, `Adding ${'$' + sym} at about 8% of the portfolio. Approve if it fits your plan.`);
+      location.hash = '#/group/g_techmomentum/activity'; } },
+  { t:'The Risk Manager reviews', say:"This group holds every trade for its Risk Manager before members see it. Jake can release it, or pause it for a group vote. He releases this one.", go: async () => {
+      await until(() => Store.all('reviews').some(r => r.gid === 'g_techmomentum' && r.status === 'pending'), 3000);
+      if (Store.all('reviews').some(r => r.gid === 'g_techmomentum' && r.status === 'pending')) await Store.demoReview('g_techmomentum', 'release');
       location.hash = '#/group/g_techmomentum/activity'; } },
   { t:'You approve', say:'Nothing executes without the member. Approve within 30 minutes, or 5 minutes before the close. Late-day trades can be bought at the next open.', go: async () => { location.hash = '#/inbox'; } },
   { t:'The group responds', say:'Other members approve or decline. The Lead Trader sees how many copied.', go: async () => { await Store.simulateApprovals('g_techmomentum'); location.hash = '#/group/g_techmomentum/activity'; } },
@@ -1373,10 +1717,19 @@ function watchRequests(){
   }
 }
 
+/* ---------- error reports and screen views for the beta ---------- */
+let errCount = 0;
+function reportError(message, stack){ if (++errCount > 8) return; try { fetch('/api/client-error', { method:'POST', credentials:'same-origin', headers:{ 'content-type':'application/json' }, body: JSON.stringify({ message: String(message).slice(0, 500), stack: String(stack || '').slice(0, 4000), url: location.hash }) }).catch(() => {}); } catch(e){} }
+window.addEventListener('error', e => reportError(e.message || 'Error', e.error && e.error.stack));
+window.addEventListener('unhandledrejection', e => { const r = e.reason || {}; if (r.userFacing) return; reportError('Unhandled: ' + (r.message || r), r.stack); });
+const seenViews = {};
+function logView(){ const n = route().name; if (!/^[a-z]+$/.test(n) || ui.tour != null) return; const now = Date.now(); if (seenViews[n] && now - seenViews[n] < 60000) return; seenViews[n] = now; fetch('/api/event', { method:'POST', credentials:'same-origin', headers:{ 'content-type':'application/json' }, body: JSON.stringify({ name: 'view:' + n }) }).catch(() => {}); }
+window.addEventListener('hashchange', logView);
+
 /* ---------- boot ---------- */
 Store.subscribe(() => { watchRequests(); schedule(); });
 render();
-Store.init().then(render, e => { console.error(e); render(); });
+Store.init().then(() => { render(); logView(); }, e => { console.error(e); render(); });
 if ('serviceWorker' in navigator && location.protocol === 'https:') window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
 setInterval(() => { tick++; live(tick % 5 === 0); if (tick % 15 === 0){ Store.housekeeping(); renderNav(); } if (tick % 60 === 0) schedule(); }, 1000);
 
