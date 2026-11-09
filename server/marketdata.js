@@ -11,7 +11,7 @@ const EXCHANGES = new Set(['NYSE', 'NASDAQ', 'ARCA', 'AMEX', 'BATS']); /* no ove
 const MIN_PRICE = 5;                                                   /* no penny stocks */
 let deps = null;
 /* what happened last time each job ran, shown in Beta admin → Market data */
-const status = { assets: null, news: null, quotes: null };
+const status = { assets: null, news: null, quotes: null, sec: null, anchors: null };
 const errInfo = e => ({ status: e.status == null ? null : e.status, message: String(e.detail || e.message || e).slice(0, 400) });
 
 async function migrate(q){
@@ -97,6 +97,82 @@ async function bars(sym, span){
   barCache.set(key, { t: Date.now(), v }); return v;
 }
 
+/* ---------- demo prices anchored to real closes (button in Demo controls, optional daily) ---------- */
+let anchors = { at: null, bases: {} };
+async function applySavedAnchors(){ anchors = (await deps.getSetting('priceAnchors', null)) || { at: null, bases: {} }; Market.setBases(anchors.bases); }
+async function anchorPrices(){
+  if (!config.marketData) throw userErr('Add ALPACA_KEY and ALPACA_SECRET to this service first.');
+  if (config.realPrices) throw userErr('This site already uses real prices.');
+  const syms = Market.LIST.map(t => t.s), bases = {}, closes = {};
+  for (let i = 0; i < syms.length; i += 100){
+    const snap = (await alpaca.snapshots(syms.slice(i, i + 100))) || {};
+    for (const [sym, x] of Object.entries(snap)){
+      const close = (x.prevDailyBar && x.prevDailyBar.c) || (x.dailyBar && x.dailyBar.c) || (x.latestTrade && x.latestTrade.p);
+      const T = Market.MAP[sym], cur = Market.simPrice(sym);
+      if (close > 0 && T && cur > 0){ bases[sym] = close * T.b / cur; closes[sym] = close; } /* simulated price right now = the real close */
+    }
+  }
+  Market.setBases(bases);
+  anchors = { at: Date.now(), bases: Object.assign({}, anchors.bases, bases), count: Object.keys(bases).length };
+  await deps.setSetting('priceAnchors', anchors);
+  status.anchors = { at: anchors.at, count: anchors.count };
+  deps.broadcastMsg({ type: 'market', bases });
+  return { count: anchors.count, sample: Object.entries(closes).slice(0, 3).map(([k, v]) => `${k} $${v}`).join(', ') };
+}
+async function autoAnchor(){
+  if (!config.marketData || config.realPrices || !(await deps.getSetting('priceAnchorAuto', false))) return;
+  const et = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' }).formatToParts(new Date()).reduce((o, p) => (o[p.type] = p.value, o), {});
+  const today = `${et.year}-${et.month}-${et.day}`, last = anchors.at ? new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(anchors.at)) : null;
+  if (+et.hour >= 9 && last !== today) await anchorPrices();
+}
+
+/* ---------- company filings from SEC EDGAR ---------- */
+let cikMap = null, cikAt = 0;
+const secHeaders = () => ({ 'User-Agent': config.sec.contact, Accept: 'application/json' });
+async function secJson(url){
+  const r = await fetch(url, { headers: secHeaders(), signal: AbortSignal.timeout(15000) });
+  if (!r.ok){ const e = new Error(`SEC returned HTTP ${r.status}`); e.status = r.status; throw e; }
+  return r.json();
+}
+async function loadCiks(){
+  if (cikMap && Date.now() - cikAt < 86400000) return cikMap;
+  const j = await secJson(config.sec.wwwUrl + '/files/company_tickers.json');
+  cikMap = {}; for (const v of Object.values(j || {})) if (v && v.ticker) cikMap[String(v.ticker).toUpperCase()] = { cik: v.cik_str, title: v.title };
+  cikAt = Date.now(); return cikMap;
+}
+const ITEMS = { '2.02': 'reports quarterly results', '5.02': 'announces a leadership change', '1.01': 'enters a material agreement', '1.02': 'ends a material agreement', '2.01': 'completes an acquisition or sale',
+  '2.05': 'announces restructuring costs', '3.01': 'receives an exchange listing notice', '5.03': 'amends its bylaws', '5.07': 'reports shareholder vote results', '7.01': 'shares an investor update', '8.01': 'announces a company update' };
+const FORMS = { '10-Q': 'files its quarterly report', '10-K': 'files its annual report', '20-F': 'files its annual report', '6-K': 'files a company update' };
+function filingHeadline(name, form, items){
+  if (form === '8-K'){ const first = String(items || '').split(',').map(x => x.trim()).find(x => ITEMS[x] && x !== '9.01'); return `${name} ${first ? ITEMS[first] : 'files a current report'} (Form 8-K)`; }
+  return `${name} ${FORMS[form] || 'files with the SEC'} (Form ${form})`;
+}
+const secActive = () => config.sec.mode === 'on' || (config.sec.mode === 'auto' && config.marketData && status.news && status.news.error && [401, 403].includes(status.news.error.status) && !status.news.received);
+async function pullFilings(force){
+  if (!force && !secActive()) return 0;
+  const map = await loadCiks();
+  const syms = (await trackedSymbols()).filter(s => !Market.ETFS.includes(s) && map[s]).slice(0, 60);
+  const since = Date.now() - 14 * 86400000; let added = 0, checked = 0;
+  for (const sym of syms){
+    const cik = String(map[sym].cik).padStart(10, '0');
+    let j; try { j = await secJson(`${config.sec.dataUrl}/submissions/CIK${cik}.json`); } catch (e){ status.sec = { at: Date.now(), error: { status: e.status || null, message: e.message } }; continue; }
+    checked++;
+    const R = (j && j.filings && j.filings.recent) || {}, name = (Market.MAP[sym] && Market.MAP[sym].n) || map[sym].title;
+    for (let i = 0; i < (R.form || []).length && i < 40; i++){
+      const form = R.form[i]; if (!['8-K','10-Q','10-K','6-K','20-F'].includes(form)) continue;
+      const ts = Date.parse(R.acceptanceDateTime && R.acceptanceDateTime[i] || R.filingDate[i]); if (!(ts > since)) continue;
+      const acc = R.accessionNumber[i], url = `${config.sec.wwwUrl}/Archives/edgar/data/${Number(map[sym].cik)}/${String(acc).replace(/-/g, '')}/${R.primaryDocument[i] || ''}`;
+      const ins = await deps.q(`INSERT INTO news (id, ts, headline, summary, url, source, symbols) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (id) DO NOTHING RETURNING id`,
+        ['sec-' + acc, new Date(ts).toISOString(), filingHeadline(name, form, R.items && R.items[i]), `Form ${form} filed with the SEC on ${R.filingDate[i]}.`, url, 'SEC filing', [sym]]);
+      if (ins.rows.length) added++;
+    }
+    await new Promise(r => setTimeout(r, 150)); /* stay well under the SEC's 10 requests a second */
+  }
+  status.sec = Object.assign({ at: Date.now(), added, checked }, status.sec && status.sec.error && !checked ? { error: status.sec.error } : {});
+  if (added) deps.broadcastMsg({ type: 'news', n: added });
+  return added;
+}
+
 /* ---------- news ---------- */
 async function trackedSymbols(){
   const { q } = deps; const set = new Set(Market.LIST.map(t => t.s));
@@ -166,25 +242,29 @@ function mount(app, d){
     if (!(await d.needAdmin(req, res))) return;
     const n = (await d.q(`SELECT (SELECT count(*)::int FROM assets) AS assets, (SELECT count(*)::int FROM assets WHERE in_use) AS added, (SELECT count(*)::int FROM news) AS news, (SELECT max(ts) FROM news) AS newest`)).rows[0];
     const log = (await d.q(`SELECT method, path, status, message, created_at FROM broker_log ORDER BY id DESC LIMIT 15`).catch(() => ({ rows: [] }))).rows;
-    ok(res, { on: config.marketData, env: config.alpaca.env, authMode: config.alpaca.authMode, urls: { auth: config.alpaca.authUrl, broker: config.alpaca.baseUrl, data: config.alpaca.dataUrl },
+    ok(res, { on: config.marketData, sec: { mode: config.sec.mode, active: secActive(), contact: config.sec.contact }, anchors: { at: anchors.at, count: Object.keys(anchors.bases || {}).length, auto: !!(await d.getSetting('priceAnchorAuto', false)) },
+      env: config.alpaca.env, authMode: config.alpaca.authMode, urls: { auth: config.alpaca.authUrl, broker: config.alpaca.baseUrl, data: config.alpaca.dataUrl },
       realPrices: config.realPrices, counts: { assets: n.assets, added: n.added, news: n.news, newest: n.newest ? new Date(n.newest).getTime() : null }, status, log });
   }));
   app.post('/api/admin/marketdata/check', wrap(async (req, res) => {
     if (!(await d.needAdmin(req, res))) return;
-    if (!config.marketData) return bad(res, 'Add ALPACA_KEY and ALPACA_SECRET to this service first.');
     const steps = [];
     const step = async (name, fn) => { const t = Date.now(); try { const detail = await fn(); steps.push({ name, ok: true, ms: Date.now() - t, detail }); } catch (e){ const x = errInfo(e); steps.push({ name, ok: false, ms: Date.now() - t, status: x.status, detail: x.message }); } };
-    await step('Sign in to Alpaca', async () => { if (config.alpaca.authMode === 'legacy') return 'Using older key pair (no token needed)'; await alpaca.getToken(true); return 'Access token received'; });
-    await step('Stock list (Broker API)', async () => { const a = await alpaca.asset('AAPL'); return `AAPL: ${a.name || 'found'}, ${a.exchange || ''}, tradable ${!!a.tradable}`; });
-    await step('Price quote (Market Data)', async () => { const s = (await alpaca.snapshots(['AAPL'])) || {}; const p = snapPrice(s.AAPL); if (!p) throw new Error('No price returned for AAPL: ' + JSON.stringify(s).slice(0, 200)); return `AAPL last price $${p}`; });
-    await step('News for AAPL', async () => { const r = await alpaca.news(['AAPL'], 3); const list = (r && r.news) || []; if (!list.length) throw new Error('Request worked but returned no headlines: ' + JSON.stringify(r).slice(0, 200)); return `${list.length} headlines, newest: "${String(list[0].headline).slice(0, 90)}"`; });
-    await step('General news', async () => { const r = await alpaca.news(null, 3); const list = (r && r.news) || []; if (!list.length) throw new Error('Request worked but returned no headlines: ' + JSON.stringify(r).slice(0, 200)); return `${list.length} headlines`; });
+    if (config.marketData) await step('Sign in to Alpaca', async () => { if (config.alpaca.authMode === 'legacy') return 'Using older key pair (no token needed)'; await alpaca.getToken(true); return 'Access token received'; });
+    if (config.marketData) await step('Stock list (Broker API)', async () => { const a = await alpaca.asset('AAPL'); return `AAPL: ${a.name || 'found'}, ${a.exchange || ''}, tradable ${!!a.tradable}`; });
+    if (config.marketData) await step('Price quote (Market Data)', async () => { const s = (await alpaca.snapshots(['AAPL'])) || {}; const p = snapPrice(s.AAPL); if (!p) throw new Error('No price returned for AAPL: ' + JSON.stringify(s).slice(0, 200)); return `AAPL last price $${p}`; });
+    if (config.marketData) await step('News for AAPL', async () => { const r = await alpaca.news(['AAPL'], 3); const list = (r && r.news) || []; if (!list.length) throw new Error('Request worked but returned no headlines: ' + JSON.stringify(r).slice(0, 200)); return `${list.length} headlines, newest: "${String(list[0].headline).slice(0, 90)}"`; });
+    if (config.marketData) await step('General news', async () => { const r = await alpaca.news(null, 3); const list = (r && r.news) || []; if (!list.length) throw new Error('Request worked but returned no headlines: ' + JSON.stringify(r).slice(0, 200)); return `${list.length} headlines`; });
+    if (config.sec.mode !== 'off') await step('SEC filings (EDGAR)', async () => { const m = await loadCiks(); const a = m.AAPL; if (!a) throw new Error('Ticker list loaded but AAPL was missing'); const j = await secJson(`${config.sec.dataUrl}/submissions/CIK${String(a.cik).padStart(10, '0')}.json`); const n = ((j.filings && j.filings.recent && j.filings.recent.form) || []).length; return `${Object.keys(m).length.toLocaleString('en-US')} companies; Apple has ${n} recent filings` + (secActive() ? ' (in use as the news source)' : config.sec.mode === 'auto' ? ' (standing by: used only while Alpaca news is unavailable)' : ''); });
     ok(res, { steps });
   }));
+  app.post('/api/admin/marketdata/filings', wrap(async (req, res) => { if (!(await d.needAdmin(req, res))) return; if (config.sec.mode === 'off') return bad(res, 'SEC filings are turned off (SEC_FILINGS=off).'); ok(res, { added: await pullFilings(true), status: status.sec }); }));
+  app.post('/api/admin/prices/anchor', wrap(async (req, res) => { if (!(await d.needAdmin(req, res))) return; try { ok(res, await anchorPrices()); } catch (e){ if (e.userFacing) return bad(res, e.message); throw e; } }));
+  app.post('/api/admin/prices/auto', wrap(async (req, res) => { if (!(await d.needAdmin(req, res))) return; await d.setSetting('priceAnchorAuto', !!req.body.on); ok(res); }));
   app.post('/api/admin/marketdata/fetch', wrap(async (req, res) => {
     if (!(await d.needAdmin(req, res))) return;
     if (!config.marketData) return bad(res, 'Add ALPACA_KEY and ALPACA_SECRET to this service first.');
-    const added = await pullNews(); ok(res, { added, status: status.news });
+    const added = await pullNews(); const filings = await pullFilings().catch(() => 0); ok(res, { added: added + filings, status: status.news });
   }));
   app.get('/api/bars', wrap(async (req, res) => {
     const sym = String(req.query.sym || '').toUpperCase(); if (!config.realPrices || !Market.MAP[sym]) return ok(res, { bars: [] });
@@ -192,13 +272,16 @@ function mount(app, d){
   }));
 }
 async function start(){
-  if (!config.marketData) return;
+  await applySavedAnchors().catch(e => console.error('price anchors', e.message));
   const { q } = deps;
+  if (config.sec.mode !== 'off'){ const runSec = () => pullFilings().catch(e => { status.sec = { at: Date.now(), error: { status: e.status || null, message: e.message } }; console.error('SEC filings failed:', e.message); }); setTimeout(runSec, 20000); setInterval(runSec, 30 * 60000); }
+  if (!config.marketData) return;
   const run = (fn, label) => fn().catch(e => { const x = errInfo(e); console.error(label + ' failed:', x.status, x.message); if (label === 'asset sync') status.assets = { at: Date.now(), error: x }; if (label === 'quotes') status.quotes = { at: Date.now(), error: x }; if (label === 'news') status.news = { at: Date.now(), error: x }; });
   const n = (await q('SELECT count(*)::int AS n, max(updated_at) AS t FROM assets')).rows[0];
   if (!n.n || Date.now() - new Date(n.t).getTime() > 86400000) await run(async () => console.log('Stock list synced:', await syncAssets()), 'asset sync');
   setInterval(() => run(syncAssets, 'asset sync'), 24 * 3600000);
   await run(pullNews, 'news'); setInterval(() => run(pullNews, 'news'), 5 * 60000);
   if (config.realPrices){ await run(refreshQuotes, 'quotes'); setInterval(() => run(refreshQuotes, 'quotes'), 30000); }
+  setInterval(() => run(autoAnchor, 'price anchors'), 60 * 60000); run(autoAnchor, 'price anchors');
 }
-module.exports = { migrate, mount, start, loadExtras, extras, ensure, search, pullNews, listNews, newsAlerts, syncAssets, refreshQuotes, MIN_PRICE };
+module.exports = { migrate, mount, start, loadExtras, extras, bases: () => anchors.bases || {}, anchorPrices, pullFilings, filingHeadline, ensure, search, pullNews, listNews, newsAlerts, syncAssets, refreshQuotes, MIN_PRICE };

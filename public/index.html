@@ -255,6 +255,7 @@ const Market = (() => {
   /* extra stocks and real quotes: same rules as the server (server/market.js) */
   const QUOTES = {};
   function add(s, n, b){ if (!s || MAP[s] || !(b > 0)) return false; const t = { s, n: n || s, b: Math.round(b * 100) / 100, extra: true }; LIST.push(t); MAP[s] = t; return true; }
+  function setBases(map){ for (const [s, b] of Object.entries(map || {})) if (MAP[s] && b > 0) MAP[s].b = Math.round(b * 10000) / 10000; }
   function setQuotes(q){ const now = Date.now(); for (const [s, v] of Object.entries(q || {})) if (v && v.p > 0) QUOTES[s] = { p: v.p, prev: v.prev || null, t: v.t || now }; }
   const liveQuote = s => { const q = QUOTES[s]; return q && Date.now() - q.t < 15 * 60000 ? q : null; };
   function price(sym, ms = Date.now()){
@@ -267,7 +268,7 @@ const Market = (() => {
     const out = []; for (let i = points - 1; i >= 0; i--) out.push(price(sym, now - spanMs * i / (points - 1))); return out;
   }
   const isReal = s => !!liveQuote(s);
-  return { LIST, MAP, ETFS_UI: ['SPY','QQQ','SCHD'], price, dayChange, series, hash, add, setQuotes, isReal };
+  return { LIST, MAP, ETFS_UI: ['SPY','QQQ','SCHD'], price, dayChange, series, hash, add, setBases, setQuotes, isReal };
 })();
 
 /* =====================================================================
@@ -320,7 +321,7 @@ const Store = (() => {
     const j = await r.json();
     for (const c of COLS) cache[c] = new Map((j.collections[c] || []).map(d => [d.id, d]));
     Clock._set(j.settings && j.settings.clock); settings = Object.assign(settings, j.settings || {});
-    if (j.market){ (j.market.extras || []).forEach(x => Market.add(x.s, x.n, x.b)); Market.setQuotes(j.market.quotes || {}); }
+    if (j.market){ (j.market.extras || []).forEach(x => Market.add(x.s, x.n, x.b)); Market.setBases(j.market.bases || {}); Market.setQuotes(j.market.quotes || {}); }
   }
   async function loadMe(){
     me = await fetch('/api/me', { cache:'no-store', credentials:'same-origin' }).then(r => r.json());
@@ -330,7 +331,7 @@ const Store = (() => {
   function connect(){
     try { ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws'); } catch(e){ return; }
     ws.onmessage = e => { try { const m = JSON.parse(e.data); if (m.type === 'changes') applyChanges(m.changes); else if (m.type === 'real') realListeners.forEach(fn => { try { fn(m); } catch(x){} });
-      else if (m.type === 'market'){ (m.extras || []).forEach(x => Market.add(x.s, x.n, x.b)); if (m.quotes) Market.setQuotes(m.quotes); if (m.extras) emit(); }
+      else if (m.type === 'market'){ (m.extras || []).forEach(x => Market.add(x.s, x.n, x.b)); if (m.bases) Market.setBases(m.bases); if (m.quotes) Market.setQuotes(m.quotes); if (m.extras || m.bases) emit(); }
       else if (m.type === 'news'){ newsCache.clear(); emit(); } } catch(err){} };
     ws.onclose = () => setTimeout(async () => { try { await loadState(); emit(); } catch(e){} connect(); }, 2000 + Math.random() * 2000);
   }
@@ -594,7 +595,7 @@ const ICON = {
   demo:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/><circle cx="12" cy="12" r="3"/></svg>'
 };
 
-const ui = { ensuring: {}, bars: {}, search: null, searchQ: '', feedLimit: 30, lastSeenPost: Date.now(), lastRoute: null, groupCat: 'all', homeTab:'practice', real:null, realLoading:false, rquotes:null, openForm:null, openStep:0, sec:null, docs:null, areal:null, adminTab:'testers', admin:null, usage:null, pushState:null, inviteFor:null, inviteCode:null, inviteBy:null, feedTab:'everyone', openComments:new Set(), drafts:{}, chartSpan:'1d', seenReqs:null, onb:0, presenter:null, risk:'balanced', tour:null, copyFrac:{} };
+const ui = { recon: null, anchorInfo: null, ensuring: {}, bars: {}, search: null, searchQ: '', feedLimit: 30, lastSeenPost: Date.now(), lastRoute: null, groupCat: 'all', homeTab:'practice', real:null, realLoading:false, rquotes:null, openForm:null, openStep:0, sec:null, docs:null, areal:null, adminTab:'testers', admin:null, usage:null, pushState:null, inviteFor:null, inviteCode:null, inviteBy:null, feedTab:'everyone', openComments:new Set(), drafts:{}, chartSpan:'1d', seenReqs:null, onb:0, presenter:null, risk:'balanced', tour:null, copyFrac:{} };
 const SECTOR = { AAPL:'Technology', MSFT:'Technology', NVDA:'Technology', AMD:'Technology', GOOGL:'Communication', META:'Communication', NFLX:'Communication', DIS:'Communication',
   AMZN:'Consumer', TSLA:'Consumer', KO:'Consumer staples', COST:'Consumer staples', JPM:'Financials', V:'Financials', XOM:'Energy', JNJ:'Health care', O:'Real estate', SPY:'Broad market ETF', QQQ:'Broad market ETF', SCHD:'Dividend ETF' };
 const SECTOR_COLOR = { 'Technology':'#2f6fe4', 'Communication':'#7a4fd6', 'Consumer':'#b8660f', 'Consumer staples':'#0f8a72', 'Financials':'#14213d', 'Energy':'#c2413a', 'Health care':'#2b7a9b', 'Real estate':'#8a3f7a', 'Broad market ETF':'#5b6577', 'Dividend ETF':'#12805a' };
@@ -619,13 +620,14 @@ function stackOf(pids, max = 3){ const show = pids.slice(0, max); const names = 
   return { html: `<span class="stack">${show.map(p => avatar(p, 'sm')).join('')}</span>`, label }; }
 const isSample = pid => (Store.get('profiles', pid) || {}).kind === 'demo';
 const sampleTag = pid => isSample(pid) ? ' <span class="tag" style="font-size:10px;padding:1px 6px;vertical-align:1px">Sample</span>' : '';
+function agoText(t){ const a = ago(t); return a === 'now' ? 'just now' : a + ' ago'; }
 function newsRows(items, max = 5){
   return items.slice(0, max).map(n => `<a class="row" href="${esc(n.url || '#')}" target="_blank" rel="noopener noreferrer" style="align-items:flex-start"><div class="grow"><div style="font-weight:600;line-height:1.35">${esc(n.headline)}</div>
-    <div class="small muted" style="margin-top:3px">${esc(n.source || 'News')}, ${ago(n.ts)} ago${n.symbols && n.symbols.length ? ' · ' + n.symbols.slice(0, 3).map(esc).join(', ') : ''}</div></div><span class="small muted" aria-hidden="true">↗</span></a>`).join('');
+    <div class="small muted" style="margin-top:3px">${esc(n.source || 'News')}, ${agoText(n.ts)}${n.symbols && n.symbols.length ? ' · ' + n.symbols.slice(0, 3).map(esc).join(', ') : ''}</div></div><span class="small muted" aria-hidden="true">↗</span></a>`).join('');
 }
 const newsNote = () => Store.site.realPrices ? '' : '<p class="hint" style="margin:8px 2px 0">Prices are simulated. News is real.</p>';
 function newsSection(title, symbols, max = 5){
-  if (!Store.site.marketData) return '';
+  if (!Store.site.news) return '';
   const items = Store.news(symbols, 10);
   if (items === null) return `<section class="block"><header><h2>${title}</h2></header><div class="list"><div class="empty">Loading headlines…</div></div></section>`;
   return items.length ? `<section class="block"><header><h2>${title}</h2></header><div class="list">${newsRows(items, max)}</div>${newsNote()}</section>` : '';
@@ -633,13 +635,14 @@ function newsSection(title, symbols, max = 5){
 function marketBrief(){
   const ch = s => Market.dayChange(s), word = v => v >= 0 ? 'up' : 'down', p = v => Math.abs(v * 100).toFixed(1) + '%';
   const movers = Market.LIST.map(t => t.s).filter(s => !['SPY','QQQ','SCHD'].includes(s)).sort((a, b) => Math.abs(ch(b)) - Math.abs(ch(a))).slice(0, 3);
-  const heads = Store.site.marketData ? (Store.news([], 5) || []) : [];
+  const heads = Store.site.news ? (Store.news([], 5) || []) : [];
+  const srcNote = !heads.length ? '' : heads.every(h => h.source === 'SEC filing') ? ' Headlines are company filings from SEC EDGAR.' : heads.some(h => h.source === 'SEC filing') ? ' Headlines are real: news from Benzinga via Alpaca, and SEC filings.' : ' Headlines are real, from Benzinga via Alpaca.';
   const d = new Date().toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric' });
   return `<section class="block"><header><h2>Market brief</h2><span class="muted small">${d}</span></header><div class="panel" style="padding:16px 18px">
     <p style="margin:0 0 8px">The S&amp;P 500 (SPY) is <b class="${sgn(ch('SPY'))}">${word(ch('SPY'))} ${p(ch('SPY'))}</b> today and the Nasdaq-100 (QQQ) is <b class="${sgn(ch('QQQ'))}">${word(ch('QQQ'))} ${p(ch('QQQ'))}</b>.</p>
     <p class="small" style="margin:0 0 ${heads.length ? 12 : 0}px">Biggest moves: ${movers.map(s => `<a href="#/stock/${s}"><b>${s}</b></a> <span class="${sgn(ch(s))}">${pct(ch(s))}</span>`).join(', ')}.</p>
     ${heads.length ? `<div class="small muted" style="margin-bottom:4px">Top headlines</div><div class="list" style="margin:0 -6px">${newsRows(heads, 3)}</div>` : ''}
-    <p class="hint" style="margin:10px 0 0">${Store.site.realPrices ? 'Prices from the market.' : 'Prices are simulated.'}${heads.length ? ' Headlines are real, from Benzinga via Alpaca.' : ''} For information only, not a recommendation.</p></div></section>`;
+    <p class="hint" style="margin:10px 0 0">${Store.site.realPrices ? 'Prices from the market.' : 'Prices are simulated.'}${srcNote} For information only, not a recommendation.</p></div></section>`;
 }
 function trending(){
   const since = Date.now() - 7 * 86400000, by = {};
@@ -926,7 +929,9 @@ function vOpenAccount(){
     <div class="field"><label>Where will the money you invest come from?</label><div>${[['employment_income','Job income'],['savings','Savings'],['investments','Investments'],['business_income','Business income'],['inheritance','Inheritance'],['family','Family']].map(([k, l]) => `<label style="display:inline-flex;gap:6px;align-items:center;margin:0 14px 8px 0"><input type="checkbox" class="of-fund" value="${k}" ${(f.funding || []).includes(k) ? 'checked' : ''}> ${l}</label>`).join('')}</div></div>`;
   else body = `<div class="list" style="margin-bottom:14px">${yn('controlPerson', 'Are you a director, officer or 10% shareholder of a publicly traded company?')}${yn('finraAffiliated', 'Are you, or an immediate family member, affiliated with a stock exchange or FINRA member firm?')}${yn('politicallyExposed', 'Are you a senior political figure?')}${yn('familyExposed', 'Is an immediate family member a senior political figure?')}</div>
     <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:12px"><input type="checkbox" id="o-agree" ${f.agree ? 'checked' : ''} style="margin-top:4px"> <span class="small">I agree to the brokerage's customer and account agreements and the Pocket Investing Terms, and confirm the information above is accurate. <span class="muted">[Links to the final agreements go here.]</span></span></label>`;
-  return `<div class="pagehead"><div><a href="#/home" class="small">← Back</a><h1 style="margin-top:6px">Open your brokerage account</h1><p class="muted">Step ${st + 1} of ${steps.length}: ${steps[st]}</p></div></div>
+  return `<div class="pagehead"><div><a href="#/home" class="small">← Back</a><h1 style="margin-top:6px">Open your brokerage account</h1><p class="muted">Step ${st + 1} of ${steps.length}: ${steps[st]}</p></div>
+    ${Store.site.alpacaEnv === 'sandbox' ? '<button class="btn ghost sm" data-act="oftest">Fill test details</button>' : ''}</div>
+    ${Store.site.alpacaEnv === 'sandbox' ? '<div class="banner" style="margin-bottom:14px;max-width:640px;font-size:14px"><b>Test environment.</b>&nbsp;Use made-up details here, never your real Social Security number. "Fill test details" does it for you.</div>' : ''}
     <div class="panel" style="padding:20px;max-width:640px">${body}<div class="hint" id="o-err" style="color:var(--loss);min-height:1.2em;margin:6px 0"></div>
     <div style="display:flex;gap:10px">${st > 0 ? '<button class="btn ghost" data-act="ofback">Back</button>' : ''}<button class="btn" data-act="${st < 3 ? 'ofnext' : 'ofsubmit'}">${st < 3 ? 'Continue' : 'Submit application'}</button></div></div>${brokerLine()}`;
 }
@@ -1345,6 +1350,12 @@ function vDemo(){
       <div class="field"><label for="d-amt">Amount (dollars)</label><input class="input" id="d-amt" type="number" min="1" value="8000"></div></div>
       <div class="field"><label for="d-note">Note to the group (optional)</label><input class="input" id="d-note" placeholder="Why this trade"></div>
       <button class="btn ember" data-act="demotrade">Place the Lead Trader's trade</button>` : '<p class="muted">No groups with a sample Lead Trader yet.</p>'}</section>
+  ${Store.site.marketData ? (() => { const A = ui.anchorInfo; if (!A){ ui.anchorInfo = 'loading'; Store.http('GET', '/api/admin/marketdata').then(r => { ui.anchorInfo = r.anchors; render(); }, () => { ui.anchorInfo = { at: null }; }); }
+    const info = A && A !== 'loading' ? A : {};
+    return `<section class="panel" style="padding:20px;margin-top:16px"><h2>Prices</h2><p class="muted small">Simulated prices drift away from real ones over time. Updating starts each stock from its real closing price, then it moves on its own again. Last updated: ${info.at ? agoText(info.at) : 'never'}.</p>
+      <p class="small" style="margin:0 0 12px"><b>Heads up:</b> the first update can move prices a lot (Apple from about $241 to its real price), which changes everyone's gains and losses. Afterwards, use Add new sample data or Reset if you want the sample history to line up with the new prices.</p>
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><button class="btn" data-act="anchor">Update prices to real closes</button>
+        <span class="small muted">Update automatically each morning</span><div class="seg"><button class="${info.auto ? 'on' : ''}" ${info.auto ? '' : 'data-act="anchorauto" data-k="1"'}>On</button><button class="${info.auto ? '' : 'on'}" ${info.auto ? 'data-act="anchorauto" data-k="0"' : ''}>Off</button></div></div></section>`; })() : ''}
   <section class="panel" style="padding:20px;margin-top:16px"><h2>Add new sample data</h2><p class="muted small">Adds the 20 sample investors, 8 groups and about four months of history alongside what's already here. Nothing is deleted: your groups, posts and testers' activity stay. Running it again adds nothing new.</p>
     <button class="btn" data-act="addsample">Add new sample data</button></section>
   <section class="panel" style="padding:20px;margin-top:16px"><h2>Sample activity</h2><p class="muted small">Sample investors post and trade through the day (8am to 9pm ET) so the demo never feels frozen. All practice money, all labeled as samples. Group trades send real approval requests to members, so they're off unless you turn them on.</p>
@@ -1470,7 +1481,7 @@ function vNotifySettings(){
     ${tog('n-ap', n.approvals !== false, 'Approval requests', 'Group trades, investors you copy, Risk Manager reviews and trade suggestions')}
     ${tog('n-vo', n.votes !== false, 'New votes in my groups', '')}
     ${tog('n-so', n.social !== false, 'Followers, copiers and join requests', '')}
-    ${Store.site.marketData ? tog('n-nw', n.news === true, 'News about stocks I own or watch', 'Up to 3 a day, never during quiet hours') : ''}</div></section>
+    ${Store.site.news ? tog('n-nw', n.news === true, 'News about stocks I own or watch', 'Up to 3 a day, never during quiet hours') : ''}</div></section>
   <section class="block"><header><h2>Quiet hours</h2></header><div class="list">
     ${tog('n-qon', !!q.on, 'Pause alerts overnight', '')}
     <div class="row"><div class="grow muted">From</div><input class="input" id="n-qs" type="time" value="${esc(q.start)}" style="width:auto"></div>
@@ -1531,19 +1542,38 @@ function adminReal(){
       <p class="small muted">Pro members get up to ${usd(I.perDeposit, 0)} of a deposit right away, fronted from Pocket's account until the bank transfer clears. Company-wide cap ${usd(I.totalCap, 0)}; accounts must be ${I.minAccountDays} days old with one cleared deposit. Turn on with INSTANT_DEPOSITS=true${I.firmAccount ? '' : ' and ALPACA_FIRM_ACCOUNT_ID'}.</p>
       ${I.byStatus.length ? `<div class="list">${I.byStatus.map(b => `<div class="row"><div class="grow">${esc(b.status)}</div><b class="num">${b.n}, ${usd(b.amount)}</b></div>`).join('')}</div>` : ''}
       ${I.shortfalls.length ? `<div class="banner ember" style="margin-top:12px"><div><b>Needs attention:</b> ${I.shortfalls.map(x => '@' + esc(x.username) + ' ' + usd(x.amount)).join(', ')}. Their bank transfer was returned and their cash didn't cover the instant amount.</div></div>` : ''}</section>
+    ${adminReconcile()}
     <section class="block"><header><h2>Brokerage errors</h2></header><div class="list">${X.log.map(l => `<div class="row"><div class="grow small"><b>${esc(l.method)} ${esc(l.path)}</b> <span class="muted">${l.status}</span><div class="muted">${esc(l.message || '')}</div></div><span class="small muted">${ago(new Date(l.created_at).getTime())}</span></div>`).join('') || '<div class="empty">No errors from the brokerage.</div>'}</div></section>`;
+}
+function adminReconcile(){
+  const R = ui.recon;
+  const head = `<section class="panel" style="padding:18px 20px;margin-top:16px"><h2>Reconciliation</h2><p class="small muted" style="margin:6px 0 12px">Checks every account's deposits, withdrawals, orders and holdings in the app against Alpaca's records, and flags anything that doesn't match.</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn" data-act="recon">Run reconciliation</button>${R && R.accounts && R.accounts.some(a => a.issues.some(i => i.fix)) ? '<button class="btn ghost" data-act="reconfix">Update app records from Alpaca</button>' : ''}</div>
+    ${R && R.accounts && R.accounts.some(a => a.issues.some(i => i.fix)) ? '<p class="hint" style="margin:8px 0 0">Updating only copies statuses (pending, completed, filled) from Alpaca. It never creates, deletes or moves money.</p>' : ''}</section>`;
+  if (!R) return head;
+  if (R === 'loading') return head + '<div class="panel empty" style="margin-top:12px">Comparing with Alpaca…</div>';
+  if (R.error) return head + `<div class="panel empty" style="margin-top:12px">${esc(R.error)}</div>`;
+  return head + `<div class="banner ${R.issues ? 'ember' : ''}" style="margin-top:12px"><b>${R.issues ? R.issues + ' item' + (R.issues === 1 ? '' : 's') + ' to review' : 'Everything matches'}</b>&nbsp;across ${R.accounts.length} account${R.accounts.length === 1 ? '' : 's'}, checked ${agoText(R.at)}.</div>
+    ${R.firm ? `<p class="small" style="margin:10px 2px">Firm account: ${R.firm.error ? esc(R.firm.error) : 'cash ' + usd(R.firm.cash)}${R.instantOutstanding ? ' · instant deposits outstanding ' + usd(R.instantOutstanding) : ''}</p>` : ''}
+    <div class="list" style="margin-top:10px">${R.accounts.map(a => `<div class="row" style="align-items:flex-start"><span class="tag ${a.issues.length || a.error ? 'ember' : 'blue'}" style="min-width:64px;text-align:center">${a.error ? 'Error' : a.issues.length ? a.issues.length + ' issue' + (a.issues.length === 1 ? '' : 's') : 'Matches'}</span>
+      <div class="grow"><b>@${esc(a.username)}</b> <span class="muted small">#${esc(a.accountNumber || '—')} · ${esc(a.status)}</span>
+        ${a.balances ? `<div class="small muted">Cash ${usd(a.balances.cash)} · value ${usd(a.balances.equity)} · ${a.counts.transfers || 0} transfers · ${a.counts.orders || 0} orders${a.positions && a.positions.length ? ' · holdings ' + a.positions.map(p => esc(p.sym) + ' ' + shs(p.alpaca)).join(', ') : ''}${a.instantOwed ? ' · owes ' + usd(a.instantOwed) + ' instant deposit' : ''}</div>` : ''}
+        ${a.error ? `<div class="small" style="color:var(--loss)">${esc(a.error)}</div>` : ''}
+        ${a.issues.map(i => `<div class="small" style="margin-top:4px">• ${esc(i.text)}${i.fix ? ' <span class="muted">(can be updated from Alpaca)</span>' : ''}</div>`).join('')}</div></div>`).join('') || '<div class="empty">No brokerage accounts yet.</div>'}</div>`;
 }
 function adminMarket(){
   const X = ui.amd;
   if (!X || X === 'loading'){ if (!X){ ui.amd = 'loading'; Store.http('GET', '/api/admin/marketdata').then(r => { ui.amd = r; render(); }, e => { ui.amd = { error: e.message }; render(); }); } return '<div class="loading" style="min-height:20vh">Loading…</div>'; }
   if (X.error) return `<div class="panel empty">${esc(X.error)}</div>`;
-  const when = t => t ? ago(t) + ' ago' : 'never';
+  const when = t => t ? agoText(t) : 'never';
   const st = X.status || {}, N = st.news, A = st.assets;
   const C = ui.amdCheck;
   return `<section class="panel" style="padding:18px 20px"><h2>Market data <span class="tag ${X.on ? 'blue' : ''}">${X.on ? 'On' : 'Off: no Alpaca keys'}</span></h2>
       <p class="small muted" style="margin:6px 0 0">Alpaca ${esc(X.env)} · sign-in: ${X.authMode === 'legacy' ? 'older key pair' : 'Client ID + Secret (access token)'} · prices: ${X.realPrices ? 'real' : 'simulated'}</p>
       <p class="small muted" style="margin:4px 0 0;word-break:break-all">${esc(X.urls.auth)} · ${esc(X.urls.broker)} · ${esc(X.urls.data)}</p>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px"><button class="btn" data-act="amdcheck" ${X.on ? '' : 'disabled'}>Run check</button><button class="btn ghost" data-act="amdfetch" ${X.on ? '' : 'disabled'}>Fetch news now</button><button class="btn ghost" data-act="amdreload">Refresh</button></div></section>
+      <p class="small" style="margin:8px 0 0">SEC filings: ${X.sec.mode === 'off' ? 'off' : X.sec.active ? '<b>in use as the news source</b>' : X.sec.mode === 'auto' ? 'standing by (used only while Alpaca news is unavailable)' : 'on'}${st.sec && st.sec.at ? ` · last checked ${when(st.sec.at)}${st.sec.checked != null ? `, ${st.sec.checked} companies, ${st.sec.added || 0} new filings` : ''}` : ''}</p>
+      ${st.sec && st.sec.error ? `<p class="small" style="color:var(--loss);margin:4px 0 0">SEC error${st.sec.error.status ? ' (HTTP ' + st.sec.error.status + ')' : ''}: ${esc(st.sec.error.message)}</p>` : ''}
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px"><button class="btn" data-act="amdcheck">Run check</button><button class="btn ghost" data-act="amdfetch" ${X.on ? '' : 'disabled'}>Fetch news now</button>${X.sec.mode !== 'off' ? '<button class="btn ghost" data-act="amdfilings">Fetch SEC filings now</button>' : ''}<button class="btn ghost" data-act="amdreload">Refresh</button></div></section>
     ${C ? `<section class="block"><header><h2>Check results</h2></header><div class="list">${C === 'loading' ? '<div class="empty">Checking each Alpaca service…</div>' : C.map(s => `<div class="row" style="align-items:flex-start"><span class="tag ${s.ok ? 'blue' : 'ember'}" style="min-width:52px;text-align:center">${s.ok ? 'OK' : 'Failed'}</span><div class="grow"><b>${esc(s.name)}</b> <span class="muted small">${s.ms} ms${s.status != null && !s.ok ? ', HTTP ' + s.status : ''}</span><div class="small ${s.ok ? 'muted' : ''}" style="margin-top:3px;word-break:break-word">${esc(s.detail || '')}</div></div></div>`).join('')}</div>
       ${Array.isArray(C) && C.some(s => !s.ok) ? '<p class="hint">Copy the failed lines and send them to Claude in the project chat. They contain Alpaca\u2019s exact response, never your keys.</p>' : ''}</section>` : ''}
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-top:16px">
@@ -2007,6 +2037,11 @@ async function act(el, ev){ /* eslint-disable-line */
     case 'rbank': return rBankSheet();
     case 'runbank': return busy(async () => { if (!confirm('Remove this bank account? You can link it again later.')) return; await Store.real.unbank(id); toast('Bank removed.'); loadReal(); });
     case 'rcancel': return busy(async () => { await Store.real.cancel(id); toast('Cancel requested.'); loadReal(); });
+    case 'oftest': { if (Store.site.alpacaEnv !== 'sandbox') return; const n = Math.floor(1000 + Math.random() * 8999), me = Store.displayName(Store.myPid).split(' ');
+      ui.openForm = { givenName: me[0] || 'Test', familyName: (me.slice(1).join(' ') || 'Investor'), dob: '1990-01-15', ssn: '123-45-' + n, citizenship: 'USA', email: `test+${n}@example.com`, phone: '555-555-' + n,
+        street: '20 N San Mateo Dr', unit: '', city: 'San Mateo', state: 'CA', postal: '94401', employment: 'employed', employer: 'Test Company', position: 'Analyst', funding: ['employment_income'],
+        controlPerson: false, finraAffiliated: false, politicallyExposed: false, familyExposed: false, agree: false };
+      ui.openStep = 3; toast('Test details filled in. Review them, accept the agreements, and submit.'); return render(); }
     case 'ofyn': readOpenForm(); ui.openForm[el.dataset.k] = el.dataset.v === '1'; return render();
     case 'ofback': readOpenForm(); ui.openStep = Math.max(0, (ui.openStep || 0) - 1); return render();
     case 'ofnext': { const f = readOpenForm(), st = ui.openStep || 0, err = m => { $('#o-err').textContent = m; };
@@ -2022,6 +2057,11 @@ async function act(el, ev){ /* eslint-disable-line */
     case 'amdreload': ui.amd = null; return render();
     case 'amdcheck': ui.amdCheck = 'loading'; render(); return Store.http('POST', '/api/admin/marketdata/check').then(r => { ui.amdCheck = r.steps; ui.amd = null; render(); }, e => { ui.amdCheck = [{ name: 'Check', ok: false, ms: 0, detail: e.message }]; render(); });
     case 'amdfetch': return busy(async () => { const r = await Store.http('POST', '/api/admin/marketdata/fetch'); toast(r.status && r.status.error && !r.status.received ? 'News fetch failed. See the error below.' : `Fetched news: ${r.added} new headline${r.added === 1 ? '' : 's'}.`); ui.amd = null; render(); });
+    case 'recon': ui.recon = 'loading'; render(); return Store.http('GET', '/api/admin/real/reconcile').then(r => { ui.recon = r; render(); }, e => { ui.recon = { error: e.message }; render(); });
+    case 'reconfix': return busy(async () => { if (!confirm('Copy statuses from Alpaca into the app for the flagged items? Nothing is created, deleted or moved.')) return; const r = await Store.http('POST', '/api/admin/real/reconcile/apply'); toast(`Updated ${r.fixed} record${r.fixed === 1 ? '' : 's'} from Alpaca.`); ui.recon = 'loading'; render(); ui.recon = await Store.http('GET', '/api/admin/real/reconcile'); render(); });
+    case 'anchor': return busy(async () => { if (!confirm('Update simulated prices to start from real closing prices? Prices that have drifted far will jump, which changes everyone’s gains and losses in the demo.')) return; const r = await Store.http('POST', '/api/admin/prices/anchor'); toast(`Updated ${r.count} prices to real closes${r.sample ? ' (' + r.sample + ')' : ''}.`); ui.amd = null; ui.anchorInfo = null; });
+    case 'anchorauto': return busy(async () => { await Store.http('POST', '/api/admin/prices/auto', { on: el.dataset.k === '1' }); toast(el.dataset.k === '1' ? 'Prices will update to real closes each morning.' : 'Automatic price updates are off.'); ui.anchorInfo = null; render(); });
+    case 'amdfilings': return busy(async () => { const r = await Store.http('POST', '/api/admin/marketdata/filings'); toast(r.status && r.status.error && !r.status.checked ? 'SEC request failed. See the error below.' : `Fetched SEC filings: ${r.added} new.`); ui.amd = null; render(); });
     case 'arpause': return busy(async () => { await Store.http('POST', '/api/admin/real/pause', { paused: el.dataset.k === '1' }); ui.areal = null; toast(el.dataset.k === '1' ? 'Real-money trading paused.' : 'Real-money trading running.'); render(); });
     case 'annoff': try { localStorage.setItem('pi_ann_off', el.dataset.k); } catch(e){} return render();
     case 'feedback': return feedbackSheet();

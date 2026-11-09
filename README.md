@@ -63,6 +63,8 @@ When counsel and Alpaca approve going live: replace the keys with live keys and 
 - Deposits and withdrawals, with status updates. Withdrawals are limited to settled cash.
 - Real orders in dollars or shares (fractional supported), with Sent, Partly filled and Filled states, cancel for open orders, and a private notification when an order fills.
 - Holdings, balances, activity, and statements and tax documents from Alpaca.
+- **Fill test details** (sandbox only) on the account application fills in made-up identity details, so testers never type a real Social Security number into the test environment.
+- **Reconciliation** (Beta admin → Real money): compares every account's deposits, withdrawals, orders and holdings in the app with Alpaca's records, shows the firm account balance and instant deposits outstanding, and flags anything that doesn't match. **Update app records from Alpaca** copies statuses only; it never creates, deletes or moves money.
 - **Beta admin → Real money:** accounts by status, open orders, a switch to pause all real-money trading instantly, instant-deposit status, and recent brokerage errors.
 
 **Important:** this was built against Alpaca's documented API and tested against a stand-in that mimics it, because the build environment couldn't reach Alpaca directly. Expect a round of small fixes the first time it runs against the real sandbox. Brokerage errors appear in Beta admin → Real money with Alpaca's exact message, which makes them quick to fix.
@@ -83,6 +85,10 @@ Set the keys on **both** Railway services:
 | Real trading | Never | Yes, with two-step sign-in and a brokerage account |
 
 Without keys, both sites work as before with the 20 built-in stocks and no news.
+
+**News without an Alpaca news plan: SEC filings.** If Alpaca says your plan doesn't include news, the app automatically shows recent company filings from SEC EDGAR instead (earnings releases, quarterly and annual reports, leadership changes and other official announcements), each labeled "SEC filing" and linked to the filing. It switches back to Alpaca news by itself once your plan includes it. Settings: `SEC_FILINGS=auto` (default), `on` (always, even without Alpaca keys) or `off`; set `SEC_CONTACT` to your name and email, which the SEC asks every app to include in its requests.
+
+**Demo prices: Demo controls → Prices.** **Update prices to real closes** restarts each simulated price from its real closing price; prices then move on their own again. The first update can move prices a lot, so do it when you choose, then use Add new sample data or Reset if you want the sample history to match. An optional switch updates automatically each morning (off by default). Updates are saved and survive restarts.
 
 **Troubleshooting: Beta admin → Market data.** Shows the Alpaca settings in use, how many stocks and headlines are stored, when news was last fetched, and the last error. **Run check** tests sign-in, the stock list, a price quote and news live, and shows Alpaca's exact response for each. **Fetch news now** pulls headlines immediately. Failed news and price requests are also written to the Railway logs (`news fetch failed: …`).
 

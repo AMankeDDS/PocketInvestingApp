@@ -268,6 +268,72 @@ function mount(app, d){
     ok(res, { env: config.alpaca.env, configured: alpaca.configured(), paused: !!(await getSetting('realPaused', false)), accounts: by, openOrders: open, filled7: { n: orders7.n, value: Number(orders7.v) },
       instant: Object.assign({}, config.instant, { firmAccount: !!config.alpaca.firmAccountId, byStatus: credits.map(c => ({ status: c.status, n: c.n, amount: Number(c.s) })), shortfalls: shortfalls.map(s => ({ username: s.username, amount: Number(s.amount), at: s.updated_at })) }), log });
   }));
+  /* Reconciliation: the app's records next to Alpaca's for each account, with mismatches flagged.
+     Balances and holdings always come from Alpaca; this checks that every deposit, withdrawal and
+     order the app recorded matches what Alpaca has, and that holdings match the app's filled orders. */
+  async function reconcileAll(){
+    const rows = (await q(`SELECT b.*, u.username FROM broker_accounts b JOIN users u ON u.id = b.user_id ORDER BY b.created_at DESC LIMIT 50`)).rows;
+    const out = [];
+    for (const a of rows){
+      const r = { username: a.username, accountNumber: a.account_number, status: a.status, issues: [], counts: {} };
+      try {
+        const remote = await alpaca.getAccount(a.alpaca_id); if (remote.status && remote.status !== a.status) r.issues.push({ kind: 'status', text: `Account status: app shows ${a.status}, Alpaca shows ${remote.status}`, fix: { type: 'account', status: remote.status } });
+        if (a.status !== 'ACTIVE' && remote.status !== 'ACTIVE'){ out.push(r); continue; }
+        const [tr, pos, trs, ords] = await Promise.all([alpaca.tradingAccount(a.alpaca_id), alpaca.positions(a.alpaca_id), alpaca.listTransfers(a.alpaca_id), alpaca.listOrders(a.alpaca_id, 'all', 200)]);
+        r.balances = { cash: Number(tr.cash || 0), equity: Number(tr.equity || 0) };
+        /* transfers */
+        const mine = (await q('SELECT * FROM real_transfers WHERE user_id = $1', [a.user_id])).rows, theirs = new Map((trs || []).map(t => [t.id, t]));
+        r.counts.transfers = mine.length;
+        for (const t of mine){
+          const x = theirs.get(t.id);
+          if (!x){ r.issues.push({ kind: 'transfer', text: `${t.direction === 'INCOMING' ? 'Deposit' : 'Withdrawal'} of $${Number(t.amount).toFixed(2)} is in the app but not at Alpaca` }); continue; }
+          if (Math.abs(Number(x.amount) - Number(t.amount)) > 0.005) r.issues.push({ kind: 'transfer', text: `Transfer amount: app $${Number(t.amount).toFixed(2)}, Alpaca $${Number(x.amount).toFixed(2)}` });
+          if (x.status !== t.status) r.issues.push({ kind: 'transfer', text: `${t.direction === 'INCOMING' ? 'Deposit' : 'Withdrawal'} of $${Number(t.amount).toFixed(2)}: app shows ${t.status}, Alpaca shows ${x.status}`, fix: { type: 'transfer', id: t.id, status: x.status } });
+        }
+        const mineIds = new Set(mine.map(t => t.id));
+        (trs || []).filter(x => !mineIds.has(x.id)).forEach(x => r.issues.push({ kind: 'transfer', text: `${x.direction === 'INCOMING' ? 'Deposit' : 'Withdrawal'} of $${Number(x.amount).toFixed(2)} (${x.status}) is at Alpaca but not in the app, for example made from the Alpaca dashboard` }));
+        /* orders */
+        const myOrders = (await q('SELECT * FROM real_orders WHERE user_id = $1', [a.user_id])).rows, theirOrders = new Map((ords || []).map(o => [o.id, o]));
+        r.counts.orders = myOrders.length;
+        for (const o of myOrders){
+          if (!o.alpaca_order_id){ if (o.status !== 'rejected') r.issues.push({ kind: 'order', text: `${o.side} ${o.sym} was never accepted by Alpaca (app shows ${o.status})` }); continue; }
+          const x = theirOrders.get(o.alpaca_order_id);
+          if (!x){ r.issues.push({ kind: 'order', text: `${o.side} ${o.sym} order is in the app but not in Alpaca's recent orders` }); continue; }
+          const fq = Number(x.filled_qty || 0);
+          if (x.status !== o.status || Math.abs(fq - Number(o.filled_qty || 0)) > 1e-6) r.issues.push({ kind: 'order', text: `${o.side} ${o.sym}: app shows ${o.status} (${Number(o.filled_qty || 0)} filled), Alpaca shows ${x.status} (${fq} filled)`, fix: { type: 'order', id: o.id, status: x.status, filledQty: fq, filledPrice: x.filled_avg_price || null } });
+        }
+        const myOrderIds = new Set(myOrders.map(o => o.alpaca_order_id));
+        (ords || []).filter(x => !myOrderIds.has(x.id)).forEach(x => r.issues.push({ kind: 'order', text: `${x.side} ${x.symbol} (${x.status}) is at Alpaca but not in the app` }));
+        /* holdings: Alpaca's positions vs. what the app's filled orders add up to */
+        const expect = {};
+        myOrders.forEach(o => { const fq = Number(o.filled_qty || 0); if (fq) expect[o.sym] = (expect[o.sym] || 0) + (o.side === 'buy' ? fq : -fq); });
+        const have = {}; (pos || []).forEach(p => { have[p.symbol] = Number(p.qty); });
+        r.positions = Object.keys(Object.assign({}, expect, have)).map(sym => ({ sym, app: Math.round((expect[sym] || 0) * 1e6) / 1e6, alpaca: have[sym] || 0 }));
+        r.positions.filter(p => Math.abs(p.app - p.alpaca) > 1e-6).forEach(p => r.issues.push({ kind: 'holding', text: `${p.sym}: the app's filled orders add up to ${p.app} shares, Alpaca holds ${p.alpaca}` }));
+        /* instant deposits still owed back to Pocket */
+        const owed = Number((await q(`SELECT coalesce(sum(amount), 0) AS s FROM instant_credits WHERE user_id = $1 AND status IN ('outstanding','shortfall')`, [a.user_id])).rows[0].s);
+        if (owed) r.instantOwed = owed;
+      } catch (e){ r.error = e.message; }
+      out.push(r);
+    }
+    let firm = null;
+    if (config.alpaca.firmAccountId){ try { const f = await alpaca.tradingAccount(config.alpaca.firmAccountId); firm = { cash: Number(f.cash || 0) }; } catch (e){ firm = { error: e.message }; } }
+    const credits = Number((await q(`SELECT coalesce(sum(amount), 0) AS s FROM instant_credits WHERE status = 'outstanding'`)).rows[0].s);
+    return { at: Date.now(), accounts: out, firm, instantOutstanding: credits, issues: out.reduce((n, r) => n + r.issues.length + (r.error ? 1 : 0), 0) };
+  }
+  app.get('/api/admin/real/reconcile', wrap(async (req, res) => { if (!(await needAdmin(req, res))) return; ok(res, await reconcileAll()); }));
+  /* Update the app's records to match Alpaca, for statuses only. Nothing is ever created or deleted. */
+  app.post('/api/admin/real/reconcile/apply', wrap(async (req, res) => {
+    if (!(await needAdmin(req, res))) return;
+    const R = await reconcileAll(); let fixed = 0;
+    for (const a of R.accounts) for (const i of a.issues) {
+      const f = i.fix; if (!f) continue;
+      if (f.type === 'transfer'){ await q('UPDATE real_transfers SET status = $1, updated_at = now() WHERE id = $2', [f.status, f.id]); fixed++; }
+      if (f.type === 'order'){ await q('UPDATE real_orders SET status = $1, filled_qty = $2, filled_avg_price = $3, updated_at = now() WHERE id = $4', [f.status, f.filledQty, f.filledPrice, f.id]); fixed++; }
+      if (f.type === 'account'){ await q(`UPDATE broker_accounts SET status = $1, updated_at = now(), active_since = CASE WHEN $1 = 'ACTIVE' THEN coalesce(active_since, now()) ELSE active_since END WHERE account_number = $2`, [f.status, a.accountNumber]); fixed++; }
+    }
+    ok(res, { fixed });
+  }));
   app.post('/api/admin/real/pause', wrap(async (req, res) => { if (!(await needAdmin(req, res))) return; await setSetting('realPaused', !!req.body.paused); ok(res); }));
 }
 

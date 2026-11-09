@@ -15,6 +15,7 @@ function rnd(seed){ let t = (seed + 0x6D2B79F5) | 0; t = Math.imul(t ^ (t >>> 15
    and history is scaled so charts end at the real price. */
 const QUOTES = {};
 function add(s, n, b){ if (!s || MAP[s] || !(b > 0)) return false; const t = { s, n: n || s, b: Math.round(b * 100) / 100, extra: true }; LIST.push(t); MAP[s] = t; return true; }
+function setBases(map){ for (const [s, b] of Object.entries(map || {})) if (MAP[s] && b > 0) MAP[s].b = Math.round(b * 10000) / 10000; }
 function setQuotes(q){ const now = Date.now(); for (const [s, v] of Object.entries(q || {})) if (v && v.p > 0) QUOTES[s] = { p: v.p, prev: v.prev || null, t: v.t || now }; }
 const liveQuote = s => { const q = QUOTES[s]; return q && Date.now() - q.t < 15 * 60000 ? q : null; };
 function price(sym, ms = Date.now()){
@@ -51,4 +52,4 @@ function approvalWindow(mode, now = Date.now(), minutes = 30){
 }
 function canFillNow(mode, now = Date.now()){ const s = session(mode, now); return s.open && s.closeAt - now > 5 * 60000; }
 const ETFS = ['SPY','QQQ','SCHD'];
-module.exports = { ETFS, LIST, MAP, hash, price, simPrice, add, setQuotes, QUOTES, session, approvalWindow, canFillNow };
+module.exports = { ETFS, LIST, MAP, hash, price, simPrice, add, setBases, setQuotes, QUOTES, session, approvalWindow, canFillNow };

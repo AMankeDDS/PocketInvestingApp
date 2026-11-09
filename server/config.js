@@ -37,6 +37,14 @@ config.realMoney = MODE === 'live' && config.broker === 'alpaca';
 /* real market data (news, stock list, prices) is used whenever Alpaca keys are set, on either site */
 config.marketData = !!(config.alpaca.key && config.alpaca.secret);
 config.realPrices = config.realMoney && config.marketData; /* the demo keeps simulated prices */
-config.publicInfo = () => ({ mode: config.mode, realMoney: config.realMoney, marketData: config.marketData, realPrices: config.realPrices, alpacaEnv: config.realMoney ? config.alpaca.env : null, demoTools: config.demoTools, require2fa: config.require2fa,
+/* Company filings from SEC EDGAR as a news source. 'auto' = only while Alpaca news isn't available,
+   'on' = always (works without Alpaca keys), 'off' = never. The SEC asks for a contact in every request. */
+config.sec = {
+  mode: ['on','off','auto'].includes(String(process.env.SEC_FILINGS || '').toLowerCase()) ? String(process.env.SEC_FILINGS).toLowerCase() : 'auto',
+  contact: process.env.SEC_CONTACT || 'Pocket Investing admin@pocketinvesting.com',
+  dataUrl: process.env.SEC_DATA_URL || 'https://data.sec.gov',
+  wwwUrl: process.env.SEC_WWW_URL || 'https://www.sec.gov'
+};
+config.publicInfo = () => ({ mode: config.mode, news: config.marketData || config.sec.mode === 'on', realMoney: config.realMoney, marketData: config.marketData, realPrices: config.realPrices, alpacaEnv: config.realMoney ? config.alpaca.env : null, demoTools: config.demoTools, require2fa: config.require2fa,
   instantDeposits: { enabled: config.instant.enabled, perDeposit: config.instant.perDeposit } });
 module.exports = config;

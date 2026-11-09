@@ -157,7 +157,7 @@ app.post('/api/delete-account', authLimit, wrap(async (req, res) => {
 }));
 
 /* ---------- data and actions ---------- */
-app.get('/api/state', wrap(async (req, res) => { res.set('Cache-Control', 'no-store'); const snap = await db.snapshot(); snap.market = { extras: marketdata.extras(), quotes: config.realPrices ? Market.QUOTES : {} }; res.json(snap); }));
+app.get('/api/state', wrap(async (req, res) => { res.set('Cache-Control', 'no-store'); const snap = await db.snapshot(); snap.market = { extras: marketdata.extras(), bases: marketdata.bases(), quotes: config.realPrices ? Market.QUOTES : {} }; res.json(snap); }));
 app.post('/api/action/:name', actionLimit, wrap(async (req, res) => {
   const fn = actions[req.params.name]; if (!fn) return bad(res, 'Unknown action.', 404);
   if (!config.demoTools && /^(demo|setClock$|resetAll$|setSampleActivity$)/.test(req.params.name)) return bad(res, "That's only available on the demo site.", 403);
@@ -274,7 +274,7 @@ app.get('/healthz', (req, res) => res.json({ ok: true, mode: config.mode }));
 const realDeps = { q, wrap, ok, bad, needUser, needAdmin, sendTo, newId: db.newId, getSetting: setting, setSetting,
   isPro: async pid => { const r = await q('SELECT data FROM doc_profiles WHERE id = $1', [pid]); const p = r.rows[0] && r.rows[0].data; return !!p && (p.kind === 'demo' || p.plan === 'pro'); } };
 real.mount(app, realDeps);
-marketdata.mount(app, { q, wrap, ok, bad, needUser, needAdmin, broadcastMsg: obj => broadcastRaw(obj), push, pool: db.pool });
+marketdata.mount(app, { q, wrap, ok, bad, needUser, needAdmin, getSetting: setting, setSetting, broadcastMsg: obj => broadcastRaw(obj), push, pool: db.pool });
 
 /* ---------- the app ---------- */
 const pub = path.join(__dirname, '..', 'public');
