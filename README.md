@@ -21,6 +21,7 @@ One Node service serves the app, the API, live updates (WebSockets), and backgro
 
 Railway's menus change from time to time, so labels may differ slightly from the above.
 
+<<<<<<< HEAD
 ## Two sites from one codebase
 
 The same code runs two separate sites. Environment variables decide which one a Railway service is.
@@ -76,6 +77,8 @@ When counsel and Alpaca approve going live: replace the keys with live keys and 
 - Every sample investor shows a **Sample** label on posts and a **Sample investor** badge on their profile.
 - The real-money site never loads sample data or runs sample activity.
 
+=======
+>>>>>>> 5b24173d89525735cb41623155af56ddf02811b9
 ## Running the beta
 
 - **Invite only.** New accounts need an invite code. Create codes in **Beta admin → Invites** (one per tester or per group of testers), then use **Copy sign-up link** and send it. The link fills in the code. Usernames in `ADMIN_USERNAMES` can always sign up. You can turn invite-only off in Beta admin → Settings.
@@ -100,10 +103,13 @@ Then open http://localhost:3000.
 ## How it's built
 
 - `server/index.js`: Express server, sign-up and sign-in, invite codes, password resets, the API, beta admin endpoints, feedback and error reports, usage events, CSV export, WebSocket live updates, and a background job every 30 seconds that expires approval requests, releases held trades and fills buy-at-open orders.
+<<<<<<< HEAD
 - `server/config.js`: the site settings (demo vs real money, Alpaca keys, two-step sign-in, limits, instant deposits).
 - `server/alpaca.js`: every call to Alpaca's Broker API in one place.
 - `server/real.js`: real-money accounts, bank links, deposits and withdrawals, orders, statements, background syncing with Alpaca, instant deposits, and the trading pause switch. Real balances are private to each person and never go into the shared live feed.
 - `server/totp.js`: two-step sign-in with authenticator apps; secrets encrypted with `APP_SECRET`.
+=======
+>>>>>>> 5b24173d89525735cb41623155af56ddf02811b9
 - `server/push.js`: phone notifications for approval requests, Risk Manager reviews, trade suggestions, new votes, join requests, followers and copiers, respecting each person's notification settings and quiet hours.
 - `server/logic.js`: every user action, including group roles and rules (join requirements, quorum and pass thresholds, voting waiting periods, position limits, allowed investments, approval window length, Risk Manager review and Junior Trader suggestions). Each runs in a database transaction, checks permissions, and prices trades on the server, so the browser can't be used to fake trades or act for someone else.
 - `server/seed.js`: the sample investors, groups, posts and proposals, plus the reset used by Demo controls.

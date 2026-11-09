@@ -112,6 +112,7 @@ function seed(now){
     const id = nid('t'); put('trades', id, Object.assign({ pid, sym, side, shares, price, ts }, extra || {}, { groupId: (extra && extra.groupId) || null, copyOf: (extra && extra.copyOf) || null }));
     return { id, shares, price };
   }
+<<<<<<< HEAD
   /* groups and memberships */
   const joined = {};
   GROUPS.forEach(([id, name, description, strategy, category, risk, owner, lead, age, code, featured, rules, goals, pinned]) => {
@@ -188,6 +189,48 @@ function seed(now){
     }
   }
   /* the open proposals the tour and presenter use */
+=======
+  const groups = [
+    ['g_techmomentum','Tech Momentum Crew','Growth and AI leaders, with clear rules for trimming winners. We vote on every new position.','Growth and AI leaders','open','demo_maya','demo_maya', 40],
+    ['g_dividend','Dividend Builders Club','A long-running investment club focused on growing income. Monthly meetings, quarterly rebalancing.','Dividend growth','open','demo_lena','demo_marcus', 55],
+    ['g_value','Value Hunters','Patient buyers of quality businesses trading below fair value.','Deep value','invite','demo_sofia','demo_sofia', 30],
+  ];
+  const RL = { g_techmomentum:'growth', g_dividend:'conservative', g_value:'balanced' };
+  const RULES = {
+    g_techmomentum: { joinMode:'open', maxMembers:25, minAccount:1000, rulesText:'1. Every new position goes to a vote unless it is under 10% of the portfolio.\n2. Be respectful: debate ideas, not people.\n3. No promoting stocks you are paid to talk about.',
+      proposeRoles:['owner','admin','lead','analyst'], quorum:0.5, passRule:'majority', votingDays:3, voteWaitDays:0, maxPositionPct:0.10, allowed:'any', allowedList:[], approvalMinutes:30, riskReview:true, defaultCopyPct:1, hidden:false, feeMonthly:null },
+    g_dividend: { joinMode:'open', maxMembers:40, minAccount:5000, rulesText:'We invest for income. Positions must pay a dividend or be a broad index fund. Monthly review of every holding.',
+      proposeRoles:['owner','admin','lead','analyst'], quorum:0.5, passRule:'two-thirds', votingDays:7, voteWaitDays:7, maxPositionPct:0.15, allowed:'list', allowedList:['SCHD','KO','JNJ','O','XOM','V','COST','SPY','JPM'], approvalMinutes:60, riskReview:false, defaultCopyPct:0.5, hidden:false, feeMonthly:null },
+    g_value: { joinMode:'request', maxMembers:15, minAccount:2500, rulesText:'Write up your thesis before proposing a position. We hold for at least a year.', proposeRoles:['owner','admin','lead','analyst'], quorum:0.6, passRule:'majority', votingDays:5, voteWaitDays:14, maxPositionPct:0.12, allowed:'any', allowedList:[], approvalMinutes:30, riskReview:false, defaultCopyPct:1, hidden:false, feeMonthly:null }
+  };
+  const CODES = { g_techmomentum:'TECHCREW', g_dividend:'DIVCLUB1', g_value:'VALUEHNT' };
+  groups.forEach(([id, name, description, strategy, membership, ownerPid, leadPid, age]) => put('groups', id, { name, description, strategy, ownerPid, leadPid, riskLevel: RL[id], groupPro: true, createdTs: now - age * D, rules: RULES[id], inviteCode: CODES[id] }));
+  const mem = [
+    ['g_techmomentum','demo_maya','owner'],['g_techmomentum','demo_priya','analyst'],['g_techmomentum','demo_dan','member'],['g_techmomentum','demo_jake','risk'],['g_techmomentum','demo_sofia','observer'],
+    ['g_dividend','demo_lena','owner'],['g_dividend','demo_marcus','lead'],['g_dividend','demo_dan','member'],['g_dividend','demo_priya','member'],
+    ['g_value','demo_sofia','owner'],['g_value','demo_jake','member'],
+  ];
+  mem.forEach(([gid, pid, role], i) => put('memberships', gid + '__' + pid, { gid, pid, role, copyPct: gid === 'g_dividend' ? 0.5 : 1, joinedTs: now - (35 - i) * D, rulesAcceptedTs: now - (35 - i) * D }));
+  const posts = [
+    ['p1','demo_priya', null, 'Wrote up my case for $GOOGL: search is fine, cloud margins are the story. Adding on weakness.', 2*H, { sym:'GOOGL', side:'buy', shares:10, price:194.2 }],
+    ['p2','demo_marcus', null, 'Dividend raise season. $KO and $JNJ both delivered. Reinvesting every penny.', 5*H, null],
+    ['p3','demo_sofia', null, '$DIS looks too cheap against its parks cash flow. Starting a position, will add if it dips.', 9*H, { sym:'DIS', side:'buy', shares:30, price:112.8 }],
+    ['p4','demo_jake', null, 'Rebalanced: trimmed $QQQ, topped up $SPY. Keeping the core boring.', 20*H, null],
+    ['p5','demo_dan', null, 'First month in a group. Approving each trade makes me actually read the reasoning. Learning a lot.', 26*H, null],
+    ['p6','demo_maya', null, 'Trimmed $NVDA after a big run. Rules over feelings: we take profits at 25% overweight.', 30*H, { sym:'NVDA', side:'sell', shares:15, price:186.4 }],
+    ['p7','demo_lena', null, 'Nine years running our club on spreadsheets. Never going back.', 50*H, null],
+    ['p8','demo_maya','g_techmomentum', 'Adding to $MSFT. Cloud demand plus AI pricing power. Sized at 2% for each of you.', 22*H, { sym:'MSFT', side:'buy', shares:4, price:445.1 }],
+    ['p9','demo_priya','g_techmomentum', 'Reminder: vote on the $AMD proposal before Friday.', 10*H, null],
+    ['p10','demo_marcus','g_dividend', 'Bought more $SCHD for the club. Yield still attractive here.', 30*H, { sym:'SCHD', side:'buy', shares:80, price:27.9 }],
+  ];
+  posts.forEach(([id, pid, groupId, text, agoMs, trade]) => put('posts', id, Object.assign({ pid, groupId, text, ts: now - agoMs }, trade ? { trade } : {}, groupId && trade ? { groupTrade: true } : {})));
+  const reacts = [['p1','demo_dan'],['p1','demo_jake'],['p1','demo_maya'],['p3','demo_marcus'],['p5','demo_lena'],['p5','demo_priya'],['p6','demo_dan'],['p6','demo_jake'],['p7','demo_marcus']];
+  reacts.forEach(([postId, pid]) => put('reactions', postId + '__' + pid, { postId, pid, ts: now - H }));
+  const comms = [['c1','p1','demo_maya','Agree on cloud. Watching capex closely though.', 90*60000],['c2','p5','demo_lena','That is exactly the point of approvals. Glad it helps.', 20*H],['c3','p3','demo_jake','What is your exit price?', 7*H]];
+  comms.forEach(([id, postId, pid, text, a]) => put('comments', id, { postId, pid, text, ts: now - a }));
+  const fol = [['demo_dan','demo_maya'],['demo_dan','demo_priya'],['demo_jake','demo_maya'],['demo_marcus','demo_lena'],['demo_lena','demo_marcus'],['demo_priya','demo_sofia'],['demo_sofia','demo_priya'],['demo_jake','demo_sofia']];
+  fol.forEach(([a, b]) => put('follows', a + '__' + b, { from: a, to: b, ts: now - 10 * D }));
+>>>>>>> 5b24173d89525735cb41623155af56ddf02811b9
   put('proposals','pr_amd', { gid:'g_techmomentum', authorPid:'demo_maya', type:'trade', title:'Add $AMD at 5% of the portfolio', details:'Data center share gains and a cheaper multiple than peers. If this passes, I buy at the next open and each of you gets an approval request.', createdTs: now - 20*H, deadlineTs: now + 2*D, status:'open', tradeSym:'AMD', tradeSide:'buy', tradePct:0.05 });
   put('proposals','pr_reit', { gid:'g_dividend', authorPid:'demo_lena', type:'strategy', title:'Allow REITs up to 15% of holdings', details:'Adds $O and similar income names to our universe.', createdTs: now - 1*D, deadlineTs: now + 3*D, status:'open' });
   put('proposals','pr_starter', { gid:'g_beginners', authorPid:'demo_victor', type:'trade', title:'Start a core position in $SPY at 8%', details:'The simplest foundation there is. Everyone gets an approval request if this passes, and you can copy half if you prefer.', createdTs: now - 6*H, deadlineTs: now + 4*D, status:'open', tradeSym:'SPY', tradeSide:'buy', tradePct:0.08 });

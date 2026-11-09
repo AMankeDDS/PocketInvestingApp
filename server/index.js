@@ -107,6 +107,7 @@ app.post('/api/signup', authLimit, wrap(async (req, res) => {
 }));
 app.post('/api/login', authLimit, wrap(async (req, res) => {
   const username = clean(req.body.username).toLowerCase();
+<<<<<<< HEAD
   const u = (await q('SELECT id, pass_hash, display_name, disabled, totp_enabled, totp_secret FROM users WHERE username = $1', [username])).rows[0];
   if (!u || !(await bcrypt.compare(String(req.body.password || ''), u.pass_hash))) return bad(res, "That username and password don't match.");
   if (u.disabled) return bad(res, 'This account has been turned off. Contact the Pocket Investing team.');
@@ -115,15 +116,24 @@ app.post('/api/login', authLimit, wrap(async (req, res) => {
     const secret = totp.open(u.totp_secret, config.appSecret);
     if (!secret || !totp.verify(secret, req.body.code)) return res.status(400).json({ error: "That code didn't match. Try the newest code.", need2fa: true });
   }
+=======
+  const u = (await q('SELECT id, pass_hash, display_name, disabled FROM users WHERE username = $1', [username])).rows[0];
+  if (!u || !(await bcrypt.compare(String(req.body.password || ''), u.pass_hash))) return bad(res, "That username and password don't match.");
+  if (u.disabled) return bad(res, 'This account has been turned off. Contact the Pocket Investing team.');
+>>>>>>> 5b24173d89525735cb41623155af56ddf02811b9
   if (!(await q('SELECT 1 FROM doc_profiles WHERE id = $1', ['u_' + u.id])).rows.length){ const { changes } = await db.withTx(tx => createAccount(tx, u.id, u.display_name)); broadcast(changes); }
   await startSession(req, res, u.id); logEvent(u.id, 'login'); ok(res);
 }));
 app.post('/api/logout', wrap(async (req, res) => { const t = readCookie(req); if (t) await q('DELETE FROM sessions WHERE token = $1', [t]); clearCookie(res); ok(res); }));
 app.get('/api/me', wrap(async (req, res) => {
   const u = await currentUser(req); const c = ctxFor(u);
+<<<<<<< HEAD
   const tf = u ? (await q('SELECT totp_enabled FROM users WHERE id = $1', [u.id])).rows[0] : null;
   res.json({ signedIn: !!u, pid: c.pid, username: u && u.username, name: u && u.display_name, isAdmin: c.isAdmin, inviteOnly: (await setting('inviteOnly', true)) !== false, pushKey: push.publicKey,
     twofa: !!(tf && tf.totp_enabled), site: config.publicInfo() });
+=======
+  res.json({ signedIn: !!u, pid: c.pid, username: u && u.username, name: u && u.display_name, isAdmin: c.isAdmin, inviteOnly: (await setting('inviteOnly', true)) !== false, pushKey: push.publicKey });
+>>>>>>> 5b24173d89525735cb41623155af56ddf02811b9
 }));
 app.post('/api/reset-password', authLimit, wrap(async (req, res) => {
   const username = clean(req.body.username).toLowerCase(), code = clean(req.body.code).toUpperCase();
@@ -158,7 +168,10 @@ app.post('/api/delete-account', authLimit, wrap(async (req, res) => {
 app.get('/api/state', wrap(async (req, res) => { res.set('Cache-Control', 'no-store'); res.json(await db.snapshot()); }));
 app.post('/api/action/:name', actionLimit, wrap(async (req, res) => {
   const fn = actions[req.params.name]; if (!fn) return bad(res, 'Unknown action.', 404);
+<<<<<<< HEAD
   if (!config.demoTools && /^(demo|setClock$|resetAll$|setSampleActivity$)/.test(req.params.name)) return bad(res, "That's only available on the demo site.", 403);
+=======
+>>>>>>> 5b24173d89525735cb41623155af56ddf02811b9
   const u = await needUser(req, res); if (!u) return;
   const { out, changes } = await db.withTx(tx => fn(tx, ctxFor(u), req.body || {}));
   broadcast(changes); logEvent(u.id, 'action:' + req.params.name);
@@ -268,10 +281,14 @@ app.get('/api/admin/usage', wrap(async (req, res) => {
   ok(res, { users, dau: await active(1), wau: await active(7), mau: await active(30), signups7: signups, retention: ret.cohort ? { cohort: ret.cohort, kept: ret.kept } : null, actions, views, daily, pushUsers });
 }));
 
+<<<<<<< HEAD
 app.get('/healthz', (req, res) => res.json({ ok: true, mode: config.mode }));
 const realDeps = { q, wrap, ok, bad, needUser, needAdmin, sendTo, newId: db.newId, getSetting: setting, setSetting,
   isPro: async pid => { const r = await q('SELECT data FROM doc_profiles WHERE id = $1', [pid]); const p = r.rows[0] && r.rows[0].data; return !!p && (p.kind === 'demo' || p.plan === 'pro'); } };
 real.mount(app, realDeps);
+=======
+app.get('/healthz', (req, res) => res.json({ ok: true }));
+>>>>>>> 5b24173d89525735cb41623155af56ddf02811b9
 
 /* ---------- the app ---------- */
 const pub = path.join(__dirname, '..', 'public');
@@ -281,6 +298,7 @@ app.get('*', (req, res) => res.sendFile(path.join(pub, 'index.html')));
 /* ---------- boot ---------- */
 (async () => {
   await db.migrate();
+<<<<<<< HEAD
   await real.migrate(q);
   await push.init(db.pool);
   if (config.sampleData && await seedIfEmpty(db.withTx)) console.log('Loaded sample data.');
@@ -291,10 +309,18 @@ app.get('*', (req, res) => res.sendFile(path.join(pub, 'index.html')));
     const sample = require('./sample');
     setInterval(async () => { try { broadcast(await sample.tick(db.withTx)); } catch (e){ console.error('sample activity', e.message); } }, 15 * 60000);
   }
+=======
+  await push.init(db.pool);
+  if (await seedIfEmpty(db.withTx)) console.log('Loaded sample data.');
+>>>>>>> 5b24173d89525735cb41623155af56ddf02811b9
   setInterval(async () => {
     try { const { changes } = await db.withTx(tx => housekeeping(tx)); broadcast(changes); }
     catch (e){ console.error('housekeeping', e.message); }
   }, 30000);
   setInterval(() => { q('DELETE FROM sessions WHERE expires_at < now()').catch(() => {}); q(`DELETE FROM password_resets WHERE expires_at < now() - interval '1 day'`).catch(() => {}); }, 3600000);
+<<<<<<< HEAD
   server.listen(PORT, () => console.log('Pocket Investing (' + config.mode + (config.realMoney ? ', Alpaca ' + config.alpaca.env : '') + ') running on port ' + PORT + (ENV_ADMINS.length ? ' (admins: ' + ENV_ADMINS.join(', ') + ')' : ' (no admins set: add ADMIN_USERNAMES)')));
+=======
+  server.listen(PORT, () => console.log('Pocket Investing demo running on port ' + PORT + (ENV_ADMINS.length ? ' (admins: ' + ENV_ADMINS.join(', ') + ')' : ' (no admins set: add ADMIN_USERNAMES)')));
+>>>>>>> 5b24173d89525735cb41623155af56ddf02811b9
 })().catch(e => { console.error('Startup failed:', e); process.exit(1); });

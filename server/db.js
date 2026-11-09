@@ -92,9 +92,15 @@ async function snapshot(){
     const r = await pool.query(`SELECT id, data FROM ${table(c)}` + (lim ? ` ORDER BY (data->>'ts')::bigint DESC NULLS LAST LIMIT ${lim}` : ''));
     out[c] = r.rows.map(x => withId(x.id, x.data));
   }
+<<<<<<< HEAD
   const s = await pool.query(`SELECT key, value FROM settings WHERE key IN ('clock','announcement','inviteOnly','sampleActivity')`);
   const st = Object.fromEntries(s.rows.map(r => [r.key, r.value]));
   return { collections: out, settings: { clock: st.clock || 'live', announcement: st.announcement || null, inviteOnly: st.inviteOnly !== false, sampleActivity: st.sampleActivity || { posts: true, trades: true, groupTrades: false } } };
+=======
+  const s = await pool.query(`SELECT key, value FROM settings WHERE key IN ('clock','announcement','inviteOnly')`);
+  const st = Object.fromEntries(s.rows.map(r => [r.key, r.value]));
+  return { collections: out, settings: { clock: st.clock || 'live', announcement: st.announcement || null, inviteOnly: st.inviteOnly !== false } };
+>>>>>>> 5b24173d89525735cb41623155af56ddf02811b9
 }
 
 module.exports = { pool, COLS, table, migrate, withTx, snapshot, newId };

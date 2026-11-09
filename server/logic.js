@@ -215,8 +215,12 @@ A.createGroup = async (tx, ctx, a) => {
   const id = tx.newId();
   await tx.set('groups', id, { name, description: str(a.description, 300), strategy: str(a.strategy, 120), membership: a.membership === 'invite' ? 'invite' : 'open',
     ownerPid: ctx.pid, leadPid: ctx.pid, groupPro: true, groupProSince: Date.now(), createdTs: Date.now(), riskLevel: ['conservative','balanced','growth'].includes(a.riskLevel) ? a.riskLevel : null,
+<<<<<<< HEAD
     inviteCode: tx.newId().slice(0, 8).toUpperCase(), category: ['growth','dividends','value','beginners','index','consumer'].includes(a.category) ? a.category : null, goals: str(a.goals, 300),
     rules: Object.assign({}, DEFAULT_RULES, { joinMode: a.membership === 'invite' ? 'invite' : a.membership === 'request' ? 'request' : 'open' }) });
+=======
+    inviteCode: tx.newId().slice(0, 8).toUpperCase(), rules: Object.assign({}, DEFAULT_RULES, { joinMode: a.membership === 'invite' ? 'invite' : a.membership === 'request' ? 'request' : 'open' }) });
+>>>>>>> 5b24173d89525735cb41623155af56ddf02811b9
   await tx.set('memberships', id + '__' + ctx.pid, { gid: id, pid: ctx.pid, role: 'owner', copyPct: 1, joinedTs: Date.now() });
   return id;
 };
@@ -295,8 +299,11 @@ A.updateGroup = async (tx, ctx, a) => {
   if (a.name != null){ const nm = str(a.name, 60).trim(); if (!nm) throw fail('Give the group a name.'); patch.name = nm; }
   if (a.description != null) patch.description = str(a.description, 300);
   if (a.strategy != null) patch.strategy = str(a.strategy, 120);
+<<<<<<< HEAD
   if (a.goals != null) patch.goals = str(a.goals, 300);
   if (a.category != null) patch.category = ['growth','dividends','value','beginners','index','consumer'].includes(a.category) ? a.category : null;
+=======
+>>>>>>> 5b24173d89525735cb41623155af56ddf02811b9
   await tx.update('groups', a.gid, patch);
 };
 A.newInviteCode = async (tx, ctx, a) => { if (!canManage(await roleIn(tx, a.gid, ctx.pid))) throw fail('Only Owners and Admins can reset the invite link.'); await tx.update('groups', a.gid, { inviteCode: tx.newId().slice(0, 8).toUpperCase() }); };
@@ -416,6 +423,7 @@ A.setNotifPrefs = async (tx, ctx, a) => {
     mutedGroups: Array.isArray(a.mutedGroups) ? a.mutedGroups.slice(0, 50).map(String) : [], quiet: { on: !!q.on, start: hhmm(q.start) || '22:00', end: hhmm(q.end) || '07:00' }, tz: str(a.tz, 60) || 'America/New_York' } });
 };
 
+<<<<<<< HEAD
 /* ---------- watchlists, profile tags, pinned announcements ---------- */
 const TAGS = ['Growth','Dividends','Value','Index','Tech','Consumer brands','Long-term','Active','Learning','Income','ETFs'];
 A.toggleWatch = async (tx, ctx, a) => {
@@ -432,6 +440,8 @@ A.setPinned = async (tx, ctx, a) => {
   await tx.update('groups', a.gid, { pinned: text ? { text, by: ctx.pid, ts: Date.now() } : null });
 };
 
+=======
+>>>>>>> 5b24173d89525735cb41623155af56ddf02811b9
 /* ---------- admin: demo controls ---------- */
 A.setClock = async (tx, ctx, a) => { needAdmin(ctx); if (!['live','open','late'].includes(a.mode)) throw fail('Unknown clock mode.'); await tx.setSetting('clock', a.mode); };
 A.demoGroupTrade = async (tx, ctx, a) => { needAdmin(ctx); const g = await tx.get('groups', a.gid); if (!g) throw fail('Group not found.'); return groupTrade(tx, a.gid, g.leadPid, sym(a.sym), side(a.side), num(a.shares), a.note); };
@@ -485,8 +495,11 @@ A.demoReview = async (tx, ctx, a) => {
   if (a.op === 'pause') return { paused: await pauseReview(tx, rv, risk ? risk.pid : rv.leaderPid, 'Position looks large for current volatility. Group vote before members copy.') };
   return { sent: await releaseReview(tx, rv, 'released', risk ? risk.pid : null) };
 };
+<<<<<<< HEAD
 A.featureGroup = async (tx, ctx, a) => { needAdmin(ctx); const g = await tx.get('groups', a.gid); if (!g) throw fail('Group not found.'); await tx.update('groups', a.gid, { featured: !!a.featured }); };
 A.setSampleActivity = async (tx, ctx, a) => { needAdmin(ctx); await tx.setSetting('sampleActivity', { posts: !!a.posts, trades: !!a.trades, groupTrades: !!a.groupTrades }); };
+=======
+>>>>>>> 5b24173d89525735cb41623155af56ddf02811b9
 A.resolveReport = async (tx, ctx, a) => { needAdmin(ctx); await tx.update('reports', a.id, { status: 'reviewed', reviewedTs: Date.now() }); };
 A.resetAll = async (tx, ctx) => { needAdmin(ctx); return require('./seed').reset(tx); };
 
@@ -518,4 +531,8 @@ async function deleteAccountDocs(tx, pid){
   await by('copyRequests', 'memberPid'); await by('joinRequests', 'pid'); await by('suggestions', 'pid'); await by('reports', 'reporterPid'); await by('trades', 'pid');
   await tx.del('portfolios', pid); await tx.del('profiles', pid);
 }
+<<<<<<< HEAD
 module.exports = { actions: A, housekeeping, deleteAccountDocs, rulesOf, UserError, START_CASH, personalTrade, groupTrade, TAGS };
+=======
+module.exports = { actions: A, housekeeping, deleteAccountDocs, rulesOf, UserError, START_CASH };
+>>>>>>> 5b24173d89525735cb41623155af56ddf02811b9
