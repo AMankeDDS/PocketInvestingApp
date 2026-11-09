@@ -9,9 +9,12 @@
   "license": "UNLICENSED",
   "dependencies": {
     "bcryptjs": "^2.4.3",
+    "compression": "^1.8.2",
     "express": "^4.22.3",
     "express-rate-limit": "^7.5.1",
     "pg": "^8.23.1",
+    "qrcode": "^1.5.4",
+    "web-push": "^3.6.7",
     "ws": "^8.22.0"
   },
   "private": true,
