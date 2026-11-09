@@ -1,0 +1,172 @@
+/* Real market data from Alpaca, used whenever Alpaca keys are set:
+   - the full US stock list (with search), so any listed stock can be added to Pocket
+   - news headlines, stored and served to the app, plus optional news alerts
+   - on the real-money site only: real prices every 30 seconds and real price history.
+   The demo keeps simulated prices. Extra stocks on the demo start from their real last close. */
+const config = require('./config');
+const alpaca = require('./alpaca');
+const Market = require('./market');
+
+const EXCHANGES = new Set(['NYSE', 'NASDAQ', 'ARCA', 'AMEX', 'BATS']); /* no over-the-counter stocks */
+const MIN_PRICE = 5;                                                   /* no penny stocks */
+let deps = null;
+
+async function migrate(q){
+  await q(`CREATE TABLE IF NOT EXISTS assets (sym text PRIMARY KEY, name text NOT NULL, exchange text, fractionable boolean, in_use boolean NOT NULL DEFAULT false, ref_price numeric, ref_ts timestamptz, updated_at timestamptz NOT NULL DEFAULT now())`);
+  await q(`CREATE INDEX IF NOT EXISTS assets_name ON assets (lower(name))`);
+  await q(`CREATE TABLE IF NOT EXISTS news (id text PRIMARY KEY, ts timestamptz NOT NULL, headline text NOT NULL, summary text, url text, source text, symbols text[] NOT NULL DEFAULT '{}', created_at timestamptz NOT NULL DEFAULT now())`);
+  await q(`CREATE INDEX IF NOT EXISTS news_ts ON news (ts DESC)`);
+  await q(`CREATE INDEX IF NOT EXISTS news_symbols ON news USING gin (symbols)`);
+  await q(`CREATE TABLE IF NOT EXISTS news_alerts (user_id text NOT NULL, day text NOT NULL, n int NOT NULL DEFAULT 0, PRIMARY KEY (user_id, day))`);
+}
+
+/* ---------- stock list ---------- */
+async function syncAssets(){
+  const { q } = deps;
+  const list = (await alpaca.assets()) || [];
+  const ok = list.filter(a => a.tradable && EXCHANGES.has(a.exchange) && /^[A-Z]{1,5}(\.[A-Z])?$/.test(a.symbol) && a.name);
+  for (let i = 0; i < ok.length; i += 1000){
+    const part = ok.slice(i, i + 1000);
+    await q(`INSERT INTO assets (sym, name, exchange, fractionable, updated_at) SELECT * , now() FROM unnest($1::text[], $2::text[], $3::text[], $4::boolean[])
+             ON CONFLICT (sym) DO UPDATE SET name = EXCLUDED.name, exchange = EXCLUDED.exchange, fractionable = EXCLUDED.fractionable, updated_at = now()`,
+      [part.map(a => a.symbol), part.map(a => cleanName(a.name)), part.map(a => a.exchange), part.map(a => !!a.fractionable)]);
+  }
+  return ok.length;
+}
+const cleanName = n => String(n).replace(/\s+(Common Stock|Class [A-C] Common Stock|Ordinary Shares|Inc\.? Common Stock|American Depositary Shares.*)$/i, '').replace(/\s+/g, ' ').trim().slice(0, 80);
+
+async function loadExtras(){
+  const rows = (await deps.q(`SELECT sym, name, ref_price FROM assets WHERE in_use AND ref_price IS NOT NULL`)).rows;
+  rows.forEach(r => Market.add(r.sym, r.name, Number(r.ref_price)));
+}
+const extras = () => Market.LIST.filter(t => t.extra).map(t => ({ s: t.s, n: t.n, b: t.b }));
+
+async function search(text){
+  const t = String(text || '').trim(); if (!t) return [];
+  const core = Market.LIST.filter(x => x.s.startsWith(t.toUpperCase()) || x.n.toLowerCase().includes(t.toLowerCase())).slice(0, 8).map(x => ({ s: x.s, n: x.n, added: true }));
+  if (!config.marketData) return core;
+  const rows = (await deps.q(`SELECT sym, name FROM assets WHERE sym = upper($1) OR sym LIKE upper($1) || '%' OR lower(name) LIKE '%' || lower($1) || '%'
+     ORDER BY (sym = upper($1)) DESC, (sym LIKE upper($1) || '%') DESC, length(sym) LIMIT 15`, [t])).rows;
+  const seen = new Set(), out = [];
+  for (const r of rows.map(r => ({ s: r.sym, n: r.name, added: !!Market.MAP[r.sym] })).concat(core)) if (!seen.has(r.s)){ seen.add(r.s); out.push(r); }
+  return out.slice(0, 15);
+}
+
+const snapPrice = x => x && ((x.latestTrade && x.latestTrade.p) || (x.dailyBar && x.dailyBar.c) || (x.prevDailyBar && x.prevDailyBar.c)) || 0;
+const snapPrev = x => x && x.prevDailyBar && x.prevDailyBar.c || null;
+
+/* Add a listed stock to Pocket so it can be viewed, watched and traded. */
+async function ensure(symIn){
+  const sym = String(symIn || '').toUpperCase().trim();
+  if (Market.MAP[sym]) return { s: sym, n: Market.MAP[sym].n, b: Market.MAP[sym].b, existed: true };
+  if (!config.marketData) throw userErr("That stock isn't available yet.");
+  const a = (await deps.q('SELECT sym, name FROM assets WHERE sym = $1', [sym])).rows[0];
+  if (!a) throw userErr("That stock isn't available on Pocket. Only stocks listed on major US exchanges are supported.");
+  const snap = (await alpaca.snapshots([sym])) || {};
+  const p = snapPrice(snap[sym]);
+  if (!(p >= MIN_PRICE)) throw userErr(`Pocket supports stocks priced $${MIN_PRICE} and up during the beta.`);
+  await deps.q('UPDATE assets SET in_use = true, ref_price = $2, ref_ts = now() WHERE sym = $1', [sym, p]);
+  Market.add(sym, a.name, p);
+  if (config.realPrices) Market.setQuotes({ [sym]: { p, prev: snapPrev(snap[sym]) } });
+  deps.broadcastMsg({ type: 'market', extras: [{ s: sym, n: a.name, b: Market.MAP[sym].b }], quotes: config.realPrices ? { [sym]: Market.QUOTES[sym] } : undefined });
+  return { s: sym, n: a.name, b: Market.MAP[sym].b };
+}
+function userErr(m){ const e = new Error(m); e.userFacing = true; return e; }
+
+/* ---------- real prices (real-money site only) ---------- */
+async function refreshQuotes(){
+  const syms = Market.LIST.map(t => t.s), out = {};
+  for (let i = 0; i < syms.length; i += 100){
+    const snap = (await alpaca.snapshots(syms.slice(i, i + 100))) || {};
+    for (const [s, x] of Object.entries(snap)){ const p = snapPrice(x); if (p > 0) out[s] = { p, prev: snapPrev(x), t: Date.now() }; }
+  }
+  Market.setQuotes(out);
+  if (Object.keys(out).length) deps.broadcastMsg({ type: 'market', quotes: out });
+}
+const barCache = new Map();
+async function bars(sym, span){
+  const key = sym + ':' + span, c = barCache.get(key); if (c && Date.now() - c.t < 5 * 60000) return c.v;
+  const cfg = { '1d': ['5Min', 1.5], '5d': ['30Min', 7], '1m': ['1Day', 32] }[span] || ['5Min', 1.5];
+  const r = await alpaca.bars(sym, cfg[0], new Date(Date.now() - cfg[1] * 86400000).toISOString());
+  const v = ((r && r.bars) || []).map(b => ({ t: Date.parse(b.t), c: b.c }));
+  barCache.set(key, { t: Date.now(), v }); return v;
+}
+
+/* ---------- news ---------- */
+async function trackedSymbols(){
+  const { q } = deps; const set = new Set(Market.LIST.map(t => t.s));
+  (await q(`SELECT data->'watchlist' AS w FROM doc_profiles WHERE data ? 'watchlist'`)).rows.forEach(r => (r.w || []).forEach(s => set.add(s)));
+  return [...set];
+}
+async function pullNews(){
+  const { q } = deps;
+  const batches = [null]; const syms = await trackedSymbols();
+  for (let i = 0; i < syms.length; i += 50) batches.push(syms.slice(i, i + 50));
+  const fresh = [];
+  for (const b of batches){
+    const r = await alpaca.news(b, 50).catch(() => null);
+    for (const n of (r && r.news) || []){
+      if (!n.headline) continue;
+      const ins = await q(`INSERT INTO news (id, ts, headline, summary, url, source, symbols) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (id) DO NOTHING RETURNING id`,
+        [String(n.id), n.created_at || n.updated_at || new Date().toISOString(), String(n.headline).slice(0, 400), stripHtml(n.summary).slice(0, 500), n.url || null, n.source || n.author || null, (n.symbols || []).slice(0, 20)]);
+      if (ins.rows.length) fresh.push({ id: String(n.id), headline: n.headline, symbols: n.symbols || [], ts: Date.parse(n.created_at || n.updated_at || Date.now()) });
+    }
+  }
+  await q(`DELETE FROM news WHERE ts < now() - interval '30 days'`);
+  if (fresh.length) deps.broadcastMsg({ type: 'news', n: fresh.length });
+  await newsAlerts(fresh).catch(e => console.error('news alerts', e.message));
+  return fresh.length;
+}
+const stripHtml = s => String(s || '').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
+async function listNews(symbols, limit){
+  const lim = Math.min(Math.max(Number(limit) || 10, 1), 30);
+  const syms = (symbols || []).filter(s => /^[A-Z.]{1,6}$/.test(s)).slice(0, 60);
+  const r = syms.length ? await deps.q(`SELECT * FROM news WHERE symbols && $1::text[] ORDER BY ts DESC LIMIT $2`, [syms, lim]) : await deps.q(`SELECT * FROM news ORDER BY ts DESC LIMIT $1`, [lim]);
+  return r.rows.map(n => ({ id: n.id, ts: new Date(n.ts).getTime(), headline: n.headline, summary: n.summary, url: n.url, source: n.source, symbols: n.symbols }));
+}
+/* Optional alerts: only for people who turned on news alerts, for stocks they own or watch,
+   at most 3 a day, never during quiet hours, only for headlines under 2 hours old. */
+async function newsAlerts(items){
+  const { q, push } = deps; if (!items.length || !push.send) return 0;
+  const recent = items.filter(i => Date.now() - i.ts < 2 * 3600000); if (!recent.length) return 0;
+  const users = (await q('SELECT DISTINCT user_id FROM push_subs').catch(() => ({ rows: [] }))).rows.map(r => r.user_id);
+  const day = new Date().toISOString().slice(0, 10); let sent = 0;
+  for (const uid of users){
+    const pid = 'u_' + uid;
+    const prof = ((await q('SELECT data FROM doc_profiles WHERE id = $1', [pid])).rows[0] || {}).data;
+    if (!prof || !prof.notif || prof.notif.news !== true || !push.allowed(prof, 'news')) continue;
+    const pf = ((await q('SELECT data FROM doc_portfolios WHERE id = $1', [pid])).rows[0] || {}).data || {};
+    const mine = new Set(Object.keys(pf.positions || {}).concat(prof.watchlist || []));
+    const hit = recent.find(i => i.symbols.some(s => mine.has(s))); if (!hit) continue;
+    const c = (await q(`INSERT INTO news_alerts (user_id, day, n) VALUES ($1, $2, 1) ON CONFLICT (user_id, day) DO UPDATE SET n = news_alerts.n + 1 RETURNING n`, [uid, day])).rows[0].n;
+    if (c > 3) continue;
+    const sym = hit.symbols.find(s => mine.has(s));
+    await push.send(q.pool || deps.pool, [pid], { title: sym + ' in the news', body: hit.headline.slice(0, 140), tag: 'news-' + hit.id, url: '/#/stock/' + sym });
+    sent++;
+  }
+  return sent;
+}
+
+/* ---------- routes and jobs ---------- */
+function mount(app, d){
+  deps = d;
+  const { wrap, ok, bad, needUser } = d;
+  app.get('/api/assets/search', wrap(async (req, res) => ok(res, { results: await search(req.query.q) })));
+  app.post('/api/assets/ensure', wrap(async (req, res) => { const u = await needUser(req, res); if (!u) return; try { ok(res, { stock: await ensure(req.body.sym) }); } catch (e){ if (e.userFacing) return bad(res, e.message); throw e; } }));
+  app.get('/api/news', wrap(async (req, res) => ok(res, { news: await listNews(String(req.query.symbols || '').split(',').filter(Boolean), req.query.limit), real: config.marketData })));
+  app.get('/api/bars', wrap(async (req, res) => {
+    const sym = String(req.query.sym || '').toUpperCase(); if (!config.realPrices || !Market.MAP[sym]) return ok(res, { bars: [] });
+    try { ok(res, { bars: await bars(sym, String(req.query.span || '1d')) }); } catch (e){ ok(res, { bars: [] }); }
+  }));
+}
+async function start(){
+  if (!config.marketData) return;
+  const { q } = deps;
+  const run = (fn, label) => fn().catch(e => console.error(label, e.message));
+  const n = (await q('SELECT count(*)::int AS n, max(updated_at) AS t FROM assets')).rows[0];
+  if (!n.n || Date.now() - new Date(n.t).getTime() > 86400000) await run(async () => console.log('Stock list synced:', await syncAssets()), 'asset sync');
+  setInterval(() => run(syncAssets, 'asset sync'), 24 * 3600000);
+  await run(pullNews, 'news'); setInterval(() => run(pullNews, 'news'), 5 * 60000);
+  if (config.realPrices){ await run(refreshQuotes, 'quotes'); setInterval(() => run(refreshQuotes, 'quotes'), 30000); }
+}
+module.exports = { migrate, mount, start, loadExtras, extras, ensure, search, pullNews, listNews, newsAlerts, syncAssets, refreshQuotes, MIN_PRICE };

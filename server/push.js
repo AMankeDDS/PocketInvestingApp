@@ -82,4 +82,4 @@ async function fromChanges(pool, changes){
     await send(pool, keep, o.payload);
   }
 }
-module.exports = { init, send, fromChanges, get publicKey(){ return publicKey; } };
+module.exports = { init, send, fromChanges, allowed, get publicKey(){ return publicKey; } };

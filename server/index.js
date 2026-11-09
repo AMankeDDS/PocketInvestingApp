@@ -13,6 +13,8 @@ const { actions, housekeeping, deleteAccountDocs } = require('./logic');
 const { createAccount, seedIfEmpty } = require('./seed');
 const config = require('./config');
 const real = require('./real');
+const marketdata = require('./marketdata');
+const Market = require('./market');
 const totp = require('./totp');
 
 const PORT = process.env.PORT || 3000;
@@ -155,7 +157,7 @@ app.post('/api/delete-account', authLimit, wrap(async (req, res) => {
 }));
 
 /* ---------- data and actions ---------- */
-app.get('/api/state', wrap(async (req, res) => { res.set('Cache-Control', 'no-store'); res.json(await db.snapshot()); }));
+app.get('/api/state', wrap(async (req, res) => { res.set('Cache-Control', 'no-store'); const snap = await db.snapshot(); snap.market = { extras: marketdata.extras(), quotes: config.realPrices ? Market.QUOTES : {} }; res.json(snap); }));
 app.post('/api/action/:name', actionLimit, wrap(async (req, res) => {
   const fn = actions[req.params.name]; if (!fn) return bad(res, 'Unknown action.', 404);
   if (!config.demoTools && /^(demo|setClock$|resetAll$|setSampleActivity$)/.test(req.params.name)) return bad(res, "That's only available on the demo site.", 403);
@@ -272,6 +274,7 @@ app.get('/healthz', (req, res) => res.json({ ok: true, mode: config.mode }));
 const realDeps = { q, wrap, ok, bad, needUser, needAdmin, sendTo, newId: db.newId, getSetting: setting, setSetting,
   isPro: async pid => { const r = await q('SELECT data FROM doc_profiles WHERE id = $1', [pid]); const p = r.rows[0] && r.rows[0].data; return !!p && (p.kind === 'demo' || p.plan === 'pro'); } };
 real.mount(app, realDeps);
+marketdata.mount(app, { q, wrap, ok, bad, needUser, broadcastMsg: obj => broadcastRaw(obj), push, pool: db.pool });
 
 /* ---------- the app ---------- */
 const pub = path.join(__dirname, '..', 'public');
@@ -282,11 +285,14 @@ app.get('*', (req, res) => res.sendFile(path.join(pub, 'index.html')));
 (async () => {
   await db.migrate();
   await real.migrate(q);
+  await marketdata.migrate(q);
+  await marketdata.loadExtras();
   await push.init(db.pool);
   if (config.sampleData && await seedIfEmpty(db.withTx)) console.log('Loaded sample data.');
   if (config.mode === 'live' && !config.appSecret) console.warn('WARNING: set APP_SECRET on the live site to encrypt two-step sign-in secrets.');
   if (config.realMoney && !require('./alpaca').configured()) console.warn('WARNING: ALPACA_KEY and ALPACA_SECRET are not set. Real-money features will show as unavailable.');
   real.startSync({ q, sendTo });
+  marketdata.start().catch(e => console.error('market data', e.message));
   if (config.sampleData){
     const sample = require('./sample');
     setInterval(async () => { try { broadcast(await sample.tick(db.withTx)); } catch (e){ console.error('sample activity', e.message); } }, 15 * 60000);

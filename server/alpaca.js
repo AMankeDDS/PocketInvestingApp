@@ -3,7 +3,28 @@
 const config = require('./config');
 
 class BrokerError extends Error { constructor(msg, status, detail){ super(msg); this.userFacing = true; this.status = status; this.detail = detail; } }
-const auth = () => 'Basic ' + Buffer.from(config.alpaca.key + ':' + config.alpaca.secret).toString('base64');
+/* Sign-in: newer Alpaca credentials (Client ID + Client Secret) are exchanged for a
+   15-minute access token, reused until shortly before it expires. Older key pairs
+   (ALPACA_AUTH_MODE=legacy) are sent directly. */
+let token = null, tokenExp = 0, tokenPending = null;
+async function getToken(force){
+  if (!force && token && Date.now() < tokenExp - 60000) return token;
+  if (tokenPending) return tokenPending;
+  tokenPending = (async () => {
+    const body = new URLSearchParams({ grant_type: 'client_credentials', client_id: config.alpaca.key, client_secret: config.alpaca.secret });
+    let r, j = null;
+    try { r = await fetch(config.alpaca.authUrl + '/v1/oauth2/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' }, body, signal: AbortSignal.timeout(15000) }); j = await r.json().catch(() => null); }
+    catch (e){ if (logFn) logFn({ method: 'POST', path: '/v1/oauth2/token', status: 0, message: e.message }); throw new BrokerError("We couldn't reach the brokerage. Try again in a moment.", 0); }
+    if (!r.ok || !j || !j.access_token){ if (logFn) logFn({ method: 'POST', path: '/v1/oauth2/token', status: r.status, message: String((j && (j.error_description || j.error || j.message)) || 'token request failed').slice(0, 300) }); throw new BrokerError('The brokerage connection could not sign in. Check the Alpaca keys.', r.status); }
+    token = j.access_token; tokenExp = Date.now() + (Number(j.expires_in) || 900) * 1000;
+    return token;
+  })().finally(() => { tokenPending = null; });
+  return tokenPending;
+}
+async function auth(force){
+  if (config.alpaca.authMode === 'legacy') return 'Basic ' + Buffer.from(config.alpaca.key + ':' + config.alpaca.secret).toString('base64');
+  return 'Bearer ' + await getToken(force);
+}
 let logFn = null;
 const setLogger = fn => { logFn = fn; };
 
@@ -12,9 +33,12 @@ async function call(method, path, body, opt = {}){
   const url = (opt.data ? config.alpaca.dataUrl : config.alpaca.baseUrl) + path;
   let r, text;
   try {
-    r = await fetch(url, { method, headers: { Authorization: auth(), 'Content-Type': 'application/json', Accept: 'application/json' }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(opt.timeout || 15000) });
+    const go = async force => fetch(url, { method, headers: { Authorization: await auth(force), 'Content-Type': 'application/json', Accept: 'application/json' }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(opt.timeout || 15000) });
+    r = await go(false);
+    if (r.status === 401 && config.alpaca.authMode !== 'legacy') r = await go(true); /* token expired early: sign in again once */
     text = await r.text();
   } catch (e){
+    if (e.userFacing) throw e;
     if (logFn) logFn({ method, path, status: 0, message: e.message });
     throw new BrokerError("We couldn't reach the brokerage. Try again in a moment.", 0);
   }
@@ -58,8 +82,11 @@ const A = {
   /* documents */
   listDocuments: id => call('GET', `/v1/accounts/${id}/documents`),
   documentUrl: (id, docId) => `${config.alpaca.baseUrl}/v1/accounts/${id}/documents/${docId}/download`,
-  downloadDocument: async (id, docId) => fetch(`${config.alpaca.baseUrl}/v1/accounts/${id}/documents/${docId}/download`, { headers: { Authorization: auth() }, redirect: 'follow', signal: AbortSignal.timeout(20000) }),
-  /* market data */
-  snapshots: symbols => call('GET', `/v2/stocks/snapshots?symbols=${encodeURIComponent(symbols.join(','))}`, null, { data: true })
+  downloadDocument: async (id, docId) => fetch(`${config.alpaca.baseUrl}/v1/accounts/${id}/documents/${docId}/download`, { headers: { Authorization: await auth() }, redirect: 'follow', signal: AbortSignal.timeout(20000) }),
+  /* market data and reference data */
+  snapshots: symbols => call('GET', `/v2/stocks/snapshots?symbols=${encodeURIComponent(symbols.join(','))}`, null, { data: true }),
+  bars: (sym, timeframe, startIso, limit = 400) => call('GET', `/v2/stocks/${encodeURIComponent(sym)}/bars?timeframe=${timeframe}&start=${encodeURIComponent(startIso)}&limit=${limit}&adjustment=split`, null, { data: true }),
+  news: (symbols, limit = 50) => call('GET', `/v1beta1/news?limit=${limit}&sort=desc${symbols && symbols.length ? '&symbols=' + encodeURIComponent(symbols.join(',')) : ''}`, null, { data: true }),
+  assets: () => call('GET', '/v1/assets?status=active&asset_class=us_equity', null, { timeout: 60000 })
 };
-module.exports = Object.assign(A, { BrokerError, setLogger, configured: () => !!(config.alpaca.key && config.alpaca.secret) });
+module.exports = Object.assign(A, { BrokerError, setLogger, getToken, configured: () => !!(config.alpaca.key && config.alpaca.secret) });

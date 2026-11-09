@@ -69,11 +69,33 @@ When counsel and Alpaca approve going live: replace the keys with live keys and 
 
 **Not yet connected to real money (next rounds):** copying and group trades, buy-at-open orders, Plaid bank linking, nightly reconciliation, and the final Alpaca-approved disclosure wording (placeholders are marked in the app).
 
+## Alpaca keys and market data
+
+Alpaca's Broker dashboard gives you a **Client ID** and a **Client Secret**. Put them in Railway as `ALPACA_KEY` (Client ID) and `ALPACA_SECRET` (Client Secret). Never commit them to GitHub or paste them anywhere else. The app exchanges them for a 15-minute access token, reuses it, and renews it automatically. (Older Alpaca key pairs still work with `ALPACA_AUTH_MODE=legacy`.)
+
+Set the keys on **both** Railway services:
+
+| | Demo (app.) | Real money (my.) |
+|---|---|---|
+| News on stock pages, Home and the market brief | Yes | Yes |
+| Full US stock list with search | Yes (practice prices start from each stock's real last close) | Yes |
+| Real prices and price history | No: simulated, labeled "Prices are simulated. News is real." | Yes, updated every 30 seconds |
+| Real trading | Never | Yes, with two-step sign-in and a brokerage account |
+
+Without keys, both sites work as before with the 20 built-in stocks and no news.
+
+- **Stock list:** synced from Alpaca once a day. Only stocks on major US exchanges are included (no over-the-counter stocks), and stocks under $5 can't be added. A stock joins Pocket the first time someone opens, searches and picks, or trades it; then everyone sees it.
+- **News:** headlines (Benzinga, via Alpaca) are fetched every 5 minutes and kept for 30 days. Each one shows its source and time and links to the full story.
+- **News alerts:** off by default. People can turn on "News about stocks I own or watch" in Notifications: at most 3 a day, never in quiet hours, only for headlines under 2 hours old.
+- **Market brief:** a short daily summary on Home (the S&P 500 and Nasdaq-100, the biggest movers, top headlines), built from a fixed template, never AI-written, and labeled as information, not a recommendation.
+- Confirm news display rights and the market data plan with Alpaca before a public launch.
+
 ## Demo content
 
 - **Sample data:** about 20 sample investors and 8 groups (Tech Momentum Crew, Dividend Builders Club, Value Hunters, Beginners Circle, Index and Chill, Brand Loyalists, Chip Watchers and Kitchen Table Investors), with roughly four months of back-filled trades, group trades and member approvals, posts, comments, likes and votes. It loads automatically on an empty demo database, and **Reset the demo** restores it with fresh dates.
 - **Daily sample activity:** between 8am and 9pm Eastern, sample investors post, like, comment and make practice trades every so often, so the demo never feels frozen. Turn each kind on or off in **Demo controls → Sample activity**. Group trades by sample Lead Traders are off by default, because they send approval requests to real testers in those groups.
 - Every sample investor shows a **Sample** label on posts and a **Sample investor** badge on their profile.
+- **Add new sample data** (Demo controls) loads the sample investors, groups and history alongside existing data without deleting anything. Your groups, posts and testers' activity stay; existing groups keep their members and rules and gain the new details. Running it again adds nothing new. **Reset the demo** still wipes everything except accounts.
 - The real-money site never loads sample data or runs sample activity.
 
 ## Running the beta

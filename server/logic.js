@@ -412,7 +412,7 @@ A.setNotifPrefs = async (tx, ctx, a) => {
   await needProfile(tx, ctx);
   const hhmm = v => /^\d{1,2}:\d{2}$/.test(v || '') ? v : null;
   const q = a.quiet || {};
-  await tx.update('profiles', ctx.pid, { notif: { approvals: a.approvals !== false, votes: a.votes !== false, social: a.social !== false, approvalsInQuiet: a.approvalsInQuiet !== false,
+  await tx.update('profiles', ctx.pid, { notif: { approvals: a.approvals !== false, votes: a.votes !== false, social: a.social !== false, news: a.news === true, approvalsInQuiet: a.approvalsInQuiet !== false,
     mutedGroups: Array.isArray(a.mutedGroups) ? a.mutedGroups.slice(0, 50).map(String) : [], quiet: { on: !!q.on, start: hhmm(q.start) || '22:00', end: hhmm(q.end) || '07:00' }, tz: str(a.tz, 60) || 'America/New_York' } });
 };
 
@@ -485,6 +485,7 @@ A.demoReview = async (tx, ctx, a) => {
   if (a.op === 'pause') return { paused: await pauseReview(tx, rv, risk ? risk.pid : rv.leaderPid, 'Position looks large for current volatility. Group vote before members copy.') };
   return { sent: await releaseReview(tx, rv, 'released', risk ? risk.pid : null) };
 };
+A.demoAddSampleData = async (tx, ctx) => { needAdmin(ctx); return require('./seed').merge(tx); };
 A.featureGroup = async (tx, ctx, a) => { needAdmin(ctx); const g = await tx.get('groups', a.gid); if (!g) throw fail('Group not found.'); await tx.update('groups', a.gid, { featured: !!a.featured }); };
 A.setSampleActivity = async (tx, ctx, a) => { needAdmin(ctx); await tx.setSetting('sampleActivity', { posts: !!a.posts, trades: !!a.trades, groupTrades: !!a.groupTrades }); };
 A.resolveReport = async (tx, ctx, a) => { needAdmin(ctx); await tx.update('reports', a.id, { status: 'reviewed', reviewedTs: Date.now() }); };

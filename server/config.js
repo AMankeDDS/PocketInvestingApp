@@ -15,7 +15,9 @@ const config = {
     secret: process.env.ALPACA_SECRET || '',
     baseUrl: process.env.ALPACA_BASE_URL || '',            // override, e.g. for testing
     dataUrl: process.env.ALPACA_DATA_URL || '',
-    firmAccountId: process.env.ALPACA_FIRM_ACCOUNT_ID || '' // Pocket's own account, used for instant deposits
+    firmAccountId: process.env.ALPACA_FIRM_ACCOUNT_ID || '', // Pocket's own account, used for instant deposits
+    authUrl: process.env.ALPACA_AUTH_URL || '',
+    authMode: (process.env.ALPACA_AUTH_MODE || 'token').toLowerCase() === 'legacy' ? 'legacy' : 'token' // 'token' = Client ID + Client Secret
   },
   require2fa: bool(process.env.REQUIRE_2FA, MODE === 'live'),
   appSecret: process.env.APP_SECRET || '',                 // encrypts two-step sign-in secrets
@@ -30,7 +32,11 @@ const config = {
 };
 config.alpaca.baseUrl = config.alpaca.baseUrl || (config.alpaca.env === 'live' ? 'https://broker-api.alpaca.markets' : 'https://broker-api.sandbox.alpaca.markets');
 config.alpaca.dataUrl = config.alpaca.dataUrl || (config.alpaca.env === 'live' ? 'https://data.alpaca.markets' : 'https://data.sandbox.alpaca.markets');
+config.alpaca.authUrl = config.alpaca.authUrl || (config.alpaca.env === 'live' ? 'https://authx.alpaca.markets' : 'https://authx.sandbox.alpaca.markets');
 config.realMoney = MODE === 'live' && config.broker === 'alpaca';
-config.publicInfo = () => ({ mode: config.mode, realMoney: config.realMoney, alpacaEnv: config.realMoney ? config.alpaca.env : null, demoTools: config.demoTools, require2fa: config.require2fa,
+/* real market data (news, stock list, prices) is used whenever Alpaca keys are set, on either site */
+config.marketData = !!(config.alpaca.key && config.alpaca.secret);
+config.realPrices = config.realMoney && config.marketData; /* the demo keeps simulated prices */
+config.publicInfo = () => ({ mode: config.mode, realMoney: config.realMoney, marketData: config.marketData, realPrices: config.realPrices, alpacaEnv: config.realMoney ? config.alpaca.env : null, demoTools: config.demoTools, require2fa: config.require2fa,
   instantDeposits: { enabled: config.instant.enabled, perDeposit: config.instant.perDeposit } });
 module.exports = config;

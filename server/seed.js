@@ -93,11 +93,11 @@ const COMMENTS = ['Agree. What\u2019s your exit plan?','Thanks for explaining th
 function rng(seed){ let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 const r2 = n => Math.round(n * 100) / 100, r3 = n => Math.round(n * 1000) / 1000;
 
-function seed(now){
-  const D = 86400000, H = 3600000, rand = rng(20261109);
+function seed(now, opt = {}){
+  const D = 86400000, H = 3600000, rand = rng(20261109), PFX = opt.prefix || '';
   const pick = a => a[Math.floor(rand() * a.length)];
   const docs = {}; const put = (c, id, d) => { docs[c + '/' + id] = d; };
-  let seq = 0; const nid = p => p + (++seq).toString(36);
+  let seq = 0; const nid = p => PFX + p + (++seq).toString(36);
   const style = Object.fromEntries(PEOPLE.map(p => [p[0], p[3]]));
   PEOPLE.forEach(([id, name, bio, st], i) => put('profiles', id, { kind:'demo', name, bio, createdTs: now - (160 - i) * D, tags: { growth:['Growth','Tech'], dividend:['Dividends','Long-term'], value:['Value','Long-term'], index:['Index','Learning'], consumer:['Consumer brands','Long-term'] }[st] }));
   /* portfolios are built by replaying every trade from $100,000 in cash */
@@ -219,6 +219,23 @@ async function reset(tx){
   await tx.setSetting('clock', 'live');
   return Object.keys(docs).length;
 }
+/* Add the sample investors, groups and history alongside existing data without deleting
+   anything. Existing sample investors get the new history and portfolios; existing groups
+   keep their members and rules and gain the new details; real people's data is untouched.
+   Running it again adds nothing new. */
+async function merge(tx){
+  const docs = seed(Date.now(), { prefix: 's2' });
+  let added = 0, updated = 0;
+  for (const [path, data] of Object.entries(docs)){
+    const [c, id] = path.split('/');
+    const cur = await tx.get(c, id);
+    if (c === 'portfolios'){ if (id.startsWith('demo_')){ await tx.set(c, id, data); updated++; } continue; }
+    if (!cur){ await tx.set(c, id, data); added++; continue; }
+    if (c === 'groups'){ const patch = {}; ['category','goals','featured'].forEach(k => { if (cur[k] == null && data[k] != null) patch[k] = data[k]; }); if (!cur.pinned && data.pinned) patch.pinned = data.pinned; if (Object.keys(patch).length){ await tx.update(c, id, patch); updated++; } }
+    if (c === 'profiles' && cur.kind === 'demo' && !cur.tags && data.tags){ await tx.update(c, id, { tags: data.tags }); updated++; }
+  }
+  return { added, updated };
+}
 async function createAccount(tx, userId, name, risk){
   const pid = 'u_' + userId;
   await tx.set('profiles', pid, { kind: 'real', userId, name, bio: '', plan: 'free', riskProfile: risk || 'balanced', createdTs: Date.now() });
@@ -232,4 +249,4 @@ async function seedIfEmpty(withTx){
   await withTx(tx => reset(tx));
   return true;
 }
-module.exports = { seed, reset, createAccount, seedIfEmpty, PEOPLE, STYLE_SYMS, TPL, COMMENTS };
+module.exports = { seed, reset, merge, createAccount, seedIfEmpty, PEOPLE, STYLE_SYMS, TPL, COMMENTS };

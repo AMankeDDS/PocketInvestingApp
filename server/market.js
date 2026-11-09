@@ -10,7 +10,19 @@ const LIST = [
 const MAP = Object.fromEntries(LIST.map(t => [t.s, t]));
 function hash(str){ let h = 2166136261; for (let i = 0; i < str.length; i++){ h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
 function rnd(seed){ let t = (seed + 0x6D2B79F5) | 0; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }
+/* Extra stocks (beyond the core 20) are added with a starting price taken from their real
+   last close. On the real-money site, real quotes replace simulated prices for "now",
+   and history is scaled so charts end at the real price. */
+const QUOTES = {};
+function add(s, n, b){ if (!s || MAP[s] || !(b > 0)) return false; const t = { s, n: n || s, b: Math.round(b * 100) / 100, extra: true }; LIST.push(t); MAP[s] = t; return true; }
+function setQuotes(q){ const now = Date.now(); for (const [s, v] of Object.entries(q || {})) if (v && v.p > 0) QUOTES[s] = { p: v.p, prev: v.prev || null, t: v.t || now }; }
+const liveQuote = s => { const q = QUOTES[s]; return q && Date.now() - q.t < 15 * 60000 ? q : null; };
 function price(sym, ms = Date.now()){
+  const q = liveQuote(sym);
+  if (q){ if (Math.abs(ms - Date.now()) < 180000) return q.p; const a = simPrice(sym, ms), b = simPrice(sym, Date.now()); return a && b ? Math.round(a * q.p / b * 100) / 100 : q.p; }
+  return simPrice(sym, ms);
+}
+function simPrice(sym, ms = Date.now()){
   const T = MAP[sym]; if (!T) return 0;
   const m = ms / 60000, h = hash(sym);
   const p1 = rnd(h) * 6.283, p2 = rnd(h + 1) * 6.283, p3 = rnd(h + 2) * 6.283, vol = 0.6 + rnd(h + 3);
@@ -39,4 +51,4 @@ function approvalWindow(mode, now = Date.now(), minutes = 30){
 }
 function canFillNow(mode, now = Date.now()){ const s = session(mode, now); return s.open && s.closeAt - now > 5 * 60000; }
 const ETFS = ['SPY','QQQ','SCHD'];
-module.exports = { ETFS, LIST, MAP, hash, price, session, approvalWindow, canFillNow };
+module.exports = { ETFS, LIST, MAP, hash, price, simPrice, add, setQuotes, QUOTES, session, approvalWindow, canFillNow };
