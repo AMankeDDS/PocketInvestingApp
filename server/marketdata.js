@@ -91,7 +91,7 @@ async function refreshQuotes(){
 const barCache = new Map();
 async function bars(sym, span){
   const key = sym + ':' + span, c = barCache.get(key); if (c && Date.now() - c.t < 5 * 60000) return c.v;
-  const cfg = { '1d': ['5Min', 1.5], '5d': ['30Min', 7], '1m': ['1Day', 32] }[span] || ['5Min', 1.5];
+  const cfg = { '1d': ['5Min', 1.5], '5d': ['30Min', 7], '1m': ['1Day', 32], '3m': ['1Day', 95], '1y': ['1Day', 370] }[span] || ['5Min', 1.5];
   const r = await alpaca.bars(sym, cfg[0], new Date(Date.now() - cfg[1] * 86400000).toISOString());
   const v = ((r && r.bars) || []).map(b => ({ t: Date.parse(b.t), c: b.c }));
   barCache.set(key, { t: Date.now(), v }); return v;

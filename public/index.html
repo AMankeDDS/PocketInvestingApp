@@ -208,6 +208,15 @@ textarea.input{resize:vertical; min-height:84px}
 .grid2{display:grid; gap:16px}
 @media (min-width:760px){ .grid2{grid-template-columns:1fr 1fr} }
 .chart{width:100%; height:180px; display:block}
+.ich{position:relative; margin-top:10px; user-select:none; -webkit-user-select:none}
+.ich-head{font-size:14px; color:var(--muted); min-height:20px; display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+.ich-head b{color:var(--text); font-family:var(--f-num)}
+.ich-svg{display:block; width:100%; touch-action:pan-y; cursor:crosshair}
+.ich-svg .ich-sel{fill:var(--blue); opacity:.12}
+.ich-svg .ich-x{stroke:var(--muted); stroke-width:1; stroke-dasharray:3 3}
+.ich-svg .ich-dot{fill:var(--surface); stroke-width:2.5}
+.ich-tip{position:absolute; top:28px; transform:translateX(-50%); background:var(--ink); color:#fff; font-size:12px; padding:5px 8px; border-radius:8px; pointer-events:none; white-space:nowrap; font-family:var(--f-num)}
+.chips.sm button{padding:4px 10px; font-size:13px}
 .kv{display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:14px; padding:16px 18px}
 .kv span{display:block; font-size:13px; color:var(--muted)}
 .kv b{font-family:var(--f-num); font-size:18px}
@@ -595,7 +604,7 @@ const ICON = {
   demo:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/><circle cx="12" cy="12" r="3"/></svg>'
 };
 
-const ui = { recon: null, anchorInfo: null, ensuring: {}, bars: {}, search: null, searchQ: '', feedLimit: 30, lastSeenPost: Date.now(), lastRoute: null, groupCat: 'all', homeTab:'practice', real:null, realLoading:false, rquotes:null, openForm:null, openStep:0, sec:null, docs:null, areal:null, adminTab:'testers', admin:null, usage:null, pushState:null, inviteFor:null, inviteCode:null, inviteBy:null, feedTab:'everyone', openComments:new Set(), drafts:{}, chartSpan:'1d', seenReqs:null, onb:0, presenter:null, risk:'balanced', tour:null, copyFrac:{} };
+const ui = { ichSel: {}, pfSpan: '1d', spTab: null, spRange: 'all', recon: null, anchorInfo: null, ensuring: {}, bars: {}, search: null, searchQ: '', feedLimit: 30, lastSeenPost: Date.now(), lastRoute: null, groupCat: 'all', homeTab:'practice', real:null, realLoading:false, rquotes:null, openForm:null, openStep:0, sec:null, docs:null, areal:null, adminTab:'testers', admin:null, usage:null, pushState:null, inviteFor:null, inviteCode:null, inviteBy:null, feedTab:'everyone', openComments:new Set(), drafts:{}, chartSpan:'1d', seenReqs:null, onb:0, presenter:null, risk:'balanced', tour:null, copyFrac:{} };
 const SECTOR = { AAPL:'Technology', MSFT:'Technology', NVDA:'Technology', AMD:'Technology', GOOGL:'Communication', META:'Communication', NFLX:'Communication', DIS:'Communication',
   AMZN:'Consumer', TSLA:'Consumer', KO:'Consumer staples', COST:'Consumer staples', JPM:'Financials', V:'Financials', XOM:'Energy', JNJ:'Health care', O:'Real estate', SPY:'Broad market ETF', QQQ:'Broad market ETF', SCHD:'Dividend ETF' };
 const SECTOR_COLOR = { 'Technology':'#2f6fe4', 'Communication':'#7a4fd6', 'Consumer':'#b8660f', 'Consumer staples':'#0f8a72', 'Financials':'#14213d', 'Energy':'#c2413a', 'Health care':'#2b7a9b', 'Real estate':'#8a3f7a', 'Broad market ETF':'#5b6577', 'Dividend ETF':'#12805a' };
@@ -685,6 +694,92 @@ function renderNav(){
 }
 
 /* ---------- small pieces ---------- */
+/* Interactive line charts: touch or hover shows the date and amount at that point; click-and-drag
+   (or press, hold and drag on a phone) selects a range and shows its start, end and gain or loss.
+   With nothing selected, the header shows the same figures for the whole period. */
+const SPANS = { '1d':[86400000, 'Today', 96], '5d':[5 * 86400000, 'Past 5 days', 120], '1m':[30 * 86400000, 'Past month', 90], '3m':[90 * 86400000, 'Past 3 months', 90], '1y':[365 * 86400000, 'Past year', 120] };
+const ICH = {};
+function seriesPts(fn, spanKey){ const [span, , n] = SPANS[spanKey], now = Date.now(), out = []; for (let i = n - 1; i >= 0; i--){ const t = now - span * i / (n - 1); out.push({ t, v: fn(t) }); } return out; }
+function ichDate(t, spanKey){
+  const d = new Date(t);
+  if (spanKey === '1d') return d.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' });
+  if (spanKey === '5d') return d.toLocaleDateString('en-US', { weekday:'short' }) + ' ' + d.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' });
+  if (spanKey === '1y') return d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+  return d.toLocaleDateString('en-US', { month:'short', day:'numeric' });
+}
+function ichart(id, pts, spanKey, opt = {}){
+  if (!pts || pts.length < 2) return '';
+  const w = 600, h = opt.h || 180, vals = pts.map(p => p.v), min = Math.min(...vals), max = Math.max(...vals), rng = max - min || 1;
+  const up = vals[vals.length - 1] >= vals[0], color = opt.color || (up ? 'var(--gain)' : 'var(--loss)');
+  const xy = pts.map((p, i) => [i / (pts.length - 1) * w, h - 8 - (p.v - min) / rng * (h - 16)]);
+  const d = xy.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ');
+  ICH[id] = { pts, xy, w, h, spanKey, label: SPANS[spanKey][1], color, what: opt.what || 'value' };
+  return `<div class="ich" data-ich="${esc(id)}"><div class="ich-head" data-ich-head aria-live="polite">${ichSummary(id)}</div>
+    <svg class="ich-svg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="height:${h}px" role="img" aria-label="${esc(opt.aria || 'Chart')}">
+      <rect class="ich-sel" x="0" y="0" width="0" height="${h}" style="display:none"/>
+      <path d="${d} L ${w} ${h} L 0 ${h} Z" fill="${color}" opacity=".08"/><path d="${d}" fill="none" stroke="${color}" stroke-width="2.2" vector-effect="non-scaling-stroke"/>
+      <line class="ich-x" x1="0" x2="0" y1="0" y2="${h}" vector-effect="non-scaling-stroke" style="display:none"/>
+      <circle class="ich-dot" r="4" stroke="${color}" vector-effect="non-scaling-stroke" style="display:none"/>
+    </svg><div class="ich-tip" style="display:none"></div></div>`;
+}
+function ichChange(a, b){ const ch = b - a, p = a ? ch / a : 0; return `<span class="${sgn(ch)}"><b class="${sgn(ch)}">${ch >= 0 ? '+' : '−'}${usd(Math.abs(ch))}</b> (${pct(p)})</span>`; }
+function ichSummary(id){
+  const C = ICH[id]; if (!C) return '';
+  const sel = ui.ichSel[id];
+  if (sel && sel[0] !== sel[1]){
+    const [i, j] = sel[0] < sel[1] ? sel : [sel[1], sel[0]], A = C.pts[i], B = C.pts[j];
+    return `<span>${esc(ichDate(A.t, C.spanKey))} → ${esc(ichDate(B.t, C.spanKey))}:</span> <b>${usd(A.v)}</b> → <b>${usd(B.v)}</b> ${ichChange(A.v, B.v)} <button class="linkbtn small" data-act="ichclear" data-k="${esc(id)}">Clear</button>`;
+  }
+  const A = C.pts[0], B = C.pts[C.pts.length - 1];
+  return `<span>${esc(C.label)}:</span> <b>${usd(A.v)}</b> → <b>${usd(B.v)}</b> ${ichChange(A.v, B.v)}`;
+}
+function ichPaint(el, hoverIdx){
+  const id = el.dataset.ich, C = ICH[id]; if (!C) return;
+  const svg = el.querySelector('svg'), selR = svg.querySelector('.ich-sel'), line = svg.querySelector('.ich-x'), dot = svg.querySelector('.ich-dot'), tip = el.querySelector('.ich-tip'), head = el.querySelector('[data-ich-head]');
+  const sel = ui.ichSel[id];
+  if (sel && sel[0] !== sel[1]){ const a = Math.min(sel[0], sel[1]), b = Math.max(sel[0], sel[1]); selR.setAttribute('x', C.xy[a][0]); selR.setAttribute('width', C.xy[b][0] - C.xy[a][0]); selR.style.display = ''; }
+  else selR.style.display = 'none';
+  if (hoverIdx != null){
+    const [x, y] = C.xy[hoverIdx], P = C.pts[hoverIdx];
+    line.setAttribute('x1', x); line.setAttribute('x2', x); line.style.display = ''; dot.setAttribute('cx', x); dot.setAttribute('cy', y); dot.style.display = '';
+    tip.textContent = ichDate(P.t, C.spanKey) + ' · ' + usd(P.v); tip.style.left = (x / C.w * 100) + '%'; tip.style.display = '';
+    /* with a range selected, the header keeps the range summary and the tooltip shows the hovered point */
+    head.innerHTML = sel && sel[0] !== sel[1] ? ichSummary(id) : `<span>${esc(ichDate(P.t, C.spanKey))}:</span> <b>${usd(P.v)}</b> ${ichChange(C.pts[0].v, P.v)} <span class="muted">since start of period</span>`;
+  } else { line.style.display = 'none'; dot.style.display = 'none'; tip.style.display = 'none'; head.innerHTML = ichSummary(id); }
+}
+const ichState = { el: null, selecting: false, anchor: null, timer: null, moved: false, pointer: null };
+function ichIndex(el, clientX){ const C = ICH[el.dataset.ich], r = el.querySelector('svg').getBoundingClientRect(); const f = r.width ? Math.min(1, Math.max(0, (clientX - r.left) / r.width)) : 0; return Math.round(f * (C.pts.length - 1)); }
+document.addEventListener('pointerdown', e => {
+  const el = e.target.closest && e.target.closest('.ich');
+  if (!el){ if (Object.keys(ui.ichSel).length && !(e.target.closest && e.target.closest('[data-act="ichclear"]'))){ ui.ichSel = {}; document.querySelectorAll('.ich').forEach(x => ichPaint(x, null)); } return; }
+  if (e.target.closest('[data-act]')) return;
+  const idx = ichIndex(el, e.clientX); ichState.el = el; ichState.moved = false; ichState.pointer = e.pointerType || 'mouse'; ichState.anchor = idx;
+  if (ichState.pointer === 'mouse'){ ichState.selecting = true; ui.ichSel[el.dataset.ich] = [idx, idx]; ichPaint(el, idx); }
+  else { ichState.selecting = false; ichPaint(el, idx); clearTimeout(ichState.timer);
+    ichState.timer = setTimeout(() => { ichState.selecting = true; ichState.anchor = ichIndex(el, ichState.lastX != null ? ichState.lastX : e.clientX); ui.ichSel[el.dataset.ich] = [ichState.anchor, ichState.anchor]; if (navigator.vibrate) try { navigator.vibrate(15); } catch(x){} ichPaint(el, ichState.anchor); }, 350); }
+  ichState.lastX = e.clientX;
+});
+document.addEventListener('pointermove', e => {
+  const el = ichState.el || (e.target.closest && e.target.closest('.ich'));
+  if (!el) return;
+  if (!ichState.el && (e.pointerType || 'mouse') !== 'mouse') return;
+  ichState.lastX = e.clientX;
+  const idx = ichIndex(el, e.clientX);
+  if (ichState.el && idx !== ichState.anchor) ichState.moved = true;
+  if (ichState.selecting){ ui.ichSel[el.dataset.ich] = [ichState.anchor, idx]; }
+  ichPaint(el, idx);
+});
+function ichEnd(e){
+  const el = ichState.el; clearTimeout(ichState.timer); if (!el) return;
+  const id = el.dataset.ich, s = ui.ichSel[id];
+  if (ichState.selecting && (!s || s[0] === s[1])) delete ui.ichSel[id];
+  ichState.el = null; ichState.selecting = false;
+  ichPaint(el, ichState.pointer === 'mouse' ? ichIndex(el, e.clientX) : null);
+}
+document.addEventListener('pointerup', ichEnd);
+document.addEventListener('pointercancel', ichEnd);
+document.addEventListener('pointerout', e => { if (!ichState.el && e.target.closest && e.target.closest('.ich') && !(e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('.ich') === e.target.closest('.ich'))) ichPaint(e.target.closest('.ich'), null); });
+function ichRestore(){ document.querySelectorAll('.ich').forEach(el => ichPaint(el, null)); }
 function spark(values, w = 600, h = 96, color = 'var(--blue)'){
   if (!values.length) return '';
   const min = Math.min(...values), max = Math.max(...values), rng = max - min || 1;
@@ -730,14 +825,14 @@ function approvalCard(r){
     <div class="acts">${ui.tour != null ? `<button class="btn ember" disabled>Approve</button><button class="btn ghost" disabled>Decline</button><span class="hint">In the app, the member decides here.</span>` : Store.canWrite ? `<button class="btn ember" data-act="approve" data-id="${r.id}">${isOpen ? 'Approve for the open' : 'Approve'}${(ui.copyFrac[r.id] || 1) < 1 ? ' half' : ''}</button><button class="btn ghost" data-act="decline" data-id="${r.id}">Decline</button>` : '<span class="muted small">View-only</span>'}</div>
   </div></article>`;
 }
-function postCard(p){
+function postCard(p, opt = {}){
   const likes = Store.all('reactions').filter(x => x.postId === p.id);
   const mine = likes.some(x => x.pid === Store.myPid);
   const cs = Store.all('comments').filter(c => c.postId === p.id).sort((a, b) => a.ts - b.ts);
   const open = ui.openComments.has(p.id);
   const tr = p.trade ? `<div class="chip"><span class="tag ${p.trade.side === 'buy' ? 'blue' : 'ember'}">${p.trade.side === 'buy' ? 'Bought' : 'Sold'}</span><a href="#/stock/${esc(p.trade.sym)}" class="sym">${esc(p.trade.sym)}</a><span class="num">${shs(p.trade.shares)} @ ${usd(p.trade.price)}</span>${p.groupTrade ? '<span class="muted small">group trade</span>' : ''}</div>` : '';
   const fresh = ui.lastSeenPost && p.ts > ui.lastSeenPost && p.pid !== Store.myPid ? ' fresh' : '';
-  return `<article class="post${fresh}"><div class="meta">${avatar(p.pid, 'sm')}<div class="grow">${nameLink(p.pid)}${sampleTag(p.pid)} <span class="muted small">${ago(p.ts)}</span></div></div>
+  return `<article class="post${fresh}"><div class="meta">${avatar(p.pid, 'sm')}<div class="grow">${nameLink(p.pid)}${sampleTag(p.pid)} <span class="muted small">${ago(p.ts)}</span>${opt.showGroup && p.groupId && Store.get('groups', p.groupId) ? ` <span class="muted small">in <a href="#/group/${p.groupId}">${esc(Store.get('groups', p.groupId).name)}</a></span>` : ''}</div></div>
     ${p.text ? `<div class="body">${linkify(p.text)}</div>` : '<div style="height:10px"></div>'}${tr}
     <div class="bar"><button class="${mine ? 'on' : ''}" data-act="like" data-id="${p.id}" aria-pressed="${mine}">${mine ? '♥' : '♡'} ${likes.length || ''}</button><button data-act="comments" data-id="${p.id}">Comments ${cs.length || ''}</button>${(p.pid === Store.myPid || Store.canEdit) && Store.canWrite ? `<button data-act="delpost" data-id="${p.id}" style="margin-left:auto">Delete</button>` : ''}</div>
     ${open ? `<div class="comments">${cs.map(c => `<div class="small">${nameLink(c.pid)} <span class="muted">${ago(c.ts)}</span>${(c.pid === Store.myPid || Store.canEdit) && Store.canWrite ? ` <button class="linkbtn muted" data-act="delcomment" data-id="${c.id}">Delete</button>` : ''}<div>${linkify(c.text)}</div></div>`).join('') || '<div class="muted small">No comments yet.</div>'}
@@ -791,7 +886,8 @@ function vPracticeHome(){
   const hero = `<div class="panel hero"><div style="display:flex;justify-content:space-between;align-items:center"><span class="muted">${Store.site.realMoney ? 'Practice portfolio' : 'Portfolio value'}</span><span class="tag">${Store.site.realMoney ? 'Practice' : 'Simulated'}</span></div>
     <div class="value" data-pv="${me}">${usd(v)}</div>
     <div class="num"><span class="${sgn(d)}" data-pd="${me}">${pct(d)}</span> <span class="muted">today</span> &nbsp; <span class="${sgn(total)}">${pct(total)}</span> <span class="muted">all time</span></div>
-    ${spark(pfSeries(pf))}
+    ${ichart('pf:home', seriesPts(t => { let v = pf.cash || 0; for (const [s, p] of Object.entries(pf.positions || {})) v += p.shares * Market.price(s, t); return v; }, ui.pfSpan), ui.pfSpan, { h: 120, aria: 'Portfolio value chart' })}
+    <div class="seg" role="tablist" style="margin-top:10px">${Object.keys(SPANS).map(k => `<button class="${ui.pfSpan === k ? 'on' : ''}" data-act="pfspan" data-k="${k}">${k.toUpperCase()}</button>`).join('')}</div>
     <div class="actions" style="align-items:center"><button class="btn" data-act="trade">Trade</button><a class="btn ghost" href="#/groups">Find a group</a><span class="updated" data-updated style="margin-left:auto">Updated just now</span></div></div>`;
   /* 2. waiting on you: approvals, votes, reviews, suggestions */
   const pend = Store.myPending();
@@ -1067,13 +1163,11 @@ function vStock(sym){
     return ui.ensuring[sym] === 'loading' || ui.ensuring[sym] === 'ok' ? '<div class="loading" style="min-height:30vh">Loading ' + esc(sym) + '…</div>' : `<div class="empty">${esc(ui.ensuring[sym])} <a href="#/markets">Search stocks</a></div>`;
   }
   const px = Market.price(sym), c = Market.dayChange(sym);
-  const span = { '1d':86400000, '5d':5 * 86400000, '1m':30 * 86400000 }[ui.chartSpan];
-  let ser = Market.series(sym, span, 90);
+  let pts = seriesPts(t => Market.price(sym, t), ui.chartSpan);
   if (Market.isReal(sym)){ const k = sym + ':' + ui.chartSpan; if (!ui.bars[k]){ ui.bars[k] = 'loading'; Store.bars(sym, ui.chartSpan).then(b => { ui.bars[k] = b; render(); }, () => { ui.bars[k] = []; }); }
-    if (Array.isArray(ui.bars[k]) && ui.bars[k].length > 2) ser = ui.bars[k].map(b => b.c).concat([px]); }
-  const up = ser[ser.length - 1] >= ser[0];
+    if (Array.isArray(ui.bars[k]) && ui.bars[k].length > 2) pts = ui.bars[k].map(b => ({ t: b.t, v: b.c })).concat([{ t: Date.now(), v: px }]); }
   const pf = Store.get('portfolios', Store.myPid); const pos = pf && (pf.positions || {})[sym];
-  const posts = Store.all('posts').filter(p => !p.groupId && ((p.trade && p.trade.sym === sym) || (p.text || '').includes('$' + sym))).sort((a, b) => b.ts - a.ts).slice(0, 10);
+  const postsHtml = stockPosts(sym);
   const watching = ((Store.get('profiles', Store.myPid) || {}).watchlist || []).includes(sym);
   const holders = Store.all('portfolios').filter(p => (p.positions || {})[sym]).length;
   const groupsHolding = Store.all('groups').filter(g => !Store.rulesOf(g).hidden && (((Store.get('portfolios', g.leadPid) || {}).positions || {})[sym] || Store.all('posts').some(p => p.groupId === g.id && p.groupTrade && p.trade && p.trade.sym === sym && p.ts > Date.now() - 90 * 86400000)));
@@ -1081,13 +1175,35 @@ function vStock(sym){
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><span class="tag">${esc(SECTOR[sym] || 'Stock')}</span>${holders ? `<span class="tag">${holders} Pocket member${holders === 1 ? '' : 's'} own it</span>` : ''}</div></div>
     ${Store.canWrite && Store.get('profiles', Store.myPid) ? `<button class="btn ${watching ? 'ghost' : ''} sm" data-act="watch" data-k="${sym}" aria-pressed="${watching}">${watching ? '★ Watching' : '☆ Watch'}</button>` : ''}</div>
   <div class="panel hero"><div class="value" data-px="${sym}">${usd(px)}</div><div class="num ${sgn(c)}" data-chg="${sym}">${pct(c)} <span class="muted">today</span></div>
-    ${spark(ser, 600, 180, up ? 'var(--gain)' : 'var(--loss)').replace('class="spark"', 'class="chart"')}
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:10px"><div class="seg" role="tablist">${['1d','5d','1m'].map(k => `<button class="${ui.chartSpan === k ? 'on' : ''}" data-act="span" data-k="${k}">${k.toUpperCase()}</button>`).join('')}</div>
+    ${ichart('stock:' + sym, pts, ui.chartSpan, { aria: sym + ' price chart' })}
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:10px"><div class="seg" role="tablist">${Object.keys(SPANS).map(k => `<button class="${ui.chartSpan === k ? 'on' : ''}" data-act="span" data-k="${k}">${k.toUpperCase()}</button>`).join('')}</div>
     ${pf ? `<div style="display:flex;gap:10px"><button class="btn" data-act="trade" data-sym="${sym}" data-side="buy">Buy</button>${pos ? `<button class="btn ghost" data-act="trade" data-sym="${sym}" data-side="sell">Sell</button>` : ''}</div>` : ''}</div></div>
   ${pos ? `<section class="block"><header><h2>Your position</h2></header><div class="panel kv"><div><span>Shares</span><b>${shs(pos.shares)}</b></div><div><span>Market value</span><b data-hv="${sym}" data-sh="${pos.shares}">${usd(pos.shares * px)}</b></div><div><span>Average cost</span><b>${usd(pos.cost / pos.shares)}</b></div><div><span>Return</span><b class="${sgn(pos.shares * px / pos.cost - 1)}">${pct(pos.shares * px / pos.cost - 1)}</b></div></div></section>` : ''}
   ${newsSection('News', [sym], 5)}
   ${groupsHolding.length ? `<section class="block"><header><h2>Groups invested in ${sym}</h2></header><div class="list">${groupsHolding.slice(0, 4).map(groupRow).join('')}</div></section>` : ''}
-  <section class="block"><header><h2>What investors are saying</h2></header><div class="list">${posts.map(postCard).join('') || '<div class="empty">No posts about ' + sym + ' yet.</div>'}</div></section>`;
+  ${postsHtml}`;
+}
+const POST_RANGES = [['1h', 'Last hour', 3600000], ['1d', 'Day', 86400000], ['1w', 'Week', 7 * 86400000], ['1m', 'Month', 30 * 86400000], ['all', 'All', Infinity]];
+function stockPosts(sym){
+  const me = Store.myPid, myGids = new Set(Store.myGroups().map(g => g.id));
+  const following = new Set(Store.all('follows').filter(f => f.from === me).map(f => f.to));
+  const mates = new Set(Store.all('memberships').filter(m => myGids.has(m.gid)).map(m => m.pid));
+  const known = new Set([...following, ...mates]); known.delete(me);
+  const re = new RegExp('\\$' + sym.replace('.', '\\.') + '(?![A-Za-z])');
+  const about = Store.all('posts').filter(p => (!p.groupId || myGids.has(p.groupId)) && ((p.trade && p.trade.sym === sym) || re.test(p.text || '')));
+  const tab = ui.spTab || (known.size ? 'people' : 'latest'), range = POST_RANGES.find(r => r[0] === ui.spRange) || POST_RANGES[4];
+  const since = range[2] === Infinity ? 0 : Date.now() - range[2];
+  let list = about.filter(p => p.ts >= since);
+  if (tab === 'people') list = list.filter(p => known.has(p.pid)).sort((a, b) => b.ts - a.ts);
+  else if (tab === 'liked'){ const likes = {}; Store.all('reactions').forEach(x => { likes[x.postId] = (likes[x.postId] || 0) + 1; }); list = list.filter(p => likes[p.id]).sort((a, b) => (likes[b.id] - likes[a.id]) || (b.ts - a.ts)); }
+  else list = list.sort((a, b) => b.ts - a.ts);
+  const empty = { people: known.size ? `No posts about ${sym} from people you follow or your group mates ${range[0] === 'all' ? 'yet' : 'in this period'}.` : 'Follow investors or join a group to see what people you know say about ' + sym + '.',
+    liked: `No liked posts about ${sym} ${range[0] === 'all' ? 'yet' : 'in this period'}.`, latest: `No posts about ${sym} ${range[0] === 'all' ? 'yet' : 'in this period'}.` }[tab];
+  return `<section class="block"><header><h2>What investors are saying</h2></header>
+    <nav class="tabs" style="margin-bottom:10px">${[['people','People you know'],['liked','Most liked'],['latest','Latest']].map(([k, l]) => `<a href="#/stock/${encodeURIComponent(sym)}" class="${tab === k ? 'on' : ''}" data-act="sptab" data-k="${k}">${l}</a>`).join('')}</nav>
+    <div class="chips sm">${POST_RANGES.map(([k, l]) => `<button class="${range[0] === k ? 'on' : ''}" data-act="sprange" data-k="${k}">${l}</button>`).join('')}</div>
+    <div class="list">${list.slice(0, ui.feedLimit).map(p => postCard(p, { showGroup: true })).join('') || `<div class="empty">${esc(empty)}</div>`}</div>
+    ${list.length > ui.feedLimit ? '<p style="text-align:center;margin-top:14px"><button class="btn ghost" data-act="more">Show more</button></p>' : ''}</section>`;
 }
 function vFeed(){
   const following = new Set(Store.all('follows').filter(f => f.from === Store.myPid).map(f => f.to));
@@ -1641,6 +1757,7 @@ function render(){
   const ann = Store.settings.announcement; let annOff = ''; try { annOff = localStorage.getItem('pi_ann_off') || ''; } catch(e){}
   if (ann && ann.text && String(ann.ts) !== annOff && ui.tour == null) html = `<div class="banner ember" style="margin-bottom:16px"><div style="flex:1"><b>From the Pocket team</b><div class="small">${esc(ann.text)}</div></div><button class="btn sm ghost" data-act="annoff" data-k="${ann.ts}">Dismiss</button></div>` + html;
   view.innerHTML = html;
+  try { ichRestore(); } catch(e){}
   renderFeedbackButton();
   if (demoVals) for (const [id, v] of Object.entries(demoVals)){ const e = document.getElementById(id); if (e) e.value = v; }
   $$('[data-draft]', view).forEach(el => { if (ui.drafts[el.dataset.draft] != null) el.value = ui.drafts[el.dataset.draft]; });
@@ -2119,7 +2236,11 @@ async function act(el, ev){ /* eslint-disable-line */
     case 'post': return busy(async () => { await Store.post(ui.drafts.feed); ui.drafts.feed = ''; toast('Posted.'); });
     case 'gpost': return busy(async () => { const k = 'g:' + el.dataset.gid; await Store.post(ui.drafts[k], el.dataset.gid); ui.drafts[k] = ''; });
     case 'ftab': ev.preventDefault(); ui.feedTab = el.dataset.k; return render();
-    case 'span': ui.chartSpan = el.dataset.k; return render();
+    case 'span': ui.chartSpan = el.dataset.k; ui.ichSel = {}; return render();
+    case 'pfspan': ui.pfSpan = el.dataset.k; ui.ichSel = {}; return render();
+    case 'ichclear': delete ui.ichSel[el.dataset.k]; return ichRestore();
+    case 'sptab': ev.preventDefault(); ui.spTab = el.dataset.k; ui.feedLimit = 30; return render();
+    case 'sprange': ui.spRange = el.dataset.k; ui.feedLimit = 30; return render();
     case 'follow': return busy(() => Store.follow(id));
     case 'unfollow': return busy(() => Store.unfollow(id));
     case 'join': if (!Store.isPro() || (!Store.membership(id) && Store.rulesOf(Store.get('groups', id)).rulesText)) return joinSheet(id); return busy(async () => { await Store.join(id, 'member', { code: ui.inviteFor === id ? ui.inviteCode : undefined, by: ui.inviteFor === id ? ui.inviteBy : undefined }); toast('You joined as a member. Group trades will ask for your approval.'); });
