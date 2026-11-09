@@ -217,6 +217,13 @@ textarea.input{resize:vertical; min-height:84px}
 .ich-svg .ich-dot{fill:var(--surface); stroke-width:2.5}
 .ich-tip{position:absolute; top:28px; transform:translateX(-50%); background:var(--ink); color:#fff; font-size:12px; padding:5px 8px; border-radius:8px; pointer-events:none; white-space:nowrap; font-family:var(--f-num)}
 .chips.sm button{padding:4px 10px; font-size:13px}
+.tplgrid{display:grid; grid-template-columns:1fr 1fr; gap:8px}
+.tpl{display:flex; flex-direction:column; gap:3px; text-align:left; padding:12px; border:1.5px solid var(--line); border-radius:12px; background:var(--surface); color:var(--text); cursor:pointer; font:inherit}
+.tpl.on{border-color:var(--blue); background:color-mix(in srgb, var(--blue) 7%, var(--surface))}
+.mcards{display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px}
+.mcard{padding:16px 18px}
+.mcard .v{font-family:var(--f-num); font-size:30px; font-weight:700; margin:6px 0 2px}
+.mtable{overflow-x:auto} .mtable table{border-collapse:collapse; font-size:13px; min-width:760px; width:100%} .mtable th,.mtable td{padding:8px 10px; border-bottom:1px solid var(--line); text-align:right; white-space:nowrap} .mtable th:first-child,.mtable td:first-child{text-align:left}
 .kv{display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:14px; padding:16px 18px}
 .kv span{display:block; font-size:13px; color:var(--muted)}
 .kv b{font-family:var(--f-num); font-size:18px}
@@ -307,7 +314,7 @@ const Clock = (() => {
    on the server, which prices trades and enforces permissions.
    ===================================================================== */
 const Store = (() => {
-  const COLS = ['profiles','portfolios','groups','memberships','posts','reactions','comments','follows','proposals','votes','copyRequests','trades','copies','reports','joinRequests','reviews','suggestions'];
+  const COLS = ['profiles','portfolios','groups','memberships','posts','reactions','comments','follows','proposals','votes','copyRequests','trades','copies','reports','joinRequests','reviews','suggestions','dividends','meetings','groupWatch','studies','recurring'];
   const cache = Object.fromEntries(COLS.map(c => [c, new Map()]));
   const listeners = new Set(), realListeners = new Set(), newsCache = new Map();
   let settings = { announcement:null, inviteOnly:true }, me = { signedIn:false }, myPid = null, canWrite = false, canEdit = false, ready = false, hasDb = false, viewSaved = null, ws = null;
@@ -390,9 +397,9 @@ const Store = (() => {
   function membersOf(gid){ return all('memberships').filter(m => m.gid === gid); }
   function membership(gid, pid = myPid){ return get('memberships', gid + '__' + pid); }
   function myGroups(){ return all('memberships').filter(m => m.pid === myPid).map(m => get('groups', m.gid)).filter(Boolean); }
-  const ROLE_LABEL = { owner:'Owner', admin:'Admin', lead:'Lead Trader', junior:'Junior Trader', analyst:'Analyst', risk:'Risk Manager', moderator:'Moderator', member:'Member', observer:'Observer' };
+  const ROLE_LABEL = { owner:'Owner', admin:'Admin', lead:'Lead Trader', junior:'Junior Trader', analyst:'Analyst', risk:'Risk Manager', moderator:'Moderator', treasurer:'Treasurer', member:'Member', observer:'Observer' };
   const ROLE_INFO = { owner:'Runs the group: settings, members and roles', admin:'Helps manage settings and members', lead:'Trades for the group; members approve each trade', junior:'Suggests trades for the Lead Trader to approve',
-    analyst:'Creates trade proposals for the group to vote on', risk:'Reviews group trades before members see them, and can pause one for a vote', moderator:'Keeps discussion on track and removes posts', member:'Votes and copies group trades with approval', observer:'Follows along without voting or copying' };
+    analyst:'Creates trade proposals for the group to vote on', risk:'Reviews group trades before members see them, and can pause one for a vote', moderator:'Keeps discussion on track and removes posts', treasurer:'Keeps the club books: dues, withdrawals and valuations', member:'Votes and copies group trades with approval', observer:'Follows along without voting or copying' };
   const DEFAULT_RULES = { joinMode:'open', maxMembers:null, minAccount:0, rulesText:'', proposeRoles:['owner','admin','lead','analyst'], quorum:0, passRule:'majority', votingDays:3, voteWaitDays:0, maxPositionPct:null, allowed:'any', allowedList:[], approvalMinutes:30, riskReview:false, defaultCopyPct:1, hidden:false, feeMonthly:null };
   function rulesOf(g){ const r = Object.assign({}, DEFAULT_RULES, (g && g.rules) || {}); if (!(g && g.rules && g.rules.joinMode) && g && g.membership === 'invite') r.joinMode = 'request'; return r; }
   const votingAge = (m, rules) => !rules.voteWaitDays || Date.now() - (m.joinedTs || 0) >= rules.voteWaitDays * 86400000;
@@ -519,7 +526,12 @@ const Store = (() => {
     deleteAccount: async password => { await http('POST', '/api/delete-account', { password }); await loadMe(); await loadState(); emit(); reconnect(); },
     feedback: (text, screen) => http('POST', '/api/feedback', { text, screen }),
     updateGroup: (gid, o) => api('updateGroup', Object.assign({ gid }, o)), removeMember: (gid, pid) => api('removeMember', { gid, pid }), transferOwnership: (gid, pid) => api('transferOwnership', { gid, pid }),
-    newInviteCode: gid => api('newInviteCode', { gid }), groupByCode: code => api('groupByCode', { code }),
+    copyPortfolio: o => api('copyPortfolio', o),
+    clubContribute: (gid, amount) => api('clubContribute', { gid, amount }), clubRequestWithdrawal: (gid, amount, note) => api('clubRequestWithdrawal', { gid, amount, note }), clubDecideWithdrawal: (id, decision, note) => api('clubDecideWithdrawal', { id, decision, note }),
+    createMeeting: o => api('createMeeting', o), meetingStatus: o => api('meetingStatus', o), meetingCheckIn: id => api('meetingCheckIn', { id }), meetingNote: (id, text) => api('meetingNote', { id, text }),
+    addGroupWatch: (gid, sym, reason) => api('addGroupWatch', { gid, sym, reason }), removeGroupWatch: id => api('removeGroupWatch', { id }), saveStudy: o => api('saveStudy', o),
+    setRecurring: o => api('setRecurring', o), pauseRecurring: (sym, paused) => api('pauseRecurring', { sym, paused }), deleteRecurring: sym => api('deleteRecurring', { sym }),
+    newInviteCode: gid => api('newInviteCode', { gid }), setInviteLink: (gid, on) => api('setInviteLink', { gid, on }), groupByCode: code => api('groupByCode', { code }),
     releaseReview: id => api('releaseReview', { id }), pauseReview: (id, reason) => api('pauseReview', { id, reason }), demoReview: (gid, op) => api('demoReview', { gid, op }),
     suggestTrade: o => api('suggestTrade', o), decideSuggestion: (id, approve) => api('decideSuggestion', { id, approve }),
     setNotifPrefs: o => api('setNotifPrefs', o),
@@ -536,7 +548,7 @@ const Store = (() => {
     toggleWatch: sym => api('toggleWatch', { sym }), setTags: tags => api('setTags', { tags }), setPinned: (gid, text) => api('setPinned', { gid, text }),
     featureGroup: (gid, featured) => api('featureGroup', { gid, featured }), setSampleActivity: o => api('setSampleActivity', o),
     all, get, displayName, portfolioValue, membersOf, membership, myGroups, tally, requestState, myPending, ROLE_LABEL,
-    canTradeFor, canPropose, canVote, canManage, ROLE_INFO_KEYS: ['owner','admin','lead','junior','analyst','risk','moderator','member','observer'], isFollowing, isDemo, isPro, isCopying, copiersOf, performance, notifications, unreadCount, START_CASH,
+    canTradeFor, canPropose, canVote, canManage, ROLE_INFO_KEYS: ['owner','admin','lead','junior','analyst','risk','moderator','treasurer','member','observer'], isFollowing, isDemo, isPro, isCopying, copiersOf, performance, notifications, unreadCount, START_CASH,
     signup: (username, password, name, risk) => auth('/api/signup', { username, password, name, risk }),
     login: (username, password, code) => auth('/api/login', { username, password, code: code || undefined }),
     get site(){ return me.site || { mode:'demo', realMoney:false, demoTools:true, instantDeposits:{ enabled:false } }; }, get twofa(){ return !!me.twofa; },
@@ -567,7 +579,7 @@ const Store = (() => {
     post: (text, groupId) => api('post', { text, groupId: groupId || null }), toggleLike: postId => api('toggleLike', { postId }), comment: (postId, text) => api('comment', { postId, text }),
     deletePost: id => api('deletePost', { id }), deleteComment: id => api('deleteComment', { id }),
     follow: pid => api('follow', { pid }), unfollow: pid => api('unfollow', { pid }),
-    upgradePro: () => api('upgradePro'), cancelPro: () => api('cancelPro'), copyInvestor: pid => api('copyInvestor', { pid }), stopCopying: pid => api('stopCopying', { pid }),
+    upgradePro: wouldPay => api('upgradePro', wouldPay ? { wouldPay } : {}), cancelPro: () => api('cancelPro'), copyInvestor: pid => api('copyInvestor', { pid }), stopCopying: pid => api('stopCopying', { pid }),
     report: (gid, reason, details) => api('report', { gid, reason, details }), resolveReport: id => api('resolveReport', { id }),
     requestJoin: (gid, acceptRules) => api('requestJoin', { gid, acceptRules }), decideJoin: (id, approve) => api('decideJoin', { id, approve }),
     simulateJoinDecisions: () => api('demoJoins'), simulateInviteJoins: gid => api('demoInvites', { gid }),
@@ -604,7 +616,10 @@ const ICON = {
   demo:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/><circle cx="12" cy="12" r="3"/></svg>'
 };
 
-const ui = { ichSel: {}, pfSpan: '1d', spTab: null, spRange: 'all', recon: null, anchorInfo: null, ensuring: {}, bars: {}, search: null, searchQ: '', feedLimit: 30, lastSeenPost: Date.now(), lastRoute: null, groupCat: 'all', homeTab:'practice', real:null, realLoading:false, rquotes:null, openForm:null, openStep:0, sec:null, docs:null, areal:null, adminTab:'testers', admin:null, usage:null, pushState:null, inviteFor:null, inviteCode:null, inviteBy:null, feedTab:'everyone', openComments:new Set(), drafts:{}, chartSpan:'1d', seenReqs:null, onb:0, presenter:null, risk:'balanced', tour:null, copyFrac:{} };
+(function captureSource(){ try { const p = new URLSearchParams(location.search), s = p.get('utm_source');
+  if (s && !localStorage.getItem('pi_src')){ const med = (p.get('utm_medium') || '').toLowerCase(); localStorage.setItem('pi_src', JSON.stringify({ kind: /^(paid|cpc|ppc|ad|ads|paid_social|paidsocial)$/.test(med) ? 'ad' : 'campaign', detail: [s, med, p.get('utm_campaign')].filter(Boolean).join('/').slice(0, 120) })); } } catch(e){} })();
+function signupSource(){ try { return JSON.parse(localStorage.getItem('pi_src') || 'null'); } catch(e){ return null; } }
+const ui = { ametrics: null, ichSel: {}, pfSpan: '1d', spTab: null, spRange: 'all', recon: null, anchorInfo: null, ensuring: {}, bars: {}, search: null, searchQ: '', feedLimit: 30, lastSeenPost: Date.now(), lastRoute: null, groupCat: 'all', homeTab:'practice', real:null, realLoading:false, rquotes:null, openForm:null, openStep:0, sec:null, docs:null, areal:null, adminTab:'metrics', admin:null, usage:null, pushState:null, inviteFor:null, inviteCode:null, inviteBy:null, feedTab:'everyone', openComments:new Set(), drafts:{}, chartSpan:'1d', seenReqs:null, onb:0, presenter:null, risk:'balanced', tour:null, copyFrac:{} };
 const SECTOR = { AAPL:'Technology', MSFT:'Technology', NVDA:'Technology', AMD:'Technology', GOOGL:'Communication', META:'Communication', NFLX:'Communication', DIS:'Communication',
   AMZN:'Consumer', TSLA:'Consumer', KO:'Consumer staples', COST:'Consumer staples', JPM:'Financials', V:'Financials', XOM:'Energy', JNJ:'Health care', O:'Real estate', SPY:'Broad market ETF', QQQ:'Broad market ETF', SCHD:'Dividend ETF' };
 const SECTOR_COLOR = { 'Technology':'#2f6fe4', 'Communication':'#7a4fd6', 'Consumer':'#b8660f', 'Consumer staples':'#0f8a72', 'Financials':'#14213d', 'Energy':'#c2413a', 'Health care':'#2b7a9b', 'Real estate':'#8a3f7a', 'Broad market ETF':'#5b6577', 'Dividend ETF':'#12805a' };
@@ -713,7 +728,7 @@ function ichart(id, pts, spanKey, opt = {}){
   const up = vals[vals.length - 1] >= vals[0], color = opt.color || (up ? 'var(--gain)' : 'var(--loss)');
   const xy = pts.map((p, i) => [i / (pts.length - 1) * w, h - 8 - (p.v - min) / rng * (h - 16)]);
   const d = xy.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ');
-  ICH[id] = { pts, xy, w, h, spanKey, label: SPANS[spanKey][1], color, what: opt.what || 'value' };
+  ICH[id] = { pts, xy, w, h, spanKey, label: opt.label || SPANS[spanKey][1], color, what: opt.what || 'value' };
   return `<div class="ich" data-ich="${esc(id)}"><div class="ich-head" data-ich-head aria-live="polite">${ichSummary(id)}</div>
     <svg class="ich-svg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="height:${h}px" role="img" aria-label="${esc(opt.aria || 'Chart')}">
       <rect class="ich-sel" x="0" y="0" width="0" height="${h}" style="display:none"/>
@@ -780,6 +795,289 @@ document.addEventListener('pointerup', ichEnd);
 document.addEventListener('pointercancel', ichEnd);
 document.addEventListener('pointerout', e => { if (!ichState.el && e.target.closest && e.target.closest('.ich') && !(e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('.ich') === e.target.closest('.ich'))) ichPaint(e.target.closest('.ich'), null); });
 function ichRestore(){ document.querySelectorAll('.ich').forEach(el => ichPaint(el, null)); }
+/* ---------- practice dividends (estimates; real-money accounts get actual dividends) ---------- */
+const DIV_YIELDS = { AAPL: 0.0045, MSFT: 0.0075, NVDA: 0.0003, GOOGL: 0.0045, META: 0.0035, JPM: 0.022, V: 0.007, KO: 0.029, COST: 0.005, DIS: 0.009, XOM: 0.035, JNJ: 0.031, SPY: 0.012, QQQ: 0.006, SCHD: 0.036, O: 0.055 };
+function nextDividend(sym){ const y = DIV_YIELDS[sym]; if (!y) return null; const monthly = sym === 'O', off = Market.hash(sym) % 3, d = new Date(); d.setUTCHours(12, 0, 0, 0);
+  for (let i = 0; i < 400; i++){ if (d.getUTCDate() === 15 && (monthly || d.getUTCMonth() % 3 === off) && d.getTime() > Date.now() - 86400000) return d; d.setUTCDate(d.getUTCDate() + 1); } return null; }
+const myDividends = (pid = Store.myPid, days = 365) => Store.all('dividends').filter(x => x.pid === pid && x.ts > Date.now() - days * 86400000);
+/* ---------- earnings calendar (estimated from each company's past SEC earnings filings) ---------- */
+function earnings(){ if (!ui.earn){ ui.earn = 'loading'; Store.http('GET', '/api/earnings').then(r => { ui.earn = r.earnings || {}; render(); }, () => { ui.earn = {}; }); } return ui.earn === 'loading' ? {} : ui.earn; }
+const fmtDay = s => new Date(s + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
+function myRadarSyms(){
+  const pf = Store.get('portfolios', Store.myPid) || {}, prof = Store.get('profiles', Store.myPid) || {}, out = new Set(Object.keys(pf.positions || {}).concat(prof.watchlist || []));
+  Store.myGroups().forEach(g => { const lp = Store.get('portfolios', g.pooled ? 'club_' + g.id : g.leadPid); Object.keys((lp && lp.positions) || {}).forEach(s => out.add(s)); Store.all('groupWatch').filter(w => w.gid === g.id).forEach(w => out.add(w.sym)); });
+  return [...out];
+}
+function comingUp(){
+  const E = earnings(), soon = Date.now() + 14 * 86400000, items = [];
+  myRadarSyms().forEach(s => { const e = E[s]; if (e && Date.parse(e.next + 'T23:59:00Z') >= Date.now() && Date.parse(e.next + 'T00:00:00Z') <= soon) items.push({ t: Date.parse(e.next + 'T12:00:00Z'), html: `<a class="row" href="#/stock/${s}">${logo(s)}<div class="grow"><b>${s}</b> reports earnings <span class="muted small">(estimated)</span></div><span class="small">${fmtDay(e.next)}</span></a>` }); });
+  const pf = Store.get('portfolios', Store.myPid) || {};
+  Object.keys(pf.positions || {}).forEach(s => { const d = nextDividend(s); if (d && d.getTime() <= soon){ const amt = pf.positions[s].shares * Market.price(s) * DIV_YIELDS[s] / (s === 'O' ? 12 : 4); items.push({ t: d.getTime(), html: `<a class="row" href="#/stock/${s}">${logo(s)}<div class="grow"><b>${s}</b> pays a dividend of about ${usd(amt)} <span class="muted small">(practice estimate)</span></div><span class="small">${fmtDay(d.toISOString().slice(0, 10))}</span></a>` }); } });
+  Store.all('recurring').filter(r => r.pid === Store.myPid && !r.paused && r.nextTs <= soon).forEach(r => items.push({ t: r.nextTs, html: `<a class="row" href="#/stock/${r.sym}">${logo(r.sym)}<div class="grow">Recurring buy: <b>${usd(r.amount)}</b> of ${r.sym}</div><span class="small">${new Date(r.nextTs).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</span></a>` }));
+  if (!items.length) return '';
+  return `<section class="block"><header><h2>Coming up</h2></header><div class="list">${items.sort((a, b) => a.t - b.t).slice(0, 8).map(x => x.html).join('')}</div></section>`;
+}
+function recurringList(){
+  const rs = Store.all('recurring').filter(r => r.pid === Store.myPid); if (!rs.length) return '';
+  const F = { weekly: 'Every week', biweekly: 'Every 2 weeks', monthly: 'Every month' };
+  return `<section class="block"><header><h2>Recurring investments</h2></header><div class="list">${rs.map(r => `<div class="row">${logo(r.sym)}<div class="grow"><b>${usd(r.amount)} of ${r.sym}</b> <span class="small muted">${F[r.freq]}</span>
+    <div class="small muted">${r.paused ? 'Paused' : 'Next buy ' + new Date(r.nextTs).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}${r.runs ? ` · ${r.runs} buy${r.runs === 1 ? '' : 's'} so far` : ''}${r.lastError ? ` · <span class="loss">Last try: ${esc(r.lastError)}</span>` : ''}</div></div>
+    ${Store.canWrite ? `<button class="btn sm ghost" data-act="recpause" data-k="${r.sym}" data-v="${r.paused ? '0' : '1'}">${r.paused ? 'Resume' : 'Pause'}</button><button class="btn sm ghost" data-act="recdel" data-k="${r.sym}">Stop</button>` : ''}</div>`).join('')}</div>
+    <p class="hint">Recurring buys use your practice cash and run during market hours.</p></section>`;
+}
+function recurringSheet(sym){
+  const cur = Store.get('recurring', Store.myPid + '__' + sym);
+  openModal(`<header><h2>Invest in ${sym} automatically</h2><button class="x" data-close aria-label="Close">×</button></header>
+    <p class="muted" style="margin-top:0">Buy a set dollar amount on a schedule, whatever the price. Uses your practice cash.</p>
+    <div class="grid2"><div class="field"><label for="rc-a">Amount each time</label><input class="input num" id="rc-a" inputmode="decimal" value="${cur ? cur.amount : 100}"></div>
+    <div class="field"><label for="rc-f">How often</label><select class="input" id="rc-f">${[['weekly','Every week'],['biweekly','Every 2 weeks'],['monthly','Every month']].map(([k, l]) => `<option value="${k}" ${(cur ? cur.freq : 'biweekly') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>
+    <button class="btn" id="rc-go" style="width:100%">${cur ? 'Update schedule' : 'Start investing'}</button><p class="hint" style="text-align:center;margin-top:10px">The first buy happens at the next market open. Pause or stop anytime from Home.</p>`, sh => {
+    sh.querySelector('#rc-go').onclick = async () => { try { await Store.setRecurring({ sym, amount: Number(sh.querySelector('#rc-a').value), freq: sh.querySelector('#rc-f').value }); closeModal(); toast('Recurring investment set.'); } catch(e){ errToast(e); } };
+  });
+}
+/* ---------- voting participation: passive members are the risk in a pooled club ---------- */
+function participation(gid, m){
+  const since = Math.max(m.joinedTs || 0, Date.now() - 120 * 86400000), prs = Store.all('proposals').filter(p => p.gid === gid && p.createdTs >= since);
+  if (!prs.length) return '';
+  const voted = prs.filter(p => Store.get('votes', p.id + '__' + m.pid)).length, low = prs.length >= 3 && voted / prs.length < 0.5;
+  return ` · voted on ${voted} of ${prs.length}${low ? ' <span class="tag ember" style="font-size:11px;padding:1px 6px">Mostly not voting</span>' : ''}`;
+}
+/* ---------- Ideas: shared watchlist and stock studies ---------- */
+const VERDICT = { buy: ['Worth buying', 'blue'], watch: ['Keep watching', ''], pass: ['Pass for now', 'ember'] };
+function ideasView(g, role){
+  const full = role && role !== 'observer' && Store.canWrite, R = Store.rulesOf(g);
+  const ws = Store.all('groupWatch').filter(w => w.gid === g.id).sort((a, b) => b.ts - a.ts), st = Store.all('studies').filter(s => s.gid === g.id).sort((a, b) => b.updatedTs - a.updatedTs);
+  return `<p class="hint" style="margin-top:0">Stocks the group is considering, with research behind them. Turn a good idea into a proposal for a vote.</p>
+    ${full ? `<div class="panel" style="padding:14px 16px;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end"><div class="field" style="margin:0;flex:0 0 130px"><label for="gw-s">Stock</label><input class="input" id="gw-s" list="gw-list" placeholder="e.g. COST" autocapitalize="characters"><datalist id="gw-list">${Market.LIST.map(t => `<option value="${t.s}">${esc(t.n)}</option>`).join('')}</datalist></div>
+      <div class="field" style="margin:0;flex:1;min-width:180px"><label for="gw-r">Why it's interesting</label><input class="input" id="gw-r" maxlength="200" placeholder="One line on the idea"></div><button class="btn" data-act="gwadd" data-gid="${g.id}">Add to watchlist</button></div>` : ''}
+    <section class="block"><header><h2>Group watchlist</h2></header><div class="list">${ws.map(w => { const ch = Market.price(w.sym) / (w.price || Market.price(w.sym)) - 1, ns = st.filter(s => s.sym === w.sym).length;
+      return `<div class="row" style="flex-wrap:wrap">${logo(w.sym)}<div class="grow" style="min-width:180px"><a href="#/stock/${w.sym}"><b>${w.sym}</b></a> <span class="small num ${sgn(ch)}">${pct(ch)} since added</span>
+        <div class="small">${esc(w.reason || '')}</div><div class="small muted">Added by ${esc(Store.displayName(w.pid))} ${ago(w.ts)} ago${ns ? ` · ${ns} stud${ns === 1 ? 'y' : 'ies'}` : ''}</div></div>
+        ${full ? `<button class="btn sm ghost" data-act="study" data-gid="${g.id}" data-k="${w.sym}">Write a study</button>${Store.canPropose(role, R) ? `<button class="btn sm ghost" data-act="propsym" data-gid="${g.id}" data-k="${w.sym}">Propose</button>` : ''}${w.pid === Store.myPid || Store.canManage(role) ? `<button class="btn sm ghost" data-act="gwdel" data-id="${w.id}" aria-label="Remove ${w.sym}">Remove</button>` : ''}` : ''}</div>`; }).join('') || '<div class="empty">Nothing on the watchlist yet.</div>'}</div></section>
+    <section class="block"><header><h2>Stock studies</h2></header><div class="list">${st.map(s => `<details class="row" style="display:block"><summary style="cursor:pointer;display:flex;gap:10px;align-items:center">${logo(s.sym)}<div class="grow"><b>${s.sym}</b> <span class="tag ${VERDICT[s.verdict][1]}">${VERDICT[s.verdict][0]}</span><div class="small muted">by ${esc(Store.displayName(s.pid))}, ${ago(s.updatedTs)} ago, at ${usd(s.price)}</div></div></summary>
+      <div class="small" style="margin:10px 0 0 4px;display:grid;gap:8px">${[['The business', s.business], ['Growth', s.growth], ['Valuation', s.valuation], ['Risks', s.risks]].filter(x => x[1]).map(([h, t]) => `<div><b>${h}</b><div style="white-space:pre-wrap">${esc(t)}</div></div>`).join('')}
+      ${s.pid === Store.myPid && Store.canWrite ? `<div><button class="btn sm ghost" data-act="study" data-gid="${g.id}" data-k="${s.sym}" data-id="${s.id}">Edit</button></div>` : ''}</div></details>`).join('') || '<div class="empty">No studies yet. Pick a stock from the watchlist and write one.</div>'}</div></section>`;
+}
+function studySheet(gid, sym, id){
+  const s = id ? Store.get('studies', id) : null;
+  const f = (k, label, hint) => `<div class="field"><label for="st-${k}">${label}</label><textarea class="input" id="st-${k}" maxlength="1200" placeholder="${hint}">${esc((s && s[k]) || '')}</textarea></div>`;
+  openModal(`<header><h2>Study: ${sym}</h2><button class="x" data-close aria-label="Close">×</button></header>
+    ${f('business', 'The business', 'What it sells, to whom, and how it makes money')}${f('growth', 'Growth', 'Sales and earnings trend, and what drives it')}${f('valuation', 'Valuation', 'Is the price reasonable for that growth?')}${f('risks', 'Risks', 'What could go wrong')}
+    <div class="field"><label for="st-v">Your view</label><select class="input" id="st-v">${Object.entries(VERDICT).map(([k, v]) => `<option value="${k}" ${(s ? s.verdict : 'watch') === k ? 'selected' : ''}>${v[0]}</option>`).join('')}</select></div>
+    <button class="btn" id="st-go" style="width:100%">Save study</button><p class="hint" style="text-align:center;margin-top:10px">Studies are research for your group, not advice.</p>`, sh => {
+    sh.querySelector('#st-go').onclick = async () => { const v = k => sh.querySelector('#st-' + k).value;
+      try { await Store.saveStudy({ id, gid, sym, business: v('business'), growth: v('growth'), valuation: v('valuation'), risks: v('risks'), verdict: v('v') }); closeModal(); toast('Study saved.'); } catch(e){ errToast(e); } };
+  });
+}
+/* ---------- Meetings ---------- */
+const MEET_ROLES = ['owner', 'admin', 'treasurer'];
+function meetingsView(g, role){
+  const runs = MEET_ROLES.includes(role) && Store.canWrite, ms = Store.all('meetings').filter(m => m.gid === g.id);
+  const live = ms.filter(m => m.status === 'live'), up = ms.filter(m => m.status === 'scheduled').sort((a, b) => a.scheduledTs - b.scheduledTs), past = ms.filter(m => m.status === 'ended').sort((a, b) => b.endedTs - a.endedTs);
+  const sel = Store.get('meetings', ui.meetingId) && Store.get('meetings', ui.meetingId).gid === g.id ? Store.get('meetings', ui.meetingId) : live[0] || up[0] || null;
+  const when = m => new Date(m.scheduledTs).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const row = m => `<button class="row" style="width:100%;text-align:left;background:none;border:0;font:inherit;color:inherit;cursor:pointer" data-act="openmeeting" data-id="${m.id}"><div class="grow"><b>${esc(m.title)}</b><div class="small muted">${when(m)}</div></div><span class="tag ${m.status === 'live' ? 'ember' : ''}">${{ live: 'Live now', scheduled: 'Upcoming', ended: 'Ended' }[m.status]}</span></button>`;
+  return `${runs ? `<div class="panel" style="padding:14px 16px;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end"><div class="field" style="margin:0;flex:1;min-width:160px"><label for="mt-t">Meeting</label><input class="input" id="mt-t" maxlength="80" placeholder="e.g. November meeting"></div><div class="field" style="margin:0"><label for="mt-d">When</label><input class="input" id="mt-d" type="datetime-local"></div><button class="btn" data-act="newmeeting" data-gid="${g.id}">Schedule</button></div>` : ''}
+    ${sel ? meetingDetail(sel, g, role) : '<div class="panel empty" style="margin-top:14px">No meetings scheduled.</div>'}
+    ${live.concat(up).filter(m => !sel || m.id !== sel.id).length ? `<section class="block"><header><h2>Upcoming</h2></header><div class="list">${live.concat(up).filter(m => !sel || m.id !== sel.id).map(row).join('')}</div></section>` : ''}
+    ${past.filter(m => !sel || m.id !== sel.id).length ? `<section class="block"><header><h2>Past meetings</h2></header><div class="list">${past.filter(m => !sel || m.id !== sel.id).slice(0, 12).map(row).join('')}</div></section>` : ''}`;
+}
+function meetingDetail(m, g, role){
+  const runs = MEET_ROLES.includes(role) && Store.canWrite, full = role && role !== 'observer';
+  const members = Store.membersOf(g.id).filter(x => x.role !== 'observer'), here = Object.keys(m.attendance || {});
+  const prev = Store.all('meetings').filter(x => x.gid === g.id && x.status === 'ended' && x.id !== m.id && x.endedTs < (m.startedTs || m.scheduledTs)).sort((a, b) => b.endedTs - a.endedTs)[0];
+  const since = prev ? prev.endedTs : (g.createdTs || 0), until = m.endedTs || Date.now();
+  const open = Store.all('proposals').filter(p => p.gid === g.id && !Store.tally(p.id).closed);
+  const trades = Store.all('posts').filter(p => p.groupId === g.id && p.groupTrade && p.trade && p.ts > since && p.ts <= until);
+  const watch = Store.all('groupWatch').filter(w => w.gid === g.id && w.ts > since && w.ts <= until), studies = Store.all('studies').filter(s => s.gid === g.id && s.updatedTs > since && s.updatedTs <= until);
+  const pot = g.pooled ? Store.get('portfolios', 'club_' + g.id) : null;
+  return `<div class="panel" style="padding:18px 20px;margin-top:14px"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center"><div><h2 style="margin:0">${esc(m.title)}</h2><div class="small muted">${new Date(m.scheduledTs).toLocaleString('en-US', { weekday: 'long', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</div></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">${full && m.status !== 'ended' && !m.attendance[Store.myPid] && Store.canWrite ? `<button class="btn sm" data-act="checkin" data-id="${m.id}">I'm here</button>` : ''}${runs && m.status === 'scheduled' ? `<button class="btn sm ember" data-act="meetstart" data-id="${m.id}">Start meeting</button>` : ''}${runs && m.status === 'live' ? `<button class="btn sm ghost" data-act="meetend" data-id="${m.id}">End meeting</button>` : ''}</div></div>
+    <p class="small" style="margin:12px 0 0"><b>Attendance:</b> ${here.length} of ${members.length} members${here.length ? ': ' + here.map(p => esc(Store.displayName(p))).join(', ') : ''}</p></div>
+    <section class="block"><header><h2>1. Votes</h2></header><div class="list">${open.map(p => proposalCard(p, role)).join('') || '<div class="empty">No open proposals.</div>'}</div></section>
+    <section class="block"><header><h2>2. Since the last meeting</h2></header><div class="panel" style="padding:14px 18px" class="small">
+      <div class="small"><b>Trades:</b> ${trades.length ? trades.map(t => `${t.trade.side === 'sell' ? 'Sold' : 'Bought'} ${t.trade.sym}`).join(', ') : 'none'}</div>
+      <div class="small" style="margin-top:6px"><b>Added to the watchlist:</b> ${watch.length ? watch.map(w => w.sym).join(', ') : 'none'}</div>
+      <div class="small" style="margin-top:6px"><b>New studies:</b> ${studies.length ? studies.map(s => `${s.sym} (${esc(Store.displayName(s.pid))})`).join(', ') : 'none'}</div>
+      ${pot ? `<div class="small" style="margin-top:6px"><b>Club account:</b> ${usd(Store.portfolioValue(pot))}, of which ${usd(pot.cash)} cash</div>` : `<div class="small" style="margin-top:6px"><b>Club money:</b> see <a href="#/group/${g.id}/club">Club books</a></div>`}</div></section>
+    <section class="block"><header><h2>3. Other business</h2></header><div class="list">${(m.notes || []).map(n => `<div class="row"><div class="grow">${esc(n.text)}<div class="small muted">${esc(Store.displayName(n.by))}</div></div></div>`).join('') || '<div class="empty">Nothing else on the agenda.</div>'}</div>
+      ${runs && m.status !== 'ended' ? `<div style="display:flex;gap:8px;margin-top:10px"><input class="input" id="mn-t" maxlength="200" placeholder="Add an agenda item"><button class="btn sm ghost" data-act="meetnote" data-id="${m.id}">Add</button></div>` : ''}</section>
+    <section class="block"><header><h2>Minutes</h2></header>${runs ? `<textarea class="input" id="mm-t" maxlength="5000" style="min-height:120px" placeholder="Decisions, who's doing what, and next steps">${esc(m.minutes || '')}</textarea><p style="margin-top:8px"><button class="btn sm" data-act="meetsave" data-id="${m.id}">Save minutes</button></p>` : `<div class="panel" style="padding:14px 18px;white-space:pre-wrap" class="small">${esc(m.minutes || 'No minutes yet.')}</div>`}</section>`;
+}
+/* ---------- uploads (payment proofs, club documents) ---------- */
+const DOC_TYPES = ['Articles of organization (LLC)', 'Partnership agreement', 'Tax ID (EIN) letter', 'Operating agreement', 'Bank or brokerage statement', 'Other'];
+const readFile64 = file => new Promise((res, rej) => { if (!file) return rej(Object.assign(new Error('Choose a file to upload.'), { userFacing: true })); if (file.size > 5 * 1024 * 1024) return rej(Object.assign(new Error('Files can be up to 5 MB.'), { userFacing: true }));
+  const r = new FileReader(); r.onload = () => res({ name: file.name, type: file.type, data: String(r.result).split(',')[1] }); r.onerror = () => rej(new Error("Couldn't read that file.")); r.readAsDataURL(file); });
+const STATUS = { pending: ['Waiting for review', 'ember'], confirmed: ['Confirmed', 'blue'], declined: ['Declined', ''] };
+function uploadSheet(gid, kind){
+  const doc = kind === 'document';
+  openModal(`<header><h2>${doc ? 'Send a club document' : 'Send proof of payment'}</h2><button class="x" data-close aria-label="Close">×</button></header>
+    <p class="muted" style="margin-top:0">${doc ? 'The Pocket team reviews club documents before a pooled club can open a real account. Files stay private to your club and the Pocket team.' : "Upload a receipt or screenshot of your payment to the club. Your Treasurer reviews it, and once it's confirmed it's added to the club books."}</p>
+    ${doc ? `<div class="field"><label for="up-t">Document</label><select class="input" id="up-t">${DOC_TYPES.map(t => `<option>${t}</option>`).join('')}</select></div>` : `<div class="grid2"><div class="field"><label for="up-a">Amount paid ($)</label><input class="input num" id="up-a" inputmode="decimal"></div><div class="field"><label for="up-d">Date paid</label><input class="input" id="up-d" type="date" value="${new Date().toISOString().slice(0, 10)}"></div></div>`}
+    <div class="field"><label for="up-f">File (photo or PDF, up to 5 MB)</label><input class="input" id="up-f" type="file" accept="image/jpeg,image/png,image/webp,application/pdf"></div>
+    <div class="field"><label for="up-n">Note (optional)</label><input class="input" id="up-n" maxlength="300" placeholder="${doc ? 'Anything the Pocket team should know' : 'e.g. November dues, paid by Zelle'}"></div>
+    <button class="btn" id="up-go" style="width:100%">Send</button>`, sh => {
+    sh.querySelector('#up-go').onclick = async () => { const b = sh.querySelector('#up-go'); b.disabled = true;
+      try { const file = await readFile64(sh.querySelector('#up-f').files[0]); const body = { kind, file, note: sh.querySelector('#up-n').value };
+        if (doc) body.docType = sh.querySelector('#up-t').value; else { body.amount = Number(sh.querySelector('#up-a').value); body.date = sh.querySelector('#up-d').value; }
+        ui.club[gid] = await Store.http('POST', `/api/club/${gid}/submit`, body); closeModal(); toast(doc ? 'Sent to the Pocket team for review.' : 'Sent to your Treasurer for review.'); render(); }
+      catch(e){ errToast(e); b.disabled = false; } };
+  });
+}
+function reviewSheet(gid, id, decision, kind){
+  openModal(`<header><h2>${decision === 'confirmed' ? 'Confirm' : 'Decline'}</h2><button class="x" data-close aria-label="Close">×</button></header>
+    <div class="field"><label for="rv-n">Note to the member${decision === 'declined' ? '' : ' (optional)'}</label><input class="input" id="rv-n" maxlength="300" placeholder="${decision === 'declined' ? "e.g. Amount doesn't match the receipt" : 'e.g. Thanks, received'}"></div>
+    <button class="btn" id="rv-go" style="width:100%">${decision === 'confirmed' ? (kind === 'withdrawal' ? 'Approve and pay out' : 'Confirm and record payment') : 'Decline'}</button>`, sh => {
+    sh.querySelector('#rv-go').onclick = async () => { const note = sh.querySelector('#rv-n').value;
+      try { if (kind === 'withdrawal'){ await Store.clubDecideWithdrawal(id, decision, note); ui.club[gid] = null; } else ui.club[gid] = await Store.http('POST', `/api/club/${gid}/review`, { id, decision, note });
+        closeModal(); toast(decision === 'confirmed' ? 'Done.' : 'Declined. The member will see your note.'); render(); } catch(e){ errToast(e); } };
+  });
+}
+function submissionRow(gid, x, editor){
+  const st = STATUS[x.status], fileLink = x.fileId ? ` · <a href="/api/club/${gid}/file/${x.fileId}" target="_blank" rel="noopener">View file</a>` : '';
+  const what = x.kind === 'document' ? esc(x.docType) : x.kind === 'withdrawal' ? `Withdrawal of ${usd(x.amount)}` : `Payment of ${usd(x.amount)} on ${esc(x.date)}`;
+  return `<div class="row" style="flex-wrap:wrap;align-items:flex-start"><div class="grow" style="min-width:200px"><b>${what}</b>${x.kind !== 'document' && editor ? ' · ' + esc(Store.displayName(x.pid)) : ''} <span class="tag ${st[1]}" style="font-size:11px">${x.kind === 'document' ? { pending: 'Waiting for Pocket review', confirmed: 'Verified by Pocket', declined: 'Needs changes' }[x.status] : st[0]}</span>
+    <div class="small muted">${ago(x.ts)} ago${x.note ? ' · ' + esc(x.note) : ''}${fileLink}</div>${x.reviewNote ? `<div class="small" style="margin-top:4px"><b>Note:</b> ${esc(x.reviewNote)}</div>` : ''}</div>
+    ${editor && x.status === 'pending' && x.kind !== 'document' ? `<button class="btn sm" data-act="cbreview" data-gid="${gid}" data-id="${x.id}" data-k="confirmed" data-v="${x.kind}">${x.kind === 'withdrawal' ? 'Approve' : 'Confirm'}</button><button class="btn sm ghost" data-act="cbreview" data-gid="${gid}" data-id="${x.id}" data-k="declined" data-v="${x.kind}">Decline</button>` : ''}</div>`;
+}
+function clubRequests(gid, C){
+  const subs = C.submissions || [], editor = C.canEdit, mine = subs.filter(x => x.pid === Store.myPid && x.kind !== 'document'), queue = editor ? subs.filter(x => x.kind !== 'document' && x.status === 'pending') : [];
+  const docs = subs.filter(x => x.kind === 'document');
+  return `${queue.length ? `<section class="block"><header><h2>Waiting for your review</h2></header><div class="list">${queue.map(x => submissionRow(gid, x, true)).join('')}</div></section>` : ''}
+    ${mine.length ? `<section class="block"><header><h2>Your requests</h2></header><div class="list">${mine.slice(0, 10).map(x => submissionRow(gid, x, false)).join('')}</div></section>` : ''}
+    <section class="block"><header style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h2>Club documents</h2>${editor ? `<button class="btn ghost sm" data-act="cbupload" data-gid="${gid}" data-k="document">Send a document</button>` : ''}</header>
+      <div class="list">${docs.map(x => submissionRow(gid, x, false)).join('') || '<div class="empty">No documents yet. A pooled club needs its LLC or partnership papers and tax ID letter verified before it can open a real account.</div>'}</div></section>`;
+}
+function pooledClub(gid, C){
+  const pot = Store.get('portfolios', 'club_' + gid) || { cash: 0, positions: {} }, V = Store.portfolioValue(pot), uv = C.units > 1e-9 ? V / C.units : C.book.startUnitValue;
+  const me = C.members.find(m => m.pid === Store.myPid), mineV = me ? me.units * uv : 0, full = Store.canWrite;
+  const held = Object.entries(pot.positions || {}).map(([s, p]) => [s, p.shares, p.shares * Market.price(s)]).sort((a, b) => b[2] - a[2]);
+  return `<div class="panel" style="padding:18px 20px"><div class="kv"><div><span>Club account</span><b>${usd(V)}</b></div><div><span>Cash</span><b>${usd(pot.cash)}</b></div><div><span>Unit value</span><b>${usd(uv)}</b></div><div><span>Units</span><b>${C.units.toFixed(3)}</b></div></div>
+      <div class="est" style="display:block;margin-top:12px"><b>Your share: ${usd(mineV)} (${C.units > 1e-9 && me ? (me.units / C.units * 100).toFixed(1) : '0.0'}%)</b><div class="small muted" style="margin-top:4px">${me ? me.units.toFixed(3) : '0.000'} units · added ${usd(me ? me.paid : 0)} · withdrawn ${usd(me ? me.withdrawn : 0)}</div></div>
+      ${full ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button class="btn" data-act="potadd" data-gid="${gid}">Add money</button><button class="btn ghost" data-act="potwd" data-gid="${gid}">Request a withdrawal</button></div>` : ''}
+      <p class="hint" style="margin-top:10px">Practice money. The club trades only after a member vote: create a trade proposal, and once it passes the Lead Trader, Owner or an Admin executes it for the club.</p></div>
+    <section class="block"><header><h2>Club holdings</h2></header><div class="list">${held.map(([s, sh, v]) => `<a class="row" href="#/stock/${s}">${logo(s)}<div class="grow"><b>${s}</b> <span class="small muted">${shs(sh)} shares</span></div><b class="num">${usd(v)}</b></a>`).join('') || '<div class="empty">The club holds only cash so far.</div>'}</div></section>`;
+}
+function potSheet(gid, kind){
+  const mine = Store.get('portfolios', Store.myPid) || { cash: 0 };
+  openModal(`<header><h2>${kind === 'add' ? 'Add money to the club' : 'Request a withdrawal'}</h2><button class="x" data-close aria-label="Close">×</button></header>
+    <p class="muted" style="margin-top:0">${kind === 'add' ? `Moves practice cash from your portfolio into the club, buying units at today's unit value. You have ${usd(mine.cash)} in cash.` : "The Treasurer, Owner or an Admin approves withdrawals. The club needs enough cash; members can vote to sell holdings first."}</p>
+    <div class="field"><label for="pt-a">Amount ($)</label><input class="input num" id="pt-a" inputmode="decimal"></div>
+    ${kind === 'add' ? '' : '<div class="field"><label for="pt-n">Note (optional)</label><input class="input" id="pt-n" maxlength="300"></div>'}
+    <button class="btn" id="pt-go" style="width:100%">${kind === 'add' ? 'Add to the club' : 'Send request'}</button>`, sh => {
+    sh.querySelector('#pt-go').onclick = async () => { const amt = Number(sh.querySelector('#pt-a').value);
+      try { if (kind === 'add') await Store.clubContribute(gid, amt); else await Store.clubRequestWithdrawal(gid, amt, sh.querySelector('#pt-n').value);
+        ui.club[gid] = null; closeModal(); toast(kind === 'add' ? 'Added to the club.' : 'Request sent.'); render(); } catch(e){ errToast(e); } };
+  });
+}
+/* ---------- track records ---------- */
+const RISK_WORD = s => s <= 2 ? 'Low' : s <= 4 ? 'Moderate' : s <= 6 ? 'High' : 'Very high';
+function statsFor(kind, id){
+  const k = kind + ':' + id; ui.stats = ui.stats || {};
+  if (!ui.stats[k]){ ui.stats[k] = 'loading'; Store.http('GET', `/api/stats/${kind}/${encodeURIComponent(id)}`).then(r => { ui.stats[k] = r.stats || { none: true }; render(); }, () => { ui.stats[k] = { none: true }; render(); }); }
+  return ui.stats[k] === 'loading' ? null : ui.stats[k];
+}
+function riskBadge(S){ return S && !S.none ? `<span class="tag ${S.riskScore >= 5 ? 'ember' : 'blue'}" title="Risk score from 1 (lowest) to 7, based on how much the value swings">Risk ${S.riskScore} of 7 · ${RISK_WORD(S.riskScore)}</span>` : ''; }
+function trackRecord(kind, id){
+  const S = statsFor(kind, id);
+  if (!S) return '<section class="block"><header><h2>Track record</h2></header><div class="panel loading" style="min-height:120px">Loading…</div></section>';
+  if (S.none) return '';
+  const heldTxt = S.avgHoldDays != null ? Math.round(S.avgHoldDays) + ' days' : S.openPositionAgeDays != null ? 'Still holding (' + Math.round(S.openPositionAgeDays) + ' days so far)' : '—';
+  const period = S.sinceStart ? (kind === 'group' ? 'Since the group started' : 'Since they started') : 'Past year';
+  const mo = S.monthly.map(m => { const v = m.ret, bg = v == null ? 'var(--surface-2)' : v >= 0 ? `color-mix(in srgb, var(--gain) ${Math.min(45, 8 + Math.abs(v) * 400)}%, var(--surface))` : `color-mix(in srgb, var(--loss) ${Math.min(45, 8 + Math.abs(v) * 400)}%, var(--surface))`;
+    const lab = new Date(m.month + '-15').toLocaleDateString('en-US', { month: 'short' }); return `<div style="background:${bg};border-radius:8px;padding:6px 4px;text-align:center"><div class="small muted">${lab}${m.partial ? '*' : ''}</div><div class="small num"><b>${v == null ? '—' : (v >= 0 ? '+' : '') + (v * 100).toFixed(1) + '%'}</b></div></div>`; }).join('');
+  return `<section class="block"><header style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h2>Track record</h2>${riskBadge(S)}</header>
+    <div class="panel" style="padding:18px 20px">
+      <div class="kv"><div><span>${period}</span><b class="${sgn(S.totalReturn)}">${pct(S.totalReturn)}</b></div><div><span>Worst drop</span><b class="${S.maxDrawdown < 0 ? 'loss' : ''}">${(S.maxDrawdown * 100).toFixed(1)}%</b></div>
+        <div><span>Yearly swings (volatility)</span><b>${(S.volatility * 100).toFixed(1)}%</b></div><div><span>Typical holding time</span><b>${heldTxt}</b></div><div><span>Trades a month</span><b>${S.tradesPerMonth.toFixed(1)}</b></div></div>
+      ${S.series && S.series.length > 2 ? ichart('tr:' + kind + ':' + id, S.series, '1y', { h: 120, label: period, aria: 'Track record chart' }) : ''}
+      ${S.monthly.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(62px, 1fr));gap:6px;margin-top:14px">${mo}</div>` : ''}
+      <p class="hint" style="margin-top:12px">${kind === 'group' ? "The Lead Trader's practice portfolio since the group started. " : 'Practice-money results. '}Rebuilt from every trade over ${S.days} day${S.days === 1 ? '' : 's'}; * marks a partial month. The risk score uses the standard 1 to 7 volatility bands used to rate funds.${S.approximate ? ' Some history is estimated.' : ''} Past results don't predict future returns.</p></div></section>`;
+}
+
+/* ---------- Copy once: buy an investor's or group's current mix in one approved step ---------- */
+function copyOnceSheet(o){
+  const g = o.gid ? Store.get('groups', o.gid) : null, src = g ? g.leadPid : o.pid;
+  const spf = Store.get('portfolios', src), mine = Store.get('portfolios', Store.myPid);
+  const held = Object.entries((spf && spf.positions) || {}).map(([s, p]) => [s, p.shares * Market.price(s)]).filter(x => x[1] > 0).sort((a, b) => b[1] - a[1]);
+  if (!held.length) return toast(g ? "The group doesn't hold any stocks right now." : `${Store.displayName(src)} doesn't hold any stocks right now.`);
+  const tot = held.reduce((a, [, v]) => a + v, 0), cash = (mine && mine.cash) || 0;
+  const dflt = Math.max(10, Math.min(cash, Math.round(Store.portfolioValue(mine) * 0.1 / 10) * 10));
+  const who = g ? esc(g.name) : esc(Store.displayName(src)), S = statsFor(g ? 'group' : 'investor', g ? g.id : src);
+  openModal(`<header><h2>${g ? 'Catch up with ' + who : 'Copy ' + who + "'s portfolio"}</h2><button class="x" data-close aria-label="Close">×</button></header>
+    <p class="muted" style="margin-top:0">${g ? "Buy the group's current holdings in the same proportions, so you're in step with trades made before you joined." : `Buy ${who}'s current holdings in the same proportions, scaled to the amount you choose.`} ${S && !S.none ? riskBadge(S) : ''}</p>
+    <div class="field"><label for="co-a">Amount to invest</label><input class="input num" id="co-a" inputmode="decimal" value="${dflt}"><span class="hint">You have ${usd(cash)} in cash.</span></div>
+    <div class="list" id="co-list" style="margin:10px 0"></div>
+    ${g || Store.isCopying(src) ? '' : `<label class="small" style="display:flex;gap:8px;align-items:flex-start;margin:10px 0"><input type="checkbox" id="co-f" checked style="margin-top:3px"> <span>Also copy their new trades. Each one asks for your approval.</span></label>`}
+    ${!Clock.canFillNow() ? '<div class="banner" style="margin-bottom:10px">Markets are closed. You can review this now and buy during market hours.</div>' : ''}
+    <button class="btn" id="co-go" style="width:100%">Approve and buy</button>
+    <p class="hint" style="text-align:center;margin-top:10px">${esc(DISCLOSE)}</p>`, sh => {
+    const draw = () => { const amt = Number(sh.querySelector('#co-a').value) || 0;
+      sh.querySelector('#co-list').innerHTML = held.map(([s, v]) => { const d = amt * v / tot; return `<div class="row">${logo(s)}<div class="grow"><b>${s}</b> <span class="small muted">${(v / tot * 100).toFixed(1)}%</span></div><b class="num">${d < 1 ? '<span class="small muted">under $1, skipped</span>' : usd(d)}</b></div>`; }).join(''); };
+    sh.querySelector('#co-a').oninput = draw; draw();
+    sh.querySelector('#co-go').onclick = async () => { const b = sh.querySelector('#co-go'); b.disabled = true;
+      try { const f = sh.querySelector('#co-f'); const r = await Store.copyPortfolio(Object.assign({ amount: Number(sh.querySelector('#co-a').value) }, g ? { gid: g.id } : { pid: src, follow: !!(f && f.checked) }));
+        closeModal(); toast(`Bought ${r.filled.length} stock${r.filled.length === 1 ? '' : 's'}${r.skipped.length ? ` (skipped ${r.skipped.join(', ')}: under $1)` : ''}.${f && f.checked ? ' New trades will ask for your approval.' : ''}`); }
+      catch(e){ errToast(e); b.disabled = false; } };
+  });
+}
+
+/* ---------- club books (unit value accounting; private to full members) ---------- */
+function clubView(gid, role){
+  ui.club = ui.club || {}; const C = ui.club[gid];
+  if (!C){ ui.club[gid] = 'loading'; Store.http('GET', '/api/club/' + gid).then(r => { ui.club[gid] = r; render(); }, e => { ui.club[gid] = { error: e.message }; render(); }); }
+  if (!C || C === 'loading') return '<div class="loading" style="min-height:20vh">Loading…</div>';
+  if (C.error) return `<div class="panel empty">${esc(C.error)}</div>`;
+  const today = new Date().toISOString().slice(0, 10), nm = pid => esc(Store.displayName(pid));
+  if (!C.book) return `<div class="panel" style="padding:22px"><h2>Club books</h2><p class="muted">Keep your club's money records here: monthly dues, withdrawals, and the club's value, with each member's share worked out using the unit value system that investment clubs use.</p>
+    ${C.canEdit ? `<div class="grid2"><div class="field"><label for="cb-d">Books start on</label><input class="input" id="cb-d" type="date" value="${today}"></div><div class="field"><label for="cb-u">Monthly dues per member (optional)</label><input class="input num" id="cb-u" inputmode="decimal" placeholder="e.g. 50"></div></div>
+      <p class="hint">Already have club money? After setup, record each member's current balance as an opening payment, then enter valuations as usual.</p><button class="btn" data-act="cbsetup" data-gid="${gid}">Start the club books</button>`
+      : '<p class="hint">Ask your Treasurer, Owner or an Admin to start the club books.</p>'}</div>`;
+  if (C.pooled) return pooledClub(gid, C) + clubRequests(gid, C) + clubLedgerTables(gid, C, true);
+  const me = C.members.find(m => m.pid === Store.myPid), lastVal = C.entries.filter(e => e.kind === 'valuation').slice(-1)[0];
+  const years = Object.keys(C.years).sort().reverse(), yr = ui.clubYear && C.years[ui.clubYear] ? ui.clubYear : years[0];
+  const kindWord = { valuation: 'Valuation', payment: 'Payment', withdrawal: 'Withdrawal' };
+  return `${C.problem ? '<div class="banner" style="margin-bottom:14px">One withdrawal is larger than that member owned. Check the ledger.</div>' : ''}
+    <div class="panel" style="padding:18px 20px"><div class="kv"><div><span>Club value (latest valuation plus payments since)</span><b>${usd(C.value)}</b></div><div><span>Unit value</span><b>${usd(C.unitValue)}</b></div><div><span>Units</span><b>${C.units.toFixed(3)}</b></div><div><span>Last valuation</span><b>${lastVal ? esc(lastVal.date) : '—'}</b></div></div>
+      ${me ? `<div class="est" style="display:block;margin-top:12px"><b>Your share: ${usd(me.value)} (${(me.share * 100).toFixed(1)}%)</b><div class="small muted" style="margin-top:4px">${me.units.toFixed(3)} units · paid in ${usd(me.paid)} · withdrawn ${usd(me.withdrawn)} · gain <span class="${sgn(me.gain)}">${me.gain >= 0 ? '+' : '−'}${usd(Math.abs(me.gain))}</span></div></div>` : ''}</div>
+    ${Store.canWrite ? `<div style="margin:14px 0 0"><button class="btn ghost sm" data-act="cbupload" data-gid="${gid}" data-k="payment">Send proof of payment</button></div>` : ''}
+    ${clubRequests(gid, C)}
+    ${C.canEdit ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin:14px 0"><button class="btn" data-act="cbentry" data-gid="${gid}" data-k="dues">Record dues for everyone</button><button class="btn ghost sm" data-act="cbentry" data-gid="${gid}" data-k="payment">Payment</button><button class="btn ghost sm" data-act="cbentry" data-gid="${gid}" data-k="withdrawal">Withdrawal</button><button class="btn ghost sm" data-act="cbentry" data-gid="${gid}" data-k="valuation">Valuation</button></div>` : '<p class="hint" style="margin:12px 0">The Treasurer, Owner and Admins keep these books. Every full member can see them.</p>'}
+    ${clubLedgerTables(gid, C, false)}`;
+}
+
+function clubLedgerTables(gid, C, pooled){
+  const nm = pid => esc(Store.displayName(pid)), kindWord = { valuation: 'Valuation', payment: pooled ? 'Added' : 'Payment', withdrawal: 'Withdrawal' };
+  const years = Object.keys(C.years).sort().reverse(), yr = ui.clubYear && C.years[ui.clubYear] ? ui.clubYear : years[0];
+  const pot = pooled ? Store.get('portfolios', 'club_' + gid) : null, liveUV = pot && C.units > 1e-9 ? Store.portfolioValue(pot) / C.units : null;
+  const M = C.members.map(m => liveUV ? Object.assign({}, m, { value: m.units * liveUV, gain: m.units * liveUV + m.withdrawn - m.paid }) : m);
+  C = Object.assign({}, C, { members: M, canEdit: C.canEdit && !pooled });
+  return `<section class="block"><header style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h2>Members</h2><a class="btn ghost sm" href="/api/club/${gid}/csv" download>Download CSV</a></header><div class="panel mtable"><table><thead><tr><th>Member</th><th>Units</th><th>Value</th><th>Share</th><th>Paid in</th><th>Withdrawn</th><th>Gain</th></tr></thead>
+      <tbody>${C.members.map(m => `<tr><td>${nm(m.pid)}${m.former ? ' <span class="muted">(former)</span>' : ''}</td><td>${m.units.toFixed(3)}</td><td>${usd(m.value)}</td><td>${(m.share * 100).toFixed(1)}%</td><td>${usd(m.paid)}</td><td>${usd(m.withdrawn)}</td><td class="${sgn(m.gain)}">${m.gain >= 0 ? '+' : '−'}${usd(Math.abs(m.gain))}</td></tr>`).join('')}</tbody></table></div></section>
+    <section class="block"><header><h2>Ledger</h2></header><div class="list">${C.entries.slice().reverse().map(e => `<div class="row"><div class="grow"><b>${kindWord[e.kind]}</b>${e.pid ? ' · ' + nm(e.pid) : ''} <span class="small muted">${esc(e.date)}${e.note ? ' · ' + esc(e.note) : ''}</span>
+      <div class="small muted">${e.kind === 'valuation' ? `Club value ${usd(e.amount)}, unit value ${usd(e.unitValue)}` : `${usd(e.amount)} at ${usd(e.unitValue)} a unit = ${e.units.toFixed(3)} units`}</div></div>
+      ${C.canEdit && e.note !== 'Books started' ? `<button class="btn sm ghost" data-act="cbdel" data-gid="${gid}" data-id="${e.id}" aria-label="Delete entry">Delete</button>` : ''}</div>`).join('')}</div></section>
+    ${years.length ? `<section class="block"><header style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h2>Year-end summary</h2><div class="seg">${years.map(y => `<button class="${y === yr ? 'on' : ''}" data-act="cbyear" data-k="${y}">${y}</button>`).join('')}</div></header>
+      <div class="panel mtable"><table><thead><tr><th>Member</th><th>Start of year</th><th>Paid in</th><th>Withdrawn</th><th>End of year</th><th>Gain</th></tr></thead><tbody>${(C.years[yr] || []).map(r => `<tr><td>${nm(r.pid)}</td><td>${usd(r.startValue)}</td><td>${usd(r.paid)}</td><td>${usd(r.withdrawn)}</td><td>${usd(r.endValue)}</td><td class="${sgn(r.gain)}">${r.gain >= 0 ? '+' : '−'}${usd(Math.abs(r.gain))}</td></tr>`).join('')}</tbody></table></div>
+      <p class="hint">Most investment clubs are taxed as partnerships, which file a partnership return and give each member a Schedule K-1. Share these figures with whoever prepares the club's taxes; this summary isn't a tax form.</p></section>` : ''}
+    <details style="margin-top:16px"><summary class="small">How unit values work</summary><p class="small muted">Each payment buys units at the latest unit value, so members who join later or pay different amounts are treated fairly. A valuation sets the club's total value; dividing by all units gives the new unit value. Your share is your units times the unit value.</p></details>`;
+}
+function clubEntrySheet(gid, kind){
+  const C = ui.club[gid], today = new Date().toISOString().slice(0, 10);
+  const ms = Store.membersOf(gid).filter(m => m.role !== 'observer');
+  const title = { dues: 'Record dues for everyone', payment: 'Record a payment', withdrawal: 'Record a withdrawal', valuation: 'Record a valuation' }[kind];
+  openModal(`<header><h2>${title}</h2><button class="x" data-close aria-label="Close">×</button></header>
+    ${kind === 'valuation' ? '<p class="muted" style="margin-top:0">Enter the total value of the club account on this date: cash plus holdings, from your brokerage statement.</p>' : kind === 'dues' ? `<p class="muted" style="margin-top:0">Adds a payment for each of the ${ms.length} full members. You can delete any that didn't pay.</p>` : ''}
+    ${kind === 'payment' || kind === 'withdrawal' ? `<div class="field"><label for="ce-p">Member</label><select class="input" id="ce-p">${ms.map(m => `<option value="${m.pid}">${esc(Store.displayName(m.pid))}</option>`).join('')}</select></div>` : ''}
+    <div class="grid2"><div class="field"><label for="ce-a">${kind === 'valuation' ? 'Club value ($)' : 'Amount ($)'}</label><input class="input num" id="ce-a" inputmode="decimal" value="${kind === 'dues' && C.book.dues ? C.book.dues : ''}"></div><div class="field"><label for="ce-d">Date</label><input class="input" id="ce-d" type="date" value="${today}"></div></div>
+    ${kind === 'dues' ? '' : '<div class="field"><label for="ce-n">Note (optional)</label><input class="input" id="ce-n" maxlength="200" placeholder="e.g. Opening balance"></div>'}
+    <button class="btn" id="ce-go" style="width:100%">Save</button>`, sh => {
+    sh.querySelector('#ce-go').onclick = async () => { const v = id => (sh.querySelector('#' + id) || {}).value;
+      try { const body = { amount: Number(v('ce-a')), date: v('ce-d') };
+        ui.club[gid] = kind === 'dues' ? await Store.http('POST', `/api/club/${gid}/dues`, body) : await Store.http('POST', `/api/club/${gid}/entry`, Object.assign(body, { kind, pid: v('ce-p'), note: v('ce-n') || '' }));
+        ui.club[gid].canEdit = true; closeModal(); toast('Saved.'); render(); } catch(e){ errToast(e); } };
+  });
+}
 function spark(values, w = 600, h = 96, color = 'var(--blue)'){
   if (!values.length) return '';
   const min = Math.min(...values), max = Math.max(...values), rng = max - min || 1;
@@ -888,6 +1186,7 @@ function vPracticeHome(){
     <div class="num"><span class="${sgn(d)}" data-pd="${me}">${pct(d)}</span> <span class="muted">today</span> &nbsp; <span class="${sgn(total)}">${pct(total)}</span> <span class="muted">all time</span></div>
     ${ichart('pf:home', seriesPts(t => { let v = pf.cash || 0; for (const [s, p] of Object.entries(pf.positions || {})) v += p.shares * Market.price(s, t); return v; }, ui.pfSpan), ui.pfSpan, { h: 120, aria: 'Portfolio value chart' })}
     <div class="seg" role="tablist" style="margin-top:10px">${Object.keys(SPANS).map(k => `<button class="${ui.pfSpan === k ? 'on' : ''}" data-act="pfspan" data-k="${k}">${k.toUpperCase()}</button>`).join('')}</div>
+    ${(() => { const dv = myDividends(); return dv.length ? `<p class="small muted" style="margin:10px 0 0">Dividends received in the past year: <b class="gain">${usd(dv.reduce((a, x) => a + x.amount, 0))}</b> <span class="muted">(practice estimates)</span></p>` : ''; })()}
     <div class="actions" style="align-items:center"><button class="btn" data-act="trade">Trade</button><a class="btn ghost" href="#/groups">Find a group</a><span class="updated" data-updated style="margin-left:auto">Updated just now</span></div></div>`;
   /* 2. waiting on you: approvals, votes, reviews, suggestions */
   const pend = Store.myPending();
@@ -913,6 +1212,8 @@ function vPracticeHome(){
   return `${showInstallTip()}${starterCard(prof, groups)}${hero}
   ${sec('Waiting on you', waiting)}
   ${sec('Your groups', latest ? `<div class="list">${latest}</div>` : '', '<button class="linkbtn small" data-act="gofeedgroups">See all</button>')}
+  ${comingUp()}
+  ${recurringList()}
   ${marketBrief()}
   ${(() => { const mineSyms = [...new Set(hold.map(h => h.s).concat(prof.watchlist || []))]; return mineSyms.length ? newsSection('News for your stocks', mineSyms, 3) : ''; })()}
   ${sec('Trending on Pocket', tr.length ? `<div class="list">${tr.map(trendRow).join('')}</div>` : '', '<span class="muted small">Member activity this week</span>')}
@@ -1153,7 +1454,7 @@ function groupRow(g){
   return `<a class="row" href="#/group/${g.id}"><div class="avatar" style="background:${AV[Market.hash(g.id) % AV.length]};border-radius:12px">${esc(g.name.slice(0, 1))}</div>
     <div class="grow"><div class="ellip" style="font-weight:600">${esc(g.name)}${g.featured ? ' <span class="tag ember" style="font-size:10px;padding:1px 6px;vertical-align:2px">Featured</span>' : ''}</div>
       <div class="small muted ellip" style="display:flex;gap:8px;align-items:center;margin-top:3px">${st.html}<span class="ellip">${esc(st.label)}${gs.week ? ', ' + gs.week + ' trade' + (gs.week === 1 ? '' : 's') + ' this week' : ''}</span></div></div>
-    <div class="r"><div class="small num ${sgn(ret)}">${pct(ret)}</div><div class="small muted">${my ? esc(Store.ROLE_LABEL[my.role]) : (g.membership === 'invite' ? 'Invite only' : 'Open')}</div></div></a>`;
+    <div class="r"><div class="small num ${g.pooled ? '' : sgn(ret)}">${g.pooled ? 'Pooled' : pct(ret)}</div><div class="small muted">${my ? esc(Store.ROLE_LABEL[my.role]) : (g.membership === 'invite' ? 'Invite only' : 'Open')}</div></div></a>`;
 }
 function vStock(sym){
   const t = Market.MAP[sym];
@@ -1177,7 +1478,11 @@ function vStock(sym){
   <div class="panel hero"><div class="value" data-px="${sym}">${usd(px)}</div><div class="num ${sgn(c)}" data-chg="${sym}">${pct(c)} <span class="muted">today</span></div>
     ${ichart('stock:' + sym, pts, ui.chartSpan, { aria: sym + ' price chart' })}
     <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:10px"><div class="seg" role="tablist">${Object.keys(SPANS).map(k => `<button class="${ui.chartSpan === k ? 'on' : ''}" data-act="span" data-k="${k}">${k.toUpperCase()}</button>`).join('')}</div>
-    ${pf ? `<div style="display:flex;gap:10px"><button class="btn" data-act="trade" data-sym="${sym}" data-side="buy">Buy</button>${pos ? `<button class="btn ghost" data-act="trade" data-sym="${sym}" data-side="sell">Sell</button>` : ''}</div>` : ''}</div></div>
+    ${pf ? `<div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn" data-act="trade" data-sym="${sym}" data-side="buy">Buy</button>${pos ? `<button class="btn ghost" data-act="trade" data-sym="${sym}" data-side="sell">Sell</button>` : ''}${Store.canWrite ? `<button class="btn ghost" data-act="recurring" data-k="${sym}">Invest automatically</button>` : ''}</div>` : ''}</div>
+    ${(() => { const nd = nextDividend(sym), E = earnings()[sym], bits = [];
+      if (DIV_YIELDS[sym]) bits.push(`Dividend: about ${(DIV_YIELDS[sym] * 100).toFixed(1)}% a year, paid ${sym === 'O' ? 'monthly' : 'quarterly'}${nd ? '; next around ' + fmtDay(nd.toISOString().slice(0, 10)) : ''} <span class="muted">(practice estimate)</span>`);
+      if (E) bits.push(`Next earnings: around ${fmtDay(E.next)} <span class="muted">(estimated from past SEC filings)</span>`);
+      return bits.length ? `<div class="small" style="margin-top:12px;display:grid;gap:4px">${bits.map(b => `<div>${b}</div>`).join('')}</div>` : ''; })()}</div>
   ${pos ? `<section class="block"><header><h2>Your position</h2></header><div class="panel kv"><div><span>Shares</span><b>${shs(pos.shares)}</b></div><div><span>Market value</span><b data-hv="${sym}" data-sh="${pos.shares}">${usd(pos.shares * px)}</b></div><div><span>Average cost</span><b>${usd(pos.cost / pos.shares)}</b></div><div><span>Return</span><b class="${sgn(pos.shares * px / pos.cost - 1)}">${pct(pos.shares * px / pos.cost - 1)}</b></div></div></section>` : ''}
   ${newsSection('News', [sym], 5)}
   ${groupsHolding.length ? `<section class="block"><header><h2>Groups invested in ${sym}</h2></header><div class="list">${groupsHolding.slice(0, 4).map(groupRow).join('')}</div></section>` : ''}
@@ -1244,16 +1549,17 @@ function vGroup(gid, tab){
   const head = `<div class="pagehead"><div><a href="#/groups" class="small">← Groups</a><h1 style="margin-top:6px">${esc(g.name)}</h1>
       <p class="muted" style="max-width:62ch">${esc(g.description || '')}</p>
       ${g.goals ? `<p class="small" style="max-width:62ch;margin:6px 0 0"><b>Our goal:</b> ${esc(g.goals)}</p>` : ''}
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">${g.category ? `<span class="tag">${esc((CATS.find(c => c[0] === g.category) || [0, ''])[1])}</span>` : ''}${g.strategy ? `<span class="tag">${esc(g.strategy)}</span>` : ''}<span class="tag">Lead Trader: ${esc(Store.displayName(g.leadPid))}</span>${role ? `<span class="tag blue">You: ${esc(Store.ROLE_LABEL[role])}</span>` : ''}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">${g.category ? `<span class="tag">${esc((CATS.find(c => c[0] === g.category) || [0, ''])[1])}</span>` : ''}${g.strategy ? `<span class="tag">${esc(g.strategy)}</span>` : ''}<span class="tag">Lead Trader: ${esc(Store.displayName(g.leadPid))}</span>${role ? `<span class="tag blue">You: ${esc(Store.ROLE_LABEL[role])}</span>` : ''}${g.pooled ? '<span class="tag ember">Pooled practice club</span>' : ''}</div>
       ${(() => { const st = stackOf(ms.filter(m => m.role !== 'observer').map(m => m.pid), 5), gs = groupStats(gid); return `<div style="display:flex;gap:18px;flex-wrap:wrap;align-items:center;margin-top:14px" class="small">${st.html}<span><b class="num">${ms.length}</b> members</span><span><b class="num">${gs.trades}</b> trades this month</span>${gs.approval != null ? `<span><b class="num">${Math.round(gs.approval * 100)}%</b> of trade requests copied</span>` : ''}</div>`; })()}</div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">${joinButton(g, role, hasMe)}
       ${role === 'observer' && !Store.isPro() && Store.canWrite ? `<button class="btn" data-act="join" data-id="${gid}">Become a full member</button>` : ''}
-      ${role && Store.canTradeFor(role) && Store.canWrite ? `<button class="btn ember" data-act="trade" data-gid="${gid}">Trade for the group</button>` : ''}
+      ${role && Store.canTradeFor(role) && Store.canWrite && !g.pooled ? `<button class="btn ember" data-act="trade" data-gid="${gid}">Trade for the group</button>` : ''}
       ${role === 'junior' && Store.canWrite ? `<button class="btn ember" data-act="suggest" data-id="${gid}">Suggest a trade</button>` : ''}
+      ${role && role !== 'observer' && g.leadPid !== Store.myPid && Store.canWrite && !g.pooled ? `<button class="btn ghost sm" data-act="copyonce" data-gid="${gid}">Catch up: copy current holdings</button>` : ''}
       ${role && Store.canWrite ? `<button class="btn ghost sm" data-act="invite" data-id="${gid}">Invite friends</button>` : ''}
       ${hasMe && Store.canWrite && role !== 'owner' ? `<button class="btn ghost sm" data-act="report" data-id="${gid}">Report</button>` : ''}
       ${Store.canEdit && Store.canWrite ? `<button class="btn ghost sm" data-act="feature" data-id="${gid}" data-k="${g.featured ? '0' : '1'}">${g.featured ? 'Remove from Featured' : 'Feature in Discover'}</button>` : ''}</div></div>`;
-  const tabs = `<nav class="tabs">${[['activity','Activity'],['performance','Performance'],['proposals','Proposals'],['members','Members'],['rules', Store.canManage(role) ? 'Settings' : 'Rules']].map(([k, l]) => `<a class="${tab === k ? 'on' : ''}" href="#/group/${gid}/${k}">${l}</a>`).join('')}</nav>`;
+  const tabs = `<nav class="tabs">${[['activity','Activity'],['performance','Performance'],['proposals','Proposals'],['ideas','Ideas'],['meetings','Meetings'],['members','Members']].concat(role && role !== 'observer' ? [['club','Club books']] : []).concat([['rules', Store.canManage(role) ? 'Settings' : 'Rules']]).map(([k, l]) => `<a class="${tab === k ? 'on' : ''}" href="#/group/${gid}/${k}">${l}</a>`).join('')}</nav>`;
   let body = '';
   if (tab === 'activity'){
     const mine = Store.myPending().filter(r => r.gid === gid);
@@ -1263,7 +1569,13 @@ function vGroup(gid, tab){
     body = `${pin}${reviewCards(g, role)}${suggestionCards(g, role)}${mine.map(approvalCard).join('')}${mine.length ? '<div style="height:16px"></div>' : ''}
       <div class="list">${role ? composer('g:' + gid, 'Post to the group', 'gpost', `data-gid="${gid}"`) : ''}${items.slice(0, ui.feedLimit).map(it => renderItem(it, false)).join('') || '<div class="empty">No group activity yet.</div>'}</div>${items.length > ui.feedLimit ? '<p style="text-align:center;margin-top:14px"><button class="btn ghost" data-act="more">Show more</button></p>' : ''}`;
   } else if (tab === 'performance'){
-    body = perfView(gid, role);
+    body = trackRecord('group', gid) + (g.pooled ? '<p class="hint">A pooled club trades one shared account, so there are no copies to compare.</p>' : `<div style="height:16px"></div>` + perfView(gid, role));
+  } else if (tab === 'ideas'){
+    body = ideasView(g, role);
+  } else if (tab === 'meetings'){
+    body = meetingsView(g, role);
+  } else if (tab === 'club'){
+    body = role && role !== 'observer' ? clubView(gid, role) : '<div class="panel empty">Club books are for full members of this group.</div>';
   } else if (tab === 'rules'){
     body = rulesView(g, role);
   } else if (tab === 'proposals'){
@@ -1276,8 +1588,8 @@ function vGroup(gid, tab){
     const order = ['owner','admin','lead','member','observer'];
     body = `${role ? `<div class="panel" style="padding:16px 18px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap"><div><b>Your copy size</b><div class="small muted">Share of your capital used when sizing the group's trades for you.</div></div><div class="seg">${[0.5, 1].map(x => `<button class="${(my.copyPct ?? 1) === x ? 'on' : ''}" data-act="copypct" data-gid="${gid}" data-k="${x}">${x * 100}%</button>`).join('')}</div></div>` : ''}
       ${(() => { const jr = Store.all('joinRequests').filter(j => j.gid === gid && j.status === 'pending'); return Store.canManage(role) && jr.length ? `<section style="margin-bottom:16px"><header class="pagehead" style="margin:0 0 10px"><h3>Requests to join</h3></header><div class="list">${jr.map(j => `<div class="row">${avatar(j.pid)}<div class="grow">${nameLink(j.pid)}<div class="small muted">Asked ${ago(j.ts)} ago</div></div><button class="btn sm" data-act="joinyes" data-id="${j.id}">Approve</button><button class="btn sm ghost" data-act="joinno" data-id="${j.id}">Decline</button></div>`).join('')}</div></section>` : ''; })()}
-      <div class="list">${ms.sort((a, b) => order.indexOf(a.role) - order.indexOf(b.role)).map(m => `<div class="row">${avatar(m.pid)}<div class="grow">${nameLink(m.pid)}<div class="small muted">Joined ${ago(m.joinedTs)} ago${m.invitedBy ? ' from ' + esc(Store.displayName(m.invitedBy)) + "'s invite" : ''}</div></div>
-        ${Store.canManage(role) && m.role !== 'owner' && m.pid !== Store.myPid && Store.canWrite ? `<select class="input" style="width:auto;padding:7px 10px;font-size:14px" data-act="role" data-gid="${gid}" data-pid="${m.pid}" aria-label="Role">${['admin','lead','junior','analyst','risk','moderator','member','observer'].map(r => `<option value="${r}" ${m.role === r ? 'selected' : ''}>${Store.ROLE_LABEL[r]}</option>`).join('')}</select><button class="btn sm ghost" data-act="rmmember" data-gid="${gid}" data-pid="${m.pid}" aria-label="Remove ${esc(Store.displayName(m.pid))}">Remove</button>` : `<span class="tag ${['lead','risk'].includes(m.role) ? 'ember' : ['owner','admin'].includes(m.role) ? 'blue' : ''}">${Store.ROLE_LABEL[m.role]}</span>`}</div>`).join('')}</div>
+      <div class="list">${ms.sort((a, b) => order.indexOf(a.role) - order.indexOf(b.role)).map(m => `<div class="row">${avatar(m.pid)}<div class="grow">${nameLink(m.pid)}<div class="small muted">Joined ${ago(m.joinedTs)} ago${(Store.canManage(role) || role === 'treasurer') && m.role !== 'observer' ? participation(gid, m) : ''}${m.invitedBy ? ' from ' + esc(Store.displayName(m.invitedBy)) + "'s invite" : ''}</div></div>
+        ${Store.canManage(role) && m.role !== 'owner' && m.pid !== Store.myPid && Store.canWrite ? `<select class="input" style="width:auto;padding:7px 10px;font-size:14px" data-act="role" data-gid="${gid}" data-pid="${m.pid}" aria-label="Role">${['admin','lead','junior','analyst','risk','moderator','treasurer','member','observer'].map(r => `<option value="${r}" ${m.role === r ? 'selected' : ''}>${Store.ROLE_LABEL[r]}</option>`).join('')}</select><button class="btn sm ghost" data-act="rmmember" data-gid="${gid}" data-pid="${m.pid}" aria-label="Remove ${esc(Store.displayName(m.pid))}">Remove</button>` : `<span class="tag ${['lead','risk'].includes(m.role) ? 'ember' : ['owner','admin'].includes(m.role) ? 'blue' : ''}">${Store.ROLE_LABEL[m.role]}</span>`}</div>`).join('')}</div>
       ${role === 'owner' && Store.canWrite && ms.length > 1 ? `<div class="panel" style="padding:16px 18px;margin-top:16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap"><div style="flex:1;min-width:200px"><b>Transfer ownership</b><div class="small muted">You become an Admin. The new Owner needs Pro.</div></div><select class="input" id="xfer" style="width:auto">${ms.filter(m => m.pid !== Store.myPid).map(m => `<option value="${m.pid}">${esc(Store.displayName(m.pid))}</option>`).join('')}</select><button class="btn sm ghost" data-act="xfer" data-gid="${gid}">Transfer</button></div>` : ''}
       <section class="block"><header><h2>What each role does</h2></header><div class="list">${Store.ROLE_INFO_KEYS.map(k => `<div class="row"><span class="tag" style="min-width:110px;justify-content:center">${Store.ROLE_LABEL[k]}</span><div class="grow small">${Store.ROLE_INFO[k]}</div></div>`).join('')}</div></section>
       ${role && role !== 'owner' && Store.canWrite ? `<p style="margin-top:16px"><button class="btn ghost sm" data-act="leave" data-id="${gid}">Leave group</button></p>` : ''}`;
@@ -1425,8 +1737,10 @@ function vProfile(pid){
       <div class="small muted" style="margin-bottom:8px">Member since ${new Date(p.createdTs || Date.now()).toLocaleDateString('en-US', { month:'long', year:'numeric' })}</div>
       <div style="display:flex;gap:18px;flex-wrap:wrap" class="small"><span><b class="num">${followers}</b> followers</span><span><b class="num">${following}</b> following</span><span><b class="num">${Store.copiersOf(pid).length}</b> copying</span><span class="num ${sgn(ret)}"><b>${pct(ret)}</b> all time</span></div></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">${self ? (Store.canWrite ? `<button class="btn ghost sm" data-act="bio">Edit bio</button>` : '') : (Store.canWrite && Store.get('profiles', Store.myPid) ? `<button class="btn sm ${f ? 'ghost' : ''}" data-act="${f ? 'unfollow' : 'follow'}" data-id="${pid}">${f ? 'Following' : 'Follow'}</button>
-      <button class="btn sm ${Store.isCopying(pid) ? 'ghost' : 'ember'}" data-act="${Store.isCopying(pid) ? 'uncopy' : 'copy'}" data-id="${pid}">${Store.isCopying(pid) ? 'Stop copying' : 'Copy trades'}</button>` : '')}</div></div>
+      <button class="btn sm ${Store.isCopying(pid) ? 'ghost' : 'ember'}" data-act="${Store.isCopying(pid) ? 'uncopy' : 'copy'}" data-id="${pid}">${Store.isCopying(pid) ? 'Stop copying' : 'Copy trades'}</button>
+      <button class="btn sm ghost" data-act="copyonce" data-id="${pid}">Copy their portfolio</button>` : '')}</div></div>
   ${!self && Store.isCopying(pid) ? `<div class="banner ember" style="margin-top:16px">You copy ${esc(Store.displayName(pid))}. Each of their trades sends you an approval request sized to your capital.</div>` : ''}
+  ${trackRecord('investor', pid)}
   ${self ? `<section class="block"><header><h2>Account</h2></header><div class="list">
     <div class="row"><div class="grow"><b>Plan</b><div class="small muted">${Store.isPro() ? 'Pro, $9.99 a month (simulated)' : 'Free: browse, trade, and observe groups'}</div></div>${Store.canWrite ? (Store.isPro() ? `<button class="btn sm ghost" data-act="cancelpro">Cancel Pro</button>` : `<button class="btn sm" data-act="upgrade">Upgrade to Pro</button>`) : ''}</div>
     <div class="row"><div class="grow"><b>Investing style</b><div class="small muted">Used to suggest groups</div></div>${Store.canWrite ? `<select class="input" style="width:auto;padding:7px 10px;font-size:14px" data-act="setrisk" aria-label="Investing style">${Object.entries(RISK).map(([k, [a]]) => `<option value="${k}" ${p.riskProfile === k ? 'selected' : ''}>${a}</option>`).join('')}</select>` : ''}</div>
@@ -1560,26 +1874,58 @@ function vMetrics(){
     ${[['Monthly active users','~24,000'],['Pro subscribers','~1,100'],['Funded accounts','~6,000'],['Active groups','~1,700'],['Run-rate revenue','~$260,000 a year']].map(([a, b]) => `<div class="row"><div class="grow">${a}</div><b class="num">${b}</b></div>`).join('')}</div></section>`;
 }
 function inviteSheet(gid){
-  const g = Store.get('groups', gid); const link = location.origin + '/#/invite/' + (g.inviteCode || '') + '/' + (Store.myPid || '');
+  const g = Store.get('groups', gid); const link = location.origin + '/j/' + (g.inviteCode || '') + (Store.myPid ? '/' + Store.myPid : '');
   const joined = Store.all('memberships').filter(m => m.gid === gid && m.invitedBy === Store.myPid);
   const mg = Store.canManage((Store.membership(gid) || {}).role);
   openModal(`<header><h2>Invite friends to ${esc(g.name)}</h2><button class="x" data-close aria-label="Close">×</button></header>
     <p class="muted" style="margin-top:0">Anyone with this link can join${Store.rulesOf(g).joinMode === 'request' ? ' after an Owner or Admin approves them' : ''}. Friends who join from it are credited to you.</p>
-    <div style="display:flex;gap:8px"><input class="input" id="iv-l" readonly value="${esc(link)}" aria-label="Invite link" style="font-size:14px"><button class="btn" id="iv-c">Copy</button></div>
+    ${g.inviteOff ? `<div class="est" style="display:block"><b>This group's invite link is turned off.</b><div class="small muted" style="margin-top:4px">${mg ? 'Turn it back on to invite people.' : 'Ask an Owner or Admin to turn it back on.'}</div></div>` : `<div style="display:flex;gap:8px"><input class="input" id="iv-l" readonly value="${esc(link)}" aria-label="Invite link" style="font-size:14px"><button class="btn" id="iv-c">Copy</button></div>
+    ${navigator.share ? '<button class="btn ghost" id="iv-s" style="width:100%;margin-top:10px">Share…</button>' : ''}`}
     <div class="est" style="margin-top:14px"><span>Joined from your invites</span><b class="num">${joined.length}</b></div>
     ${joined.length ? `<div class="list">${joined.map(m => `<div class="row">${avatar(m.pid, 'sm')}<div class="grow">${esc(Store.displayName(m.pid))}</div><span class="small muted">${ago(m.joinedTs)} ago</span></div>`).join('')}</div>` : ''}
-    ${mg ? '<p style="margin-top:14px"><button class="btn sm ghost" id="iv-r">Reset the link</button> <span class="hint">Old links stop working.</span></p>' : ''}`, sh => {
+    ${mg ? `<p style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center"><button class="btn sm ghost" id="iv-r">Reset the link</button><button class="btn sm ghost" id="iv-o">${g.inviteOff ? 'Turn the link on' : 'Turn the link off'}</button> <span class="hint">A reset gives a new link; old ones stop working.</span></p>` : ''}`, sh => {
+    const s = sh.querySelector('#iv-s'); if (s) s.onclick = async () => { try { await navigator.share({ title: 'Join ' + g.name + ' on Pocket Investing', text: 'Join my investing group, ' + g.name + ', on Pocket Investing.', url: link }); } catch(e){} };
+    const o = sh.querySelector('#iv-o'); if (o) o.onclick = async () => { try { await Store.setInviteLink(gid, !!g.inviteOff); closeModal(); toast(g.inviteOff ? 'Invite link turned on.' : 'Invite link turned off. It stops working right away.'); inviteSheet(gid); } catch(e){ errToast(e); } };
+    if (!sh.querySelector('#iv-c')) return;
     sh.querySelector('#iv-c').onclick = async () => { const i = sh.querySelector('#iv-l'); i.select(); try { await navigator.clipboard.writeText(link); toast('Invite link copied.'); } catch(e){ try { document.execCommand('copy'); toast('Invite link copied.'); } catch(e2){ toast('Select the link and copy it.'); } } };
     const r = sh.querySelector('#iv-r'); if (r) r.onclick = async () => { try { await Store.newInviteCode(gid); closeModal(); toast('New invite link created.'); inviteSheet(gid); } catch(e){ errToast(e); } };
   });
 }
+function inviteRules(R){
+  const out = [];
+  out.push(R.proposeRoles.includes('member') ? 'Any member can propose trades and changes.' : 'The Owner, Admins, Lead Trader and Analysts propose trades and changes.');
+  out.push(`Votes pass with a ${R.passRule === 'two-thirds' ? 'two-thirds' : 'simple'} majority${R.quorum ? `, with at least ${Math.round(R.quorum * 100)}% of members voting` : ''}.`);
+  if (R.maxPositionPct) out.push(`No single stock above ${Math.round(R.maxPositionPct * 100)}% of the portfolio without a member vote.`);
+  if (R.riskReview) out.push('A Risk Manager reviews trades before they reach members.');
+  out.push(`You approve each copied trade${R.defaultCopyPct < 1 ? ', at half size by default,' : ''} within ${R.approvalMinutes} minutes. Nothing is copied without your approval.`);
+  if (R.minAccount) out.push(`Minimum account value to join: ${usd(R.minAccount, 0)}.`);
+  if (R.joinMode === 'request') out.push('An Owner or Admin approves new members.');
+  return out;
+}
 function vInvite(code, by){
   const g = Store.all('groups').find(x => (x.inviteCode || '').toUpperCase() === String(code || '').toUpperCase());
-  if (!g) return `<div class="panel empty">That invite link isn't valid anymore. Ask for a new one.</div>`;
+  if (!g || g.inviteOff) return `<div class="panel empty" style="margin-top:24px">That invite link isn't valid anymore. Ask the person who sent it for a new one.</div>`;
   ui.inviteFor = g.id; ui.inviteCode = g.inviteCode; ui.inviteBy = by || null;
-  if (!Store.signedIn){ try { sessionStorage.setItem('pi_after_auth', '#/group/' + g.id); } catch(e){} }
-  setTimeout(() => { location.hash = '#/group/' + g.id; }, 0);
-  return '<div class="loading">Opening the group…</div>';
+  try { localStorage.setItem('pi_src', JSON.stringify({ kind: 'group-invite', detail: g.id })); } catch(e){}
+  const mine = Store.signedIn && Store.membership(g.id);
+  if (mine && mine.role !== 'observer'){ setTimeout(() => { location.hash = '#/group/' + g.id; }, 0); return '<div class="loading">Opening the group…</div>'; }
+  const R = Store.rulesOf(g), n = Store.membersOf(g.id).filter(m => m.role !== 'observer').length;
+  const lead = Store.get('portfolios', g.leadPid), ret = lead ? Store.portfolioValue(lead) / (lead.startValue || Store.START_CASH) - 1 : null;
+  const days = Math.max(1, Math.round((Date.now() - (g.createdTs || Date.now())) / 86400000));
+  const back = '#/invite/' + g.inviteCode + (by ? '/' + by : '');
+  const cta = !Store.signedIn ? `<button class="btn" data-act="invsignup" data-k="${esc(back)}" style="width:100%">Create a free account to join</button><p class="small" style="text-align:center;margin-top:10px">Already have an account? <button class="linkbtn" data-act="invsignin" data-k="${esc(back)}">Sign in</button></p>`
+    : !Store.canWrite ? '' : R.joinMode === 'request' ? `<button class="btn" data-act="reqjoin" data-id="${g.id}" style="width:100%">Request to join</button>` : `<button class="btn" data-act="join" data-id="${g.id}" style="width:100%">Join ${esc(g.name)}</button>`;
+  return `<div style="max-width:560px;margin:0 auto">
+    <div class="panel" style="padding:24px"><p class="small muted" style="margin:0 0 6px">You're invited to join</p>
+      <div style="display:flex;gap:12px;align-items:center"><div class="avatar" style="background:${AV[Market.hash(g.id) % AV.length]};border-radius:12px">${esc(g.name.slice(0, 1))}</div><h1 style="margin:0">${esc(g.name)}</h1></div>
+      ${g.strategy ? `<p style="margin:12px 0 0"><b>${esc(g.strategy)}</b></p>` : ''}${g.description ? `<p class="muted" style="margin:6px 0 0">${esc(g.description)}</p>` : ''}
+      <div class="kv" style="margin-top:16px"><div><span>Members</span><b>${n}</b></div><div><span>Started</span><b>${days} day${days === 1 ? '' : 's'} ago</b></div>${ret != null ? `<div><span>Lead Trader's portfolio since it started</span><b class="${sgn(ret)}">${pct(ret)}</b></div>` : ''}</div>
+      ${(() => { const S = statsFor('group', g.id); return S && !S.none ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">${riskBadge(S)}<span class="tag">Worst drop ${(S.maxDrawdown * 100).toFixed(1)}%</span></div>` : ''; })()}
+      <p class="hint" style="margin-top:8px">${Store.site.realMoney ? 'Practice-portfolio results. ' : 'Simulated money. '}Member names are shown once you join. Past results don't predict future returns.</p></div>
+    <section class="block"><header><h2>How this group works</h2></header><div class="panel" style="padding:16px 20px"><ul style="margin:0;padding-left:20px;line-height:1.6">${inviteRules(R).map(x => `<li>${esc(x)}</li>`).join('')}</ul>
+      ${R.rulesText ? `<details style="margin-top:10px"><summary>The Owner's group rules</summary><p style="white-space:pre-wrap" class="muted">${esc(R.rulesText)}</p></details>` : ''}</div></section>
+    <div style="margin-top:18px">${cta}</div>
+    <p class="hint" style="text-align:center;margin-top:14px">${esc(DISCLOSE)}</p></div>`;
 }
 function vNotifySettings(){
   if (!Store.signedIn) return vProfile(null);
@@ -1623,7 +1969,7 @@ function vAdmin(){
   if (!Store.canEdit) return `<div class="empty">The beta admin is available to demo admins.</div>`;
   if (!ui.admin){ loadAdmin(); return '<div class="loading">Loading beta admin…</div>'; }
   const A = ui.admin, tab = ui.adminTab;
-  const T = [['testers','Testers ' + A.users.length],['invites','Invites'],['feedback','Feedback ' + A.feedback.filter(f => f.status === 'open').length],['errors','Errors ' + A.errors.length]].concat(Store.site.realMoney ? [['real','Real money']] : []).concat([['market','Market data'], ['settings','Settings']]);
+  const T = [['metrics','Metrics'],['clubdocs','Club documents'],['testers','Testers ' + A.users.length],['invites','Invites'],['feedback','Feedback ' + A.feedback.filter(f => f.status === 'open').length],['errors','Errors ' + A.errors.length]].concat(Store.site.realMoney ? [['real','Real money']] : []).concat([['market','Market data'], ['settings','Settings']]);
   const when = t => t ? ago(new Date(t).getTime()) + ' ago' : 'never';
   let body = '';
   if (tab === 'testers') body = `<div class="list">${A.users.map(u => `<div class="row" style="flex-wrap:wrap"><div class="grow" style="min-width:200px"><b>${esc(u.display_name)}</b> <span class="muted small">@${esc(u.username)}</span> ${u.env_admin || u.is_admin ? '<span class="tag blue">Admin</span>' : ''} ${u.disabled ? '<span class="tag">Turned off</span>' : ''}
@@ -1636,10 +1982,56 @@ function vAdmin(){
   else if (tab === 'errors') body = `${A.errors.length ? '<div style="margin-bottom:14px"><button class="btn ghost" data-act="adm-errclear">Clear all</button></div>' : ''}<div class="list">${A.errors.map(e => `<div class="row" style="align-items:flex-start"><div class="grow" style="min-width:0"><b class="small">${esc(e.message)}</b><div class="small muted">${esc(e.username || 'visitor')}, ${when(e.created_at)}, ${esc(e.url || '')}</div>${e.stack ? `<pre style="white-space:pre-wrap;font-size:12px;margin:6px 0 0;max-height:120px;overflow:auto;color:var(--muted)">${esc(e.stack)}</pre>` : ''}<div class="small muted">${esc(e.ua || '')}</div></div></div>`).join('') || '<div class="empty">No errors reported. Good news.</div>'}</div>`;
   else if (tab === 'real') body = adminReal();
   else if (tab === 'market') body = adminMarket();
+  else if (tab === 'metrics') body = adminMetrics();
+  else if (tab === 'clubdocs') body = adminClubDocs();
   else body = `<section class="panel" style="padding:18px 20px"><h2>Invite only</h2><p class="muted small">When on, new accounts need an invite code. Admins listed in ADMIN_USERNAMES can always sign up.</p><div class="seg"><button class="${A.inviteOnly ? 'on' : ''}" data-act="adm-io" data-k="1">On</button><button class="${A.inviteOnly ? '' : 'on'}" data-act="adm-io" data-k="0">Off</button></div></section>
     <section class="panel" style="padding:18px 20px;margin-top:16px"><h2>Announcement</h2><p class="muted small">Shown at the top of every screen until each tester dismisses it.</p><textarea class="input" id="adm-ann" maxlength="300" placeholder="e.g. New version: please test buy-at-open today">${esc((A.announcement || {}).text || '')}</textarea><div style="display:flex;gap:10px;margin-top:10px"><button class="btn" data-act="adm-ann">Post</button>${A.announcement ? '<button class="btn ghost" data-act="adm-annclear">Remove</button>' : ''}</div></section>`;
-  return `<div class="pagehead"><div><h1>Beta admin</h1><p class="muted">Testers, invite codes, feedback and error reports.</p></div><button class="btn ghost sm" data-act="adm-refresh">Refresh</button></div>
+  return `<div class="pagehead"><div><h1>Beta admin</h1><p class="muted">Beta metrics, testers, invite codes, feedback and error reports.</p></div><button class="btn ghost sm" data-act="adm-refresh">Refresh</button></div>
     <nav class="tabs">${T.map(([k, l]) => `<a href="#/admin" class="${tab === k ? 'on' : ''}" data-act="adm-tab" data-k="${k}">${l}</a>`).join('')}</nav>${body}`;
+}
+function adminClubDocs(){
+  const X = ui.adocs;
+  if (!X){ ui.adocs = 'loading'; Store.http('GET', '/api/admin/club-docs').then(r => { ui.adocs = r.docs; render(); }, e => { ui.adocs = { error: e.message }; render(); }); }
+  if (!X || X === 'loading') return '<div class="loading" style="min-height:20vh">Loading…</div>';
+  if (X.error) return `<div class="panel empty">${esc(X.error)}</div>`;
+  const pend = X.filter(d => d.status === 'pending'), done = X.filter(d => d.status !== 'pending');
+  const row = d => `<div class="row" style="flex-wrap:wrap;align-items:flex-start"><div class="grow" style="min-width:220px"><b>${esc(d.docType)}</b> · ${esc(d.groupName)} <span class="tag ${STATUS[d.status][1]}" style="font-size:11px">${{ pending: 'Waiting', confirmed: 'Verified', declined: 'Needs changes' }[d.status]}</span>
+    <div class="small muted">Sent ${ago(d.ts)} ago by ${esc(Store.displayName(d.pid))}${d.note ? ' · ' + esc(d.note) : ''} · <a href="/api/club/${d.gid}/file/${d.fileId}" target="_blank" rel="noopener">Open file</a></div>${d.reviewNote ? `<div class="small"><b>Note:</b> ${esc(d.reviewNote)}</div>` : ''}</div>
+    ${d.status === 'pending' ? `<button class="btn sm" data-act="adm-docreview" data-id="${d.id}" data-k="confirmed">Verify</button><button class="btn sm ghost" data-act="adm-docreview" data-id="${d.id}" data-k="declined">Needs changes</button>` : ''}</div>`;
+  return `<p class="muted small" style="margin-top:0">Documents pooled clubs send for verification before opening a real business account. Check the entity name, members and tax ID match the club.</p>
+    <section class="block"><header><h2>Waiting for review (${pend.length})</h2></header><div class="list">${pend.map(row).join('') || '<div class="empty">Nothing waiting.</div>'}</div></section>
+    ${done.length ? `<section class="block"><header><h2>Reviewed</h2></header><div class="list">${done.slice(0, 30).map(row).join('')}</div></section>` : ''}`;
+}
+function adminMetrics(){
+  const M = ui.ametrics;
+  if (!M){ ui.ametrics = 'loading'; Store.http('GET', '/api/admin/metrics').then(r => { ui.ametrics = r; render(); }, e => { ui.ametrics = { error: e.message }; render(); }); return '<div class="loading" style="min-height:20vh">Loading…</div>'; }
+  if (M === 'loading') return '<div class="loading" style="min-height:20vh">Loading…</div>';
+  if (M.error) return `<div class="panel empty">${esc(M.error)}</div>`;
+  const rate = v => v == null ? '—' : (v * 100).toFixed(v < 0.1 ? 2 : 1) + '%';
+  const fmt = (k, v) => k === 'cps' ? (v == null ? '—' : usd(v)) : rate(v);
+  const col = { on: 'var(--gain)', mid: 'var(--ember)', off: 'var(--loss)', none: 'var(--muted)' }, word = { on: 'On target', mid: 'Between base case and target', off: 'Below the base case', none: 'No data yet' };
+  const card = k => { const C = M.cards[k], T = M.targets[k], wp = C.wouldPay;
+    return `<div class="panel mcard"><div class="small muted">${esc(T.label)}</div><div class="v" style="color:${col[C.status]}">${fmt(k, C.value)}</div>
+      <div class="small" style="color:${col[C.status]};font-weight:600">${word[C.status]}</div>
+      <div class="small muted" style="margin-top:6px">Target ${fmt(k, T.target)}${T.base !== T.target ? ` · base case ${fmt(k, T.base)}` : ''}</div>
+      <div class="small" style="margin-top:8px">${esc(C.detail)}</div>
+      ${wp ? `<div class="small" style="margin-top:8px"><b>Would keep Pro at $9.99:</b> ${wp.asked ? `yes ${wp.yes}, maybe ${wp.maybe}, no ${wp.no} (of ${wp.asked} asked)` : 'nobody asked yet'}</div>` : ''}</div>`; };
+  const rows = M.rows.slice().reverse();
+  const TPL = { club: 'Investment club', family: 'Family fund', friends: 'Friends group', custom: 'Custom' };
+  return `${M.smallSample ? `<div class="banner" style="margin-bottom:14px"><div style="flex:1"><b>Small sample</b><div class="small">${M.active30} active tester${M.active30 === 1 ? '' : 's'} in the last 30 days. Read these as early signals, not results.</div></div></div>` : ''}
+    <p class="muted small" style="margin-top:0">Real testers only; sample investors and groups are left out. Cards cover the last 30 days. Targets come from the plan case in the financial model.</p>
+    <div class="mcards">${['groupStarts','proGroup','cps','wom','activation'].map(card).join('')}</div>
+    <section class="block"><header><h2>Ad spend</h2></header><div class="panel" style="padding:16px 18px">
+      <p class="small muted" style="margin-top:0">Enter what you spent on ads each month. Cost per signup divides it by signups that came from paid campaign links.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end"><div class="field" style="margin:0"><label for="ms-m">Month</label><select class="input" id="ms-m">${M.rows.slice().reverse().map(r => `<option value="${r.month}">${r.month}${r.adSpend ? ' (' + usd(r.adSpend, 0) + ')' : ''}</option>`).join('')}</select></div>
+      <div class="field" style="margin:0"><label for="ms-a">Amount ($)</label><input class="input num" id="ms-a" inputmode="decimal" placeholder="0" style="width:140px"></div><button class="btn" data-act="adm-spend">Save</button></div>
+      <h3 style="margin:18px 0 6px;font-size:15px">Make a tracked link</h3><p class="small muted" style="margin-top:0">Use these in ads and posts so signups are credited to the right source.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><input class="input" id="mu-s" placeholder="Source, e.g. instagram" style="width:200px"><label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="mu-p" checked> Paid ad</label><button class="btn ghost sm" data-act="adm-utm">Create and copy</button></div>
+      <input class="input" id="mu-l" readonly placeholder="Your link appears here" style="margin-top:8px;font-size:13px"></div></section>
+    <section class="block"><header style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h2>By month</h2><a class="btn ghost sm" href="/api/admin/metrics.csv" download>Download CSV</a></header>
+      <div class="panel mtable"><table><thead><tr><th>Month</th><th>Active users</th><th>Signups</th><th>From invite links</th><th>From ads</th><th>Groups started</th><th>Group start rate</th><th>Pro in groups</th><th>Cost per ad signup</th><th>Activation</th><th>Churn</th><th>Members per group</th></tr></thead>
+      <tbody>${rows.map(r => `<tr><td>${r.month}${r.partial ? ' <span class="muted">(so far)</span>' : ''}</td><td>${r.activeUsers}</td><td>${r.signups}</td><td>${r.fromGroupInvites}</td><td>${r.fromAds}</td><td>${r.groupStarts}</td><td>${rate(r.groupStartRate)}</td><td>${rate(r.proGroupRate)}</td><td>${r.costPerSignup == null ? '—' : usd(r.costPerSignup)}</td><td>${rate(r.activation)}</td><td>${rate(r.churn)}</td><td>${r.membersPerGroup == null ? '—' : r.membersPerGroup.toFixed(1)}</td></tr>`).join('')}</tbody></table></div></section>
+    <section class="block"><header><h2>Groups by template</h2></header><div class="panel" style="padding:14px 18px">${Object.keys(M.templates).length ? Object.entries(M.templates).map(([k, n]) => `<span class="tag" style="margin:0 6px 6px 0">${esc(TPL[k] || k)}: ${n}</span>`).join('') : '<span class="muted small">No groups started by testers yet.</span>'}</div></section>`;
 }
 async function loadAdmin(){ try { ui.admin = await Store.http('GET', '/api/admin/overview'); } catch(e){ errToast(e); ui.admin = { users:[], invites:[], feedback:[], errors:[], inviteOnly:true, announcement:null }; } render(); }
 function adminReal(){
@@ -1895,8 +2287,17 @@ function tradeSheet({ sym = 'AAPL', side = 'buy', gid = null } = {}){
     root.addEventListener('click', e => { if (e.target.closest('[data-close]')) closeModal(); });
   });
 }
+const GROUP_TEMPLATES = [
+  ['club', 'Investment club', 'Members propose and vote. Majority rules.', 'request', ['Any member can propose trades and changes', 'Majority vote, with half of members voting', 'No stock above 10% of the portfolio without a vote', 'Risk Manager review on', 'New members approved by you', '60 minutes to approve each copied trade']],
+  ['family', 'Family fund', 'One Lead Trader, members approve each trade.', 'invite', ['The Owner, Admins and Lead Trader propose', 'Majority vote, with half of members voting', 'No stock above 10% of the portfolio without a vote', 'Invite link only', '60 minutes to approve each copied trade']],
+  ['friends', 'Friends group', 'Relaxed rules and open discussion.', 'invite', ['Anyone in the group can propose', 'Simple majority', 'No position limit', 'Invite link only', 'Members copy half-size trades by default', '30 minutes to approve each copied trade']],
+  ['pool', 'Pooled club', 'Members add money to one shared account; every trade is voted on.', 'request', ['Practice money only during the beta', 'Members add money to the club and own units of it', 'Trades happen only after a member vote', 'Any member can propose', 'Withdrawals approved by the Treasurer, Owner or an Admin', 'Club books kept automatically']],
+  ['custom', 'Custom', 'Start from the basics and set everything yourself.', 'open', ['Standard rules; change them anytime in Settings']]
+];
 function groupSheet(){
   openModal(`<header><h2>Create a group</h2><button class="x" data-close aria-label="Close">×</button></header>
+    <div class="field"><label>Start from</label><div class="tplgrid" role="radiogroup">${GROUP_TEMPLATES.map(([k, l, d], i) => `<button type="button" class="tpl${i === 0 ? ' on' : ''}" role="radio" aria-checked="${i === 0}" data-tpl="${k}"><b>${l}</b><span class="small muted">${d}</span></button>`).join('')}</div>
+      <div class="est" id="g-tplsum" style="display:block;margin-top:10px"></div></div>
     <div class="field"><label for="g-n">Group name</label><input class="input" id="g-n" maxlength="60" placeholder="e.g. Sunday Stock Club"></div>
     <div class="field"><label for="g-s">Strategy</label><input class="input" id="g-s" maxlength="120" placeholder="e.g. Long-term dividend growth"></div>
     <div class="field"><label for="g-d">Description</label><textarea class="input" id="g-d" maxlength="300" placeholder="What the group invests in and how it decides"></textarea></div>
@@ -1905,13 +2306,18 @@ function groupSheet(){
     <div class="est" style="display:block"><b>Group Pro: $19.99 a month per group</b><div class="small muted" style="margin-top:4px">Roles, voting, approval-based copying and member management. Simulated here; nothing is charged.</div></div>
     <p class="hint">You'll be the Owner and Lead Trader. Members copy your trades only when they approve each one.</p>
     <button class="btn" id="g-go" style="width:100%">Start Group Pro and create group</button>`, sh => {
+    let tpl = 'club';
+    const pickTpl = k => { tpl = k; const T = GROUP_TEMPLATES.find(x => x[0] === k);
+      sh.querySelectorAll('[data-tpl]').forEach(b => { const on = b.dataset.tpl === k; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); });
+      sh.querySelector('#g-m').value = T[3]; sh.querySelector('#g-tplsum').innerHTML = `<b>${T[1]} rules</b><ul style="margin:6px 0 0;padding-left:18px" class="small">${T[4].map(x => `<li>${x}</li>`).join('')}</ul><div class="small muted" style="margin-top:6px">You can change any of these later in Settings.</div>`; };
+    sh.querySelectorAll('[data-tpl]').forEach(b => b.onclick = () => pickTpl(b.dataset.tpl)); pickTpl('club');
     sh.querySelector('#g-go').onclick = async () => {
-      try { const id = await Store.createGroup({ name: sh.querySelector('#g-n').value, strategy: sh.querySelector('#g-s').value, description: sh.querySelector('#g-d').value, membership: sh.querySelector('#g-m').value, category: sh.querySelector('#g-c').value, goals: sh.querySelector('#g-goal').value });
+      try { const id = await Store.createGroup({ template: tpl, name: sh.querySelector('#g-n').value, strategy: sh.querySelector('#g-s').value, description: sh.querySelector('#g-d').value, membership: sh.querySelector('#g-m').value, category: sh.querySelector('#g-c').value, goals: sh.querySelector('#g-goal').value });
         closeModal(); toast('Group created.'); location.hash = '#/group/' + id; } catch(e){ errToast(e); }
     };
   });
 }
-function proposalSheet(gid){
+function proposalSheet(gid, presym){
   openModal(`<header><h2>New proposal</h2><button class="x" data-close aria-label="Close">×</button></header>
     <div class="field"><label for="p-t">Type</label><select class="input" id="p-t"><option value="trade">Trade idea</option><option value="strategy">Strategy change</option><option value="policy">Policy change</option><option value="role">Role change</option></select></div>
     <div id="p-trade" class="grid2"><div class="field"><label for="p-sym">Stock</label><select class="input" id="p-sym">${Market.LIST.map(t => `<option value="${t.s}">${t.s} — ${esc(t.n)}</option>`).join('')}</select></div>
@@ -1922,6 +2328,7 @@ function proposalSheet(gid){
     <div class="field"><label for="p-days">Voting period</label><select class="input" id="p-days"><option value="1">1 day</option><option value="3" selected>3 days</option><option value="7">7 days</option></select></div>
     <button class="btn" id="p-go" style="width:100%">Open voting</button>`, sh => {
     const tSel = sh.querySelector('#p-t'), syncT = () => { sh.querySelector('#p-trade').style.display = tSel.value === 'trade' ? '' : 'none'; }; tSel.onchange = syncT; syncT();
+    if (presym && sh.querySelector('#p-sym')){ sh.querySelector('#p-sym').value = presym; const ti = sh.querySelector('#p-title'); if (ti && !ti.value) ti.value = 'Buy $' + presym; }
     sh.querySelector('#p-go').onclick = async () => {
       try { await Store.propose(gid, { type: tSel.value, title: sh.querySelector('#p-title').value, details: sh.querySelector('#p-d').value, days: sh.querySelector('#p-days').value, sym: sh.querySelector('#p-sym').value, side: sh.querySelector('#p-side').value, pct: sh.querySelector('#p-pct').value });
         closeModal(); toast('Voting is open.'); } catch(e){ errToast(e); }
@@ -1956,7 +2363,8 @@ function authSheet(mode){
     <div class="field"><label for="a-u">Username</label><input class="input" id="a-u" maxlength="24" autocomplete="username" autocapitalize="none" spellcheck="false"></div>
     ${reset ? '<div class="field"><label for="a-c">Reset code</label><input class="input" id="a-c" maxlength="12" autocapitalize="characters" spellcheck="false"></div>' : ''}
     <div class="field"><label for="a-p">${reset ? 'New password' : 'Password'}</label><input class="input" id="a-p" type="password" autocomplete="${signup || reset ? 'new-password' : 'current-password'}">${signup || reset ? '<span class="hint">At least 8 characters.</span>' : ''}</div>
-    ${signup && Store.inviteOnly ? `<div class="field"><label for="a-i">Invite code</label><input class="input" id="a-i" maxlength="16" autocapitalize="characters" spellcheck="false" value="${esc(inviteFromLink)}"><span class="hint">The beta is invite only.</span></div>` : ''}
+    ${signup && Store.inviteOnly && ui.inviteFor && Store.get('groups', ui.inviteFor) ? `<div class="est" style="display:block;margin-bottom:14px"><b>You're invited to ${esc(Store.get('groups', ui.inviteFor).name)}</b><div class="small muted" style="margin-top:4px">Your invite link gets you into the beta. No code needed.</div></div>` : ''}
+    ${signup && Store.inviteOnly && !ui.inviteFor ? `<div class="field"><label for="a-i">Invite code</label><input class="input" id="a-i" maxlength="16" autocapitalize="characters" spellcheck="false" value="${esc(inviteFromLink)}"><span class="hint">The beta is invite only.</span></div>` : ''}
     ${signup ? '<div class="field"><label style="display:flex;gap:10px;align-items:flex-start;font-weight:500"><input type="checkbox" id="a-t" style="margin-top:4px"> <span>I agree to the <a href="#/terms" target="_blank">Terms</a> and <a href="#/privacy" target="_blank">Privacy Policy</a>, and understand ' + (Store.site.realMoney ? 'practice portfolios use simulated money' : 'Pocket Investing uses simulated money during the beta') + '.</span></label></div>' : ''}
     ${!signup && !reset ? '<div class="field" id="a-2fa-f" style="display:none"><label for="a-2fa">6-digit code from your authenticator app</label><input class="input num" id="a-2fa" inputmode="numeric" autocomplete="one-time-code" maxlength="6"></div>' : ''}
     <div class="hint" id="a-err" style="color:var(--loss);min-height:1.2em;margin-bottom:8px"></div>
@@ -1966,7 +2374,7 @@ function authSheet(mode){
     const go = async () => {
       const b = sh.querySelector('#a-go'); b.disabled = true; sh.querySelector('#a-err').textContent = '';
       try {
-        if (signup) await Store.signupFull({ username: v('a-u'), password: v('a-p'), name: v('a-n'), risk: ui.risk, invite: v('a-i'), terms: sh.querySelector('#a-t').checked });
+        if (signup) await Store.signupFull({ username: v('a-u'), password: v('a-p'), name: v('a-n'), risk: ui.risk, invite: v('a-i'), terms: sh.querySelector('#a-t').checked, groupInvite: ui.inviteFor ? ui.inviteCode : undefined, source: signupSource() });
         else if (reset) await Store.resetPassword(v('a-u'), v('a-c'), v('a-p'));
         else await Store.login(v('a-u'), v('a-p'), v('a-2fa'));
         closeModal(); ui.seenReqs = null; toast(signup ? 'Your account is ready with $100,000 in simulated cash.' : reset ? 'Password updated. You are signed in.' : 'Welcome back.');
@@ -1994,6 +2402,8 @@ function vLegal(kind){
       <p>If you turn on notifications, your device's push address is stored so we can send alerts. You can turn them off in Settings.</p>`}
     <p class="hint">Questions: contact the Pocket Investing team.</p></div>`;
 }
+const wouldPayHTML = () => `<div class="field" style="margin-top:14px"><label>After the beta, Pro will cost $9.99 a month. Would you keep it?</label><div class="seg" data-wp>${[['yes','Yes'],['maybe','Maybe'],['no','No']].map(([k, l]) => `<button type="button" data-wpk="${k}">${l}</button>`).join('')}</div><span class="hint">Pro is free while we test. Your answer helps us set the price.</span></div>`;
+function wireWouldPay(sh){ let v = null; sh.querySelectorAll('[data-wpk]').forEach(b => b.onclick = () => { v = b.dataset.wpk; sh.querySelectorAll('[data-wpk]').forEach(x => x.classList.toggle('on', x === b)); }); return () => v; }
 function upgradeSheet(then){
   openModal(`<header><h2>Pocket Investing Pro</h2><button class="x" data-close aria-label="Close">×</button></header>
     <p class="muted" style="margin-top:0">Everything in Free, plus the features that let you invest alongside others.</p>
@@ -2001,9 +2411,10 @@ function upgradeSheet(then){
       ${[['Join groups as a full member','Vote on proposals and copy the Lead Trader'],['Copy individual investors','Each of their trades asks for your approval'],['Performance vs your group','See how your copies track the Lead Trader and the S&P 500'],['Advanced analytics','Coming with the native app']].map(([a, b]) => `<div class="row"><div class="grow"><b>${a}</b><div class="small muted">${b}</div></div></div>`).join('')}
     </div>
     <div class="est"><span>$9.99 a month, or $99 a year</span><b class="num">Free plan stays free</b></div>
-    <button class="btn" id="u-go" style="width:100%" ${ui.tour != null || !Store.canWrite ? 'disabled' : ''}>Start Pro</button>
+    ${ui.tour == null && Store.canWrite ? wouldPayHTML() : ''}<button class="btn" id="u-go" style="width:100%" ${ui.tour != null || !Store.canWrite ? 'disabled' : ''}>Start Pro</button>
     <p class="hint" style="text-align:center;margin-top:10px">Simulated subscription for this demo. Nothing is charged.</p>`, sh => {
-    sh.querySelector('#u-go').onclick = async () => { try { await Store.upgradePro(); closeModal(); toast("You're on Pro."); if (then) await then(); } catch(e){ errToast(e); } };
+    const wp = wireWouldPay(sh);
+    sh.querySelector('#u-go').onclick = async () => { try { await Store.upgradePro(wp()); closeModal(); toast("You're on Pro."); if (then) await then(); } catch(e){ errToast(e); } };
   });
 }
 function rulesAcceptHTML(g){ const R = Store.rulesOf(g); return R.rulesText ? `<div class="panel" style="padding:14px 16px;margin-bottom:12px;max-height:180px;overflow:auto;white-space:pre-wrap;font-size:14px">${esc(R.rulesText)}</div><label style="display:flex;gap:10px;align-items:center;margin-bottom:14px"><input type="checkbox" id="j-rules"> I agree to the group's rules</label>` : ''; }
@@ -2020,10 +2431,11 @@ function joinSheet(gid){
     <div class="list" style="margin-bottom:16px">
       <div class="row"><div class="grow"><b>Full member with Pro</b><div class="small muted">Vote on proposals and copy the Lead Trader's trades with your approval. $9.99 a month.</div></div></div>
       <div class="row"><div class="grow"><b>Observer, free</b><div class="small muted">Follow the group's trades and discussion without voting or copying.</div></div></div></div>
-    ${my ? '' : rulesAcceptHTML(g)}<button class="btn" id="j-pro" style="width:100%">${Store.isPro() ? 'Join as a member' : 'Start Pro and join as a member'}</button>
+    ${my ? '' : rulesAcceptHTML(g)}${Store.isPro() ? '' : wouldPayHTML()}<button class="btn" id="j-pro" style="width:100%">${Store.isPro() ? 'Join as a member' : 'Start Pro and join as a member'}</button>
     ${my ? '' : `<button class="btn ghost" id="j-obs" style="width:100%;margin-top:10px">Join as an observer</button>`}
     <p class="hint" style="text-align:center;margin-top:10px">Simulated subscription for this demo. Nothing is charged.</p>`, sh => {
-    sh.querySelector('#j-pro').onclick = async () => { try { const x = joinExtras(sh, g); if (!x.acceptRules) throw Object.assign(new Error("Please accept the group's rules to join."), { userFacing: true }); if (!Store.isPro()) await Store.upgradePro(); await Store.join(gid, 'member', x); closeModal(); toast("You're on Pro and joined as a member. Group trades will ask for your approval."); } catch(e){ errToast(e); } };
+    const wp = wireWouldPay(sh);
+    sh.querySelector('#j-pro').onclick = async () => { try { const x = joinExtras(sh, g); if (!x.acceptRules) throw Object.assign(new Error("Please accept the group's rules to join."), { userFacing: true }); if (!Store.isPro()) await Store.upgradePro(wp()); await Store.join(gid, 'member', x); closeModal(); toast("You're on Pro and joined as a member. Group trades will ask for your approval."); } catch(e){ errToast(e); } };
     const o = sh.querySelector('#j-obs'); if (o) o.onclick = async () => { try { const x = joinExtras(sh, g); if (!x.acceptRules) throw Object.assign(new Error("Please accept the group's rules to join."), { userFacing: true }); await Store.join(gid, 'observer', x); closeModal(); toast('You joined as an observer.'); } catch(e){ errToast(e); } };
   });
 }
@@ -2201,8 +2613,11 @@ async function act(el, ev){ /* eslint-disable-line */
       await Store.setNotifPrefs({ approvals: c('n-ap'), votes: c('n-vo'), social: c('n-so'), news: $('#n-nw') ? c('n-nw') : false, approvalsInQuiet: c('n-aq'), mutedGroups: muted, quiet: { on: c('n-qon'), start: $('#n-qs').value, end: $('#n-qe').value }, tz: Intl.DateTimeFormat().resolvedOptions().timeZone });
       toast('Notification settings saved.');
     });
-    case 'adm-tab': ev.preventDefault(); ui.adminTab = el.dataset.k; ui.areal = null; ui.amd = null; ui.amdCheck = null; return render();
-    case 'adm-refresh': ui.admin = null; return render();
+    case 'adm-spend': return busy(async () => { const m = document.getElementById('ms-m').value, amt = Number(document.getElementById('ms-a').value); await Store.http('POST', '/api/admin/metrics/adspend', { month: m, amount: amt }); ui.ametrics = null; toast('Ad spend saved.'); render(); });
+    case 'adm-utm': { const s = (document.getElementById('mu-s').value || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, ''); if (!s){ toast('Name the source first, like instagram.'); return; }
+      const link = location.origin + '/?utm_source=' + s + '&utm_medium=' + (document.getElementById('mu-p').checked ? 'paid' : 'referral') + '&utm_campaign=beta'; document.getElementById('mu-l').value = link; try { navigator.clipboard.writeText(link); toast('Link copied.'); } catch(e){} return; }
+    case 'adm-tab': ev.preventDefault(); ui.adminTab = el.dataset.k; ui.ametrics = null; ui.adocs = null; ui.areal = null; ui.amd = null; ui.amdCheck = null; return render();
+    case 'adm-refresh': ui.admin = null; ui.ametrics = null; return render();
     case 'adm': return busy(async () => {
       const op = el.dataset.op;
       if (op === 'disable' && !confirm('Turn off this account? They will be signed out and unable to sign in.')) return;
@@ -2222,6 +2637,7 @@ async function act(el, ev){ /* eslint-disable-line */
     case 'demorelease': return busy(async () => { const r = await Store.demoReview(el.dataset.gid, 'release'); toast(`Risk Manager released the trade. ${r.sent} member${r.sent === 1 ? '' : 's'} asked to approve.`); });
     case 'demopause': return busy(async () => { await Store.demoReview(el.dataset.gid, 'pause'); toast('Risk Manager paused the trade. The group is voting.'); });
     case 'signin': ev.preventDefault(); return authSheet('login');
+    case 'invsignup': case 'invsignin': try { sessionStorage.setItem('pi_after_auth', el.dataset.k); } catch(e){} return authSheet(a === 'invsignup' ? 'signup' : 'login');
     case 'signout': return busy(async () => { await Store.logout(); ui.seenReqs = null; toast('Signed out.'); location.hash = '#/home'; });
     case 'delpost': return busy(async () => { if (!confirm('Delete this post?')) return; await Store.deletePost(id); toast('Post deleted.'); });
     case 'delcomment': return busy(async () => { if (!confirm('Delete this comment?')) return; await Store.deleteComment(id); toast('Comment deleted.'); });
@@ -2246,6 +2662,31 @@ async function act(el, ev){ /* eslint-disable-line */
     case 'join': if (!Store.isPro() || (!Store.membership(id) && Store.rulesOf(Store.get('groups', id)).rulesText)) return joinSheet(id); return busy(async () => { await Store.join(id, 'member', { code: ui.inviteFor === id ? ui.inviteCode : undefined, by: ui.inviteFor === id ? ui.inviteBy : undefined }); toast('You joined as a member. Group trades will ask for your approval.'); });
     case 'upgrade': return upgradeSheet();
     case 'cancelpro': return busy(async () => { if (!confirm('Cancel Pro? Group memberships become observer and copying stops.')) return; await Store.cancelPro(); toast('Pro cancelled. You are on the free plan.'); });
+    case 'copyonce': { const o = el.dataset.gid ? { gid: el.dataset.gid } : { pid: id }; if (!Store.isPro()) return upgradeSheet(() => copyOnceSheet(o)); return copyOnceSheet(o); }
+    case 'cbsetup': return busy(async () => { const gid = el.dataset.gid; ui.club[gid] = await Store.http('POST', `/api/club/${gid}/setup`, { startDate: document.getElementById('cb-d').value, dues: document.getElementById('cb-u').value }); ui.club[gid].canEdit = true; toast('Club books started.'); render(); });
+    case 'cbentry': return clubEntrySheet(el.dataset.gid, el.dataset.k);
+    case 'cbupload': return uploadSheet(el.dataset.gid, el.dataset.k);
+    case 'cbreview': return reviewSheet(el.dataset.gid, id, el.dataset.k, el.dataset.v);
+    case 'potadd': return potSheet(el.dataset.gid, 'add');
+    case 'potwd': return potSheet(el.dataset.gid, 'withdraw');
+    case 'gwadd': return busy(async () => { const s = (document.getElementById('gw-s').value || '').trim().toUpperCase(); if (!s) throw Object.assign(new Error('Enter a stock symbol.'), { userFacing: true }); if (!Market.MAP[s]) await Store.ensureStock(s); await Store.addGroupWatch(el.dataset.gid, s, document.getElementById('gw-r').value); toast(s + ' added to the group watchlist.'); });
+    case 'gwdel': return busy(async () => { await Store.removeGroupWatch(id); });
+    case 'study': return studySheet(el.dataset.gid, el.dataset.k, id);
+    case 'propsym': return proposalSheet(el.dataset.gid, el.dataset.k);
+    case 'newmeeting': return busy(async () => { const d = document.getElementById('mt-d').value; if (!d) throw Object.assign(new Error('Pick a date and time.'), { userFacing: true }); ui.meetingId = await Store.createMeeting({ gid: el.dataset.gid, title: document.getElementById('mt-t').value, ts: new Date(d).getTime() }); toast('Meeting scheduled.'); });
+    case 'openmeeting': ui.meetingId = id; return render();
+    case 'checkin': return busy(async () => { await Store.meetingCheckIn(id); toast("You're checked in."); });
+    case 'meetstart': return busy(async () => { await Store.meetingStatus({ id, status: 'live' }); toast('Meeting started.'); });
+    case 'meetend': if (!confirm('End the meeting? You can still edit the minutes afterwards.')) return; return busy(async () => { const t = document.getElementById('mm-t'); await Store.meetingStatus({ id, status: 'ended', minutes: t ? t.value : undefined }); toast('Meeting ended.'); });
+    case 'meetsave': return busy(async () => { await Store.meetingStatus({ id, minutes: document.getElementById('mm-t').value }); toast('Minutes saved.'); });
+    case 'meetnote': return busy(async () => { await Store.meetingNote(id, document.getElementById('mn-t').value); });
+    case 'recurring': if (!Store.get('profiles', Store.myPid)) return authSheet('signup'); return recurringSheet(el.dataset.k);
+    case 'recpause': return busy(async () => { await Store.pauseRecurring(el.dataset.k, el.dataset.v === '1'); });
+    case 'recdel': if (!confirm('Stop this recurring investment?')) return; return busy(async () => { await Store.deleteRecurring(el.dataset.k); toast('Stopped.'); });
+    case 'adm-docreview': { const dec = el.dataset.k; const note = dec === 'declined' ? prompt('What needs to change? The club will see this note.') : (prompt('Note to the club (optional)') || ''); if (dec === 'declined' && !note) return;
+      return busy(async () => { await Store.http('POST', '/api/admin/club-docs/review', { id, decision: dec, note }); ui.adocs = null; toast(dec === 'confirmed' ? 'Marked verified.' : 'Sent back with your note.'); render(); }); }
+    case 'cbdel': if (!confirm('Delete this entry? Units are recalculated for everything after it.')) return; return busy(async () => { const gid = el.dataset.gid; ui.club[gid] = await Store.http('POST', `/api/club/${gid}/delete`, { id }); ui.club[gid].canEdit = true; toast('Entry deleted.'); render(); });
+    case 'cbyear': ui.clubYear = el.dataset.k; return render();
     case 'copy': if (!Store.isPro()) return upgradeSheet(() => Store.copyInvestor(id).then(() => toast(`You copy ${Store.displayName(id)}. Their trades will ask for your approval.`))); return busy(async () => { await Store.copyInvestor(id); toast(`You copy ${Store.displayName(id)}. Their trades will ask for your approval.`); });
     case 'uncopy': return busy(async () => { await Store.stopCopying(id); toast('Stopped copying.'); });
     case 'report': return reportSheet(id);
@@ -2303,7 +2744,7 @@ async function act(el, ev){ /* eslint-disable-line */
 document.addEventListener('click', ev => { const el = ev.target.closest('[data-act]'); if (!el || el.tagName === 'SELECT') return; if (el.tagName === 'A') ev.preventDefault(); act(el, ev); });
 document.addEventListener('change', ev => { const el = ev.target; if (el.dataset && el.dataset.act === 'setrisk'){ Store.setRisk(el.value).then(() => toast('Investing style updated.'), errToast); return; } if (el.dataset && el.dataset.act === 'role'){ Store.setRole(el.dataset.gid, el.dataset.pid, el.value).then(() => toast('Role updated.'), errToast); } });
 document.addEventListener('input', ev => { const el = ev.target; if (el.dataset && el.dataset.draft) ui.drafts[el.dataset.draft] = el.value; });
-window.addEventListener('hashchange', () => { ui.feedLimit = 30; if (route().name !== 'markets'){ ui.searchQ = ''; ui.search = null; } if (ui.lastRoute === 'feed' || ui.lastRoute === 'home') ui.lastSeenPost = Date.now(); ui.lastRoute = route().name; closeModal(); window.scrollTo(0, 0); if (route().name !== 'admin') ui.admin = null; if (route().name !== 'metrics') ui.usage = null; if (route().name !== 'settings') ui.pushState = null; if (route().name !== 'statements') ui.docs = null; if (route().name !== 'security') ui.sec = null; render(); if (route().name === 'notifications') setTimeout(() => Store.markSeen(), 1500); });
+window.addEventListener('hashchange', () => { ui.feedLimit = 30; ui.stats = {}; if (route().name !== 'markets'){ ui.searchQ = ''; ui.search = null; } if (ui.lastRoute === 'feed' || ui.lastRoute === 'home') ui.lastSeenPost = Date.now(); ui.lastRoute = route().name; closeModal(); window.scrollTo(0, 0); if (route().name !== 'admin') ui.admin = null; if (route().name !== 'metrics') ui.usage = null; if (route().name !== 'settings') ui.pushState = null; if (route().name !== 'statements') ui.docs = null; if (route().name !== 'security') ui.sec = null; render(); if (route().name === 'notifications') setTimeout(() => Store.markSeen(), 1500); });
 
 /* ---------- viewer tour (read-only, nothing is written) ---------- */
 const TOUR = [

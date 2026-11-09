@@ -14,6 +14,9 @@ const { createAccount, seedIfEmpty } = require('./seed');
 const config = require('./config');
 const real = require('./real');
 const marketdata = require('./marketdata');
+const metrics = require('./metrics');
+const stats = require('./stats');
+const club = require('./club');
 const Market = require('./market');
 const totp = require('./totp');
 
@@ -27,7 +30,12 @@ const app = express();
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
 app.use(require('compression')());
-app.use(express.json({ limit: '50kb' }));
+const jsonSmall = express.json({ limit: '50kb' }), jsonLarge = express.json({ limit: '8mb' });
+app.use((req, res, next) => (/^\/api\/club\/[^/]+\/submit$/.test(req.path) ? jsonLarge : jsonSmall)(req, res, next));
+app.get(['/j/:code', '/j/:code/:by'], (req, res) => {
+  const code = String(req.params.code || '').replace(/[^A-Za-z0-9]/g, '').slice(0, 16), by = String(req.params.by || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 40);
+  res.redirect(302, '/#/invite/' + code + (by ? '/' + by : ''));
+});
 app.use((req, res, next) => { res.set('X-Content-Type-Options', 'nosniff'); res.set('Referrer-Policy', 'same-origin'); next(); });
 const q = (sql, p) => db.pool.query(sql, p);
 const clean = s => String(s || '').trim();
@@ -91,7 +99,13 @@ app.post('/api/signup', authLimit, wrap(async (req, res) => {
   if ((await q('SELECT 1 FROM users WHERE username = $1', [username])).rows.length) return bad(res, 'That username is taken.');
   const inviteOnly = (await setting('inviteOnly', true)) !== false;
   let useCode = null;
-  if (inviteOnly && !ENV_ADMINS.includes(username)){
+  /* A member's group invite link counts as an invite to the beta. */
+  const gcode = clean(req.body.groupInvite).toUpperCase().slice(0, 16);
+  const ginv = gcode ? (await q(`SELECT id, data FROM doc_groups WHERE upper(data->>'inviteCode') = $1 AND coalesce((data->>'inviteOff')::boolean, false) = false`, [gcode])).rows[0] : null;
+  const src = req.body.source && typeof req.body.source === 'object' ? req.body.source : {};
+  const source = ginv ? 'group-invite' : ['ad', 'campaign'].includes(src.kind) ? src.kind : code ? 'beta-code' : 'direct';
+  const sourceDetail = ginv ? ginv.id : String(src.detail || '').slice(0, 120) || null;
+  if (inviteOnly && !ENV_ADMINS.includes(username) && !ginv){
     if (!code) return bad(res, 'The beta is invite only. Enter your invite code.');
     const ic = (await q('SELECT * FROM invite_codes WHERE code = $1', [code])).rows[0];
     if (!ic || !ic.active || (ic.max_uses && ic.uses >= ic.max_uses)) return bad(res, "That invite code isn't valid or has been used up.");
@@ -100,11 +114,11 @@ app.post('/api/signup', authLimit, wrap(async (req, res) => {
   const id = db.newId(); const hash = await bcrypt.hash(password, 10);
   const risk = ['conservative','balanced','growth'].includes(req.body.risk) ? req.body.risk : 'balanced';
   const { changes } = await db.withTx(async tx => {
-    await tx.query('INSERT INTO users (id, username, display_name, pass_hash, invite_code, terms_accepted_at, terms_version) VALUES ($1, $2, $3, $4, $5, now(), $6)', [id, username, name, hash, useCode, TERMS_VERSION]);
+    await tx.query('INSERT INTO users (id, username, display_name, pass_hash, invite_code, terms_accepted_at, terms_version, signup_source, signup_detail) VALUES ($1, $2, $3, $4, $5, now(), $6, $7, $8)', [id, username, name, hash, useCode, TERMS_VERSION, source, sourceDetail]);
     if (useCode) await tx.query('UPDATE invite_codes SET uses = uses + 1 WHERE code = $1', [useCode]);
     await createAccount(tx, id, name, risk);
   });
-  broadcast(changes); logEvent(id, 'signup');
+  broadcast(changes); logEvent(id, 'signup', { source });
   await startSession(req, res, id); ok(res);
 }));
 app.post('/api/login', authLimit, wrap(async (req, res) => {
@@ -275,6 +289,9 @@ const realDeps = { q, wrap, ok, bad, needUser, needAdmin, sendTo, newId: db.newI
   isPro: async pid => { const r = await q('SELECT data FROM doc_profiles WHERE id = $1', [pid]); const p = r.rows[0] && r.rows[0].data; return !!p && (p.kind === 'demo' || p.plan === 'pro'); } };
 real.mount(app, realDeps);
 marketdata.mount(app, { q, wrap, ok, bad, needUser, needAdmin, getSetting: setting, setSetting, broadcastMsg: obj => broadcastRaw(obj), push, pool: db.pool });
+metrics.mount(app, { q, wrap, ok, bad, needAdmin, getSetting: setting, setSetting });
+stats.mount(app, { q, wrap, ok, bad });
+club.mount(app, { q, wrap, ok, bad, needUser, needAdmin, isAdmin: u => isAdmin(u) });
 
 /* ---------- the app ---------- */
 const pub = path.join(__dirname, '..', 'public');
@@ -289,6 +306,8 @@ app.get('*', (req, res) => res.sendFile(path.join(pub, 'index.html')));
   await marketdata.loadExtras();
   await push.init(db.pool);
   if (config.sampleData && await seedIfEmpty(db.withTx)) console.log('Loaded sample data.');
+  { const dividends = require('./dividends'); const payDiv = async () => { try { const r = await dividends.run(db.withTx); if (r.paid) console.log('Paid ' + r.paid + ' practice dividends.'); broadcast(r.changes); } catch (e){ console.error('dividends', e.message); } }; setTimeout(payDiv, 15000); setInterval(payDiv, 60 * 60000); }
+  if (config.sampleData){ const fixed = await require('./seed').repairSampleTrades(db.withTx).catch(e => { console.error('sample trade repair', e.message); return 0; }); if (fixed) console.log('Repaired sample trade history for ' + fixed + ' sample investors.'); }
   if (config.mode === 'live' && !config.appSecret) console.warn('WARNING: set APP_SECRET on the live site to encrypt two-step sign-in secrets.');
   if (config.realMoney && !require('./alpaca').configured()) console.warn('WARNING: ALPACA_KEY and ALPACA_SECRET are not set. Real-money features will show as unavailable.');
   real.startSync({ q, sendTo });

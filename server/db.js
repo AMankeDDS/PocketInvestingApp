@@ -4,8 +4,8 @@ const { Pool } = require('pg');
 const crypto = require('crypto');
 
 const COLS = ['profiles','portfolios','groups','memberships','posts','reactions','comments','follows','proposals','votes',
-  'copyRequests','trades','copies','reports','joinRequests','reviews','suggestions'];
-const LIMITED = { posts: 400, trades: 400, comments: 400 };
+  'copyRequests','trades','copies','reports','joinRequests','reviews','suggestions','dividends','meetings','groupWatch','studies','recurring'];
+const LIMITED = { posts: 400, trades: 400, comments: 400, dividends: 400 };
 const table = col => 'doc_' + col.replace(/[A-Z]/g, c => '_' + c.toLowerCase());
 
 const pool = new Pool({
@@ -21,7 +21,7 @@ async function migrate(){
   await pool.query(`CREATE TABLE IF NOT EXISTS users (id text PRIMARY KEY, username text UNIQUE NOT NULL, display_name text NOT NULL, pass_hash text NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`);
   await pool.query(`CREATE TABLE IF NOT EXISTS sessions (token text PRIMARY KEY, user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at timestamptz NOT NULL)`);
   await pool.query(`CREATE TABLE IF NOT EXISTS settings (key text PRIMARY KEY, value jsonb NOT NULL)`);
-  for (const col of ['is_admin boolean NOT NULL DEFAULT false', 'disabled boolean NOT NULL DEFAULT false', 'invite_code text', 'terms_accepted_at timestamptz', 'terms_version text', 'last_seen_at timestamptz'])
+  for (const col of ['is_admin boolean NOT NULL DEFAULT false', 'disabled boolean NOT NULL DEFAULT false', 'invite_code text', 'signup_source text', 'signup_detail text', 'terms_accepted_at timestamptz', 'terms_version text', 'last_seen_at timestamptz'])
     await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS ${col}`);
   await pool.query(`CREATE TABLE IF NOT EXISTS invite_codes (code text PRIMARY KEY, label text, max_uses int, uses int NOT NULL DEFAULT 0, active boolean NOT NULL DEFAULT true, created_at timestamptz NOT NULL DEFAULT now())`);
   await pool.query(`CREATE TABLE IF NOT EXISTS password_resets (token_hash text PRIMARY KEY, user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at timestamptz NOT NULL, used boolean NOT NULL DEFAULT false)`);
@@ -32,6 +32,7 @@ async function migrate(){
   await pool.query(`CREATE INDEX IF NOT EXISTS events_ts ON events (ts)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS doc_memberships_gid ON doc_memberships ((data->>'gid'))`);
   await pool.query(`CREATE INDEX IF NOT EXISTS doc_copy_requests_member ON doc_copy_requests ((data->>'memberPid'))`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS doc_trades_pid ON doc_trades ((data->>'pid'))`);
 }
 
 const newId = () => crypto.randomBytes(10).toString('hex');

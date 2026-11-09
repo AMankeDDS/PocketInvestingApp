@@ -17,6 +17,7 @@ const errInfo = e => ({ status: e.status == null ? null : e.status, message: Str
 async function migrate(q){
   await q(`CREATE TABLE IF NOT EXISTS assets (sym text PRIMARY KEY, name text NOT NULL, exchange text, fractionable boolean, in_use boolean NOT NULL DEFAULT false, ref_price numeric, ref_ts timestamptz, updated_at timestamptz NOT NULL DEFAULT now())`);
   await q(`CREATE INDEX IF NOT EXISTS assets_name ON assets (lower(name))`);
+  await q(`CREATE TABLE IF NOT EXISTS earnings (sym text PRIMARY KEY, next_date date NOT NULL, last_date date, updated_at timestamptz NOT NULL DEFAULT now())`);
   await q(`CREATE TABLE IF NOT EXISTS news (id text PRIMARY KEY, ts timestamptz NOT NULL, headline text NOT NULL, summary text, url text, source text, symbols text[] NOT NULL DEFAULT '{}', created_at timestamptz NOT NULL DEFAULT now())`);
   await q(`CREATE INDEX IF NOT EXISTS news_ts ON news (ts DESC)`);
   await q(`CREATE INDEX IF NOT EXISTS news_symbols ON news USING gin (symbols)`);
@@ -148,6 +149,25 @@ function filingHeadline(name, form, items){
   return `${name} ${FORMS[form] || 'files with the SEC'} (Form ${form})`;
 }
 const secActive = () => config.sec.mode === 'on' || (config.sec.mode === 'auto' && config.marketData && status.news && status.news.error && [401, 403].includes(status.news.error.status) && !status.news.received);
+/* Earnings calendar: estimated from each company's own past earnings releases on SEC EDGAR
+   (Form 8-K, item 2.02). The next date is projected one year on from the matching release a
+   year earlier, or about a quarter after the latest one. Always labeled as an estimate. */
+async function pullEarnings(){
+  if (config.sec.mode === 'off') return 0;
+  const map = await loadCiks(), syms = (await trackedSymbols()).filter(s => !Market.ETFS.includes(s) && map[s]).slice(0, 60); let n = 0;
+  for (const sym of syms){
+    let j; try { j = await secJson(`${config.sec.dataUrl}/submissions/CIK${String(map[sym].cik).padStart(10, '0')}.json`); } catch (e){ continue; }
+    const R = (j && j.filings && j.filings.recent) || {}, dates = [];
+    for (let i = 0; i < (R.form || []).length && i < 400; i++) if (R.form[i] === '8-K' && String((R.items || [])[i] || '').split(',').includes('2.02')) dates.push(R.filingDate[i]);
+    if (!dates.length) continue;
+    dates.sort(); const last = dates[dates.length - 1], DAY = 86400000, now = Date.now();
+    const proj = dates.map(d => Date.parse(d + 'T12:00:00Z') + 364 * DAY).filter(t => t > now - DAY).sort((a, b) => a - b);
+    let next = proj[0] || Date.parse(last + 'T12:00:00Z') + 91 * DAY; while (next < now - DAY) next += 91 * DAY;
+    await deps.q(`INSERT INTO earnings (sym, next_date, last_date, updated_at) VALUES ($1, $2, $3, now()) ON CONFLICT (sym) DO UPDATE SET next_date = EXCLUDED.next_date, last_date = EXCLUDED.last_date, updated_at = now()`, [sym, new Date(next).toISOString().slice(0, 10), last]);
+    n++; await new Promise(r => setTimeout(r, 150));
+  }
+  return n;
+}
 async function pullFilings(force){
   if (!force && !secActive()) return 0;
   const map = await loadCiks();
@@ -266,6 +286,10 @@ function mount(app, d){
     if (!config.marketData) return bad(res, 'Add ALPACA_KEY and ALPACA_SECRET to this service first.');
     const added = await pullNews(); const filings = await pullFilings().catch(() => 0); ok(res, { added: added + filings, status: status.news });
   }));
+  app.get('/api/earnings', wrap(async (req, res) => {
+    const rows = (await deps.q(`SELECT sym, next_date, last_date FROM earnings WHERE next_date >= (now() - interval '2 days')::date`).catch(() => ({ rows: [] }))).rows;
+    res.set('Cache-Control', 'public, max-age=600'); ok(res, { earnings: Object.fromEntries(rows.map(r => [r.sym, { next: String(r.next_date instanceof Date ? r.next_date.toISOString().slice(0, 10) : r.next_date).slice(0, 10), last: String(r.last_date instanceof Date ? r.last_date.toISOString().slice(0, 10) : r.last_date).slice(0, 10) }])) });
+  }));
   app.get('/api/bars', wrap(async (req, res) => {
     const sym = String(req.query.sym || '').toUpperCase(); if (!config.realPrices || !Market.MAP[sym]) return ok(res, { bars: [] });
     try { ok(res, { bars: await bars(sym, String(req.query.span || '1d')) }); } catch (e){ ok(res, { bars: [] }); }
@@ -274,6 +298,7 @@ function mount(app, d){
 async function start(){
   await applySavedAnchors().catch(e => console.error('price anchors', e.message));
   const { q } = deps;
+  if (config.sec.mode !== 'off'){ const runEarn = () => pullEarnings().then(n => { if (n) console.log('Earnings dates updated for ' + n + ' stocks.'); }).catch(e => console.error('earnings', e.message)); setTimeout(runEarn, 30000); setInterval(runEarn, 12 * 3600000); }
   if (config.sec.mode !== 'off'){ const runSec = () => pullFilings().catch(e => { status.sec = { at: Date.now(), error: { status: e.status || null, message: e.message } }; console.error('SEC filings failed:', e.message); }); setTimeout(runSec, 20000); setInterval(runSec, 30 * 60000); }
   if (!config.marketData) return;
   const run = (fn, label) => fn().catch(e => { const x = errInfo(e); console.error(label + ' failed:', x.status, x.message); if (label === 'asset sync') status.assets = { at: Date.now(), error: x }; if (label === 'quotes') status.quotes = { at: Date.now(), error: x }; if (label === 'news') status.news = { at: Date.now(), error: x }; });
@@ -284,4 +309,4 @@ async function start(){
   if (config.realPrices){ await run(refreshQuotes, 'quotes'); setInterval(() => run(refreshQuotes, 'quotes'), 30000); }
   setInterval(() => run(autoAnchor, 'price anchors'), 60 * 60000); run(autoAnchor, 'price anchors');
 }
-module.exports = { migrate, mount, start, loadExtras, extras, bases: () => anchors.bases || {}, anchorPrices, pullFilings, filingHeadline, ensure, search, pullNews, listNews, newsAlerts, syncAssets, refreshQuotes, MIN_PRICE };
+module.exports = { pullEarnings, migrate, mount, start, loadExtras, extras, bases: () => anchors.bases || {}, anchorPrices, pullFilings, filingHeadline, ensure, search, pullNews, listNews, newsAlerts, syncAssets, refreshQuotes, MIN_PRICE };

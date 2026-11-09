@@ -13,7 +13,7 @@ const num = v => { const n = Number(v); if (!Number.isFinite(n)) throw fail('Ent
 const sym = v => { if (!Market.MAP[v]) throw fail("That stock isn't in this demo."); return v; };
 const side = v => { if (v !== 'buy' && v !== 'sell') throw fail('Choose buy or sell.'); return v; };
 
-const ROLES = ['owner','admin','lead','junior','analyst','risk','moderator','member','observer'];
+const ROLES = ['owner','admin','lead','junior','analyst','risk','moderator','treasurer','member','observer'];
 const canTradeFor = r => ['owner','admin','lead'].includes(r);
 const canVote = r => !!r && r !== 'observer';
 const canManage = r => ['owner','admin'].includes(r);
@@ -161,6 +161,18 @@ async function executeProposal(tx, prid, leaderPid){
   if (!(t.closed && t.result === 'passed')) throw fail('Only a passed proposal can be executed.');
   if (pr.executed) throw fail('This proposal was already executed.');
   if (!pr.tradeSym) throw fail('This proposal has no trade attached.');
+  const pg = await tx.get('groups', pr.gid);
+  if (pg && pg.pooled){
+    if (!Market.canFillNow(await clockMode(tx))) throw fail('Markets are closed. Execute this during market hours.');
+    const cp = await tx.get('portfolios', clubPid(pr.gid)), cval = pv(cp), cpx = Market.price(pr.tradeSym);
+    let sh = pr.tradeSide === 'sell' ? Math.min(((cp.positions || {})[pr.tradeSym] || {}).shares || 0, f3(cval * pr.tradePct / cpx)) : f3(Math.min(cp.cash, cval * pr.tradePct) / cpx);
+    if (!(sh > 0)) throw fail(pr.tradeSide === 'sell' ? "The club doesn't hold this stock." : "The club doesn't have enough cash. Members can add money first.");
+    if (pr.status === 'open') await tx.update('proposals', prid, { status: 'passed', closedTs: Date.now() });
+    const t = await executeTrade(tx, clubPid(pr.gid), pr.tradeSym, pr.tradeSide || 'buy', sh, { groupId: pr.gid });
+    await tx.set('posts', tx.newId(), { pid: leaderPid, ts: Date.now(), groupId: pr.gid, groupTrade: true, text: `Executed the club's decision: ${pr.title}`, trade: { sym: t.sym, side: t.side, shares: t.shares, price: t.price } });
+    await tx.update('proposals', prid, { executed: true, executedTs: Date.now(), executedBy: leaderPid });
+    return { trade: t };
+  }
   const lpf = await tx.get('portfolios', leaderPid); const val = pv(lpf), px = Market.price(pr.tradeSym);
   let shares;
   if (pr.tradeSide === 'sell'){ const held = (((lpf || {}).positions || {})[pr.tradeSym] || {}).shares || 0; shares = f3(held * Math.min(1, pr.tradePct * val / Math.max(1e-9, held * px))); }
@@ -195,6 +207,7 @@ A.trade = async (tx, ctx, a) => { await needProfile(tx, ctx); return personalTra
 A.groupTrade = async (tx, ctx, a) => {
   await needProfile(tx, ctx);
   if (!canTradeFor(await roleIn(tx, a.gid, ctx.pid))) throw fail('Only Owners, Admins and Lead Traders can trade for the group.');
+  const gg = await tx.get('groups', a.gid); if (gg && gg.pooled) throw fail('This is a pooled club, so trades happen by member vote. Create a trade proposal.');
   return groupTrade(tx, a.gid, ctx.pid, sym(a.sym), side(a.side), num(a.shares), a.note);
 };
 A.approve = async (tx, ctx, a) => {
@@ -209,6 +222,22 @@ A.approve = async (tx, ctx, a) => {
 };
 A.decline = async (tx, ctx, a) => { const r = await tx.get('copyRequests', a.id); if (!r || r.memberPid !== ctx.pid) throw fail('Request not found.'); if (r.status !== 'pending') throw fail('This request was already handled.'); await tx.update('copyRequests', r.id, { status: 'declined', decidedTs: Date.now() }); };
 A.cancelQueued = async (tx, ctx, a) => { const r = await tx.get('copyRequests', a.id); if (!r || r.memberPid !== ctx.pid) throw fail('Order not found.'); if (r.status !== 'queued') throw fail('This order has already been filled or cancelled.'); await tx.update('copyRequests', r.id, { status: 'cancelled', cancelledTs: Date.now(), decidedTs: Date.now() }); };
+const TEMPLATES = {
+  club: { joinMode: 'request', proposeRoles: ['owner','admin','lead','analyst','member'], quorum: 0.5, passRule: 'majority', votingDays: 3, maxPositionPct: 0.10, riskReview: true, approvalMinutes: 60, defaultCopyPct: 1 },
+  family: { joinMode: 'invite', proposeRoles: ['owner','admin','lead'], quorum: 0.5, passRule: 'majority', votingDays: 3, maxPositionPct: 0.10, riskReview: false, approvalMinutes: 60, defaultCopyPct: 1 },
+  friends: { joinMode: 'invite', proposeRoles: ['owner','admin','lead','analyst','member'], quorum: 0, passRule: 'majority', votingDays: 2, maxPositionPct: null, riskReview: false, approvalMinutes: 30, defaultCopyPct: 0.5 },
+  pool: { joinMode: 'request', proposeRoles: ['owner','admin','lead','analyst','treasurer','member'], quorum: 0.5, passRule: 'majority', votingDays: 3, maxPositionPct: null, riskReview: false, approvalMinutes: 60, defaultCopyPct: 1 }
+};
+const clubPid = gid => 'club_' + gid;
+const today = () => new Date().toISOString().slice(0, 10);
+async function clubEntry(tx, gid, e){ await tx.query('INSERT INTO club_entries (id, gid, data) VALUES ($1, $2, $3)', [tx.newId(), gid, JSON.stringify(Object.assign({ date: today(), ts: Date.now(), order: 5 }, e))]); }
+async function clubState(tx, gid){
+  const { summary } = require('./club');
+  const B = (await tx.query('SELECT data FROM club_books WHERE gid = $1', [gid])).rows[0];
+  const E = (await tx.query('SELECT id, data FROM club_entries WHERE gid = $1', [gid])).rows.map(r => Object.assign({ id: r.id }, r.data));
+  const pids = (await tx.find('memberships', { gid })).filter(m => m.role !== 'observer').map(m => m.pid);
+  return summary(E, B ? B.data.startUnitValue : 10, pids);
+}
 A.createGroup = async (tx, ctx, a) => {
   await needProfile(tx, ctx);
   const name = str(a.name, 60).trim(); if (!name) throw fail('Give the group a name.');
@@ -216,9 +245,128 @@ A.createGroup = async (tx, ctx, a) => {
   await tx.set('groups', id, { name, description: str(a.description, 300), strategy: str(a.strategy, 120), membership: a.membership === 'invite' ? 'invite' : 'open',
     ownerPid: ctx.pid, leadPid: ctx.pid, groupPro: true, groupProSince: Date.now(), createdTs: Date.now(), riskLevel: ['conservative','balanced','growth'].includes(a.riskLevel) ? a.riskLevel : null,
     inviteCode: tx.newId().slice(0, 8).toUpperCase(), category: ['growth','dividends','value','beginners','index','consumer'].includes(a.category) ? a.category : null, goals: str(a.goals, 300),
-    rules: Object.assign({}, DEFAULT_RULES, { joinMode: a.membership === 'invite' ? 'invite' : a.membership === 'request' ? 'request' : 'open' }) });
+    template: TEMPLATES[a.template] ? a.template : 'custom', pooled: a.template === 'pool',
+    rules: Object.assign({}, DEFAULT_RULES, TEMPLATES[a.template] || {}, ['open','request','invite'].includes(a.membership) ? { joinMode: a.membership } : {}) });
   await tx.set('memberships', id + '__' + ctx.pid, { gid: id, pid: ctx.pid, role: 'owner', copyPct: 1, joinedTs: Date.now() });
+  if (a.template === 'pool'){
+    /* The club's own practice pot. Members add practice cash; the club trades it only by member vote. */
+    await tx.set('portfolios', clubPid(id), { kind: 'club', gid: id, cash: 0, startValue: 0, positions: {}, updatedTs: Date.now() });
+    await tx.query('INSERT INTO club_books (gid, data) VALUES ($1, $2) ON CONFLICT (gid) DO NOTHING', [id, JSON.stringify({ startUnitValue: 10, createdTs: Date.now(), dues: null, pooled: true })]);
+    await clubEntry(tx, id, { kind: 'valuation', amount: 0, note: 'Books started', by: ctx.pid, order: 0 });
+  }
   return id;
+};
+/* ---------- meetings ---------- */
+const MEET = ['owner','admin','treasurer'];
+A.createMeeting = async (tx, ctx, a) => {
+  if (!MEET.includes(await roleIn(tx, a.gid, ctx.pid))) throw fail('Only the Owner, Admins or Treasurer can schedule meetings.');
+  const when = Number(a.ts); if (!(when > Date.now() - 86400000)) throw fail('Pick a date and time.');
+  const id = tx.newId(); await tx.set('meetings', id, { gid: a.gid, title: str(a.title, 80).trim() || 'Monthly meeting', scheduledTs: when, status: 'scheduled', notes: [], attendance: {}, minutes: '', createdBy: ctx.pid, createdTs: Date.now() }); return id;
+};
+A.meetingStatus = async (tx, ctx, a) => {
+  const m = await tx.get('meetings', a.id); if (!m) throw fail('Meeting not found.');
+  if (!MEET.includes(await roleIn(tx, m.gid, ctx.pid))) throw fail('Only the Owner, Admins or Treasurer can run meetings.');
+  const patch = {};
+  if (a.status === 'live' && m.status === 'scheduled'){ patch.status = 'live'; patch.startedTs = Date.now(); }
+  if (a.status === 'ended' && m.status !== 'ended'){ patch.status = 'ended'; patch.endedTs = Date.now(); }
+  if (a.minutes != null) patch.minutes = str(a.minutes, 5000);
+  await tx.update('meetings', a.id, patch);
+};
+A.meetingCheckIn = async (tx, ctx, a) => {
+  const m = await tx.get('meetings', a.id); if (!m) throw fail('Meeting not found.');
+  const r = await roleIn(tx, m.gid, ctx.pid); if (!r || r === 'observer') throw fail('Only full members check in.');
+  if (m.status === 'ended') throw fail('This meeting has ended.');
+  await tx.update('meetings', a.id, { attendance: Object.assign({}, m.attendance, { [ctx.pid]: Date.now() }) });
+};
+A.meetingNote = async (tx, ctx, a) => {
+  const m = await tx.get('meetings', a.id); if (!m) throw fail('Meeting not found.');
+  if (!MEET.includes(await roleIn(tx, m.gid, ctx.pid))) throw fail('Only the Owner, Admins or Treasurer can edit the agenda.');
+  const text = str(a.text, 200).trim(); if (!text) throw fail('Write the agenda item.');
+  await tx.update('meetings', a.id, { notes: (m.notes || []).concat([{ text, by: ctx.pid, ts: Date.now() }]).slice(-30) });
+};
+/* ---------- shared group watchlist and stock studies ---------- */
+A.addGroupWatch = async (tx, ctx, a) => {
+  const r = await roleIn(tx, a.gid, ctx.pid); if (!r || r === 'observer') throw fail('Only full members can add to the group watchlist.');
+  const s = sym(a.sym), id = a.gid + '__' + s; if (await tx.get('groupWatch', id)) throw fail(s + ' is already on the watchlist.');
+  await tx.set('groupWatch', id, { gid: a.gid, sym: s, pid: ctx.pid, reason: str(a.reason, 200), price: Market.price(s), ts: Date.now() });
+};
+A.removeGroupWatch = async (tx, ctx, a) => {
+  const w = await tx.get('groupWatch', a.id); if (!w) return;
+  if (w.pid !== ctx.pid && !canManage(await roleIn(tx, w.gid, ctx.pid))) throw fail('Only the person who added it, an Owner or an Admin can remove it.');
+  await tx.del('groupWatch', a.id);
+};
+A.saveStudy = async (tx, ctx, a) => {
+  const r = await roleIn(tx, a.gid, ctx.pid); if (!r || r === 'observer') throw fail('Only full members can write studies.');
+  const s = sym(a.sym), f = k => str(a[k], 1200).trim();
+  if (!f('business') || !f('risks')) throw fail('Fill in at least the business and the risks.');
+  const id = a.id && (await tx.get('studies', a.id)) ? a.id : tx.newId(), cur = await tx.get('studies', id);
+  if (cur && cur.pid !== ctx.pid) throw fail('Only the author can edit this study.');
+  await tx.set('studies', id, { gid: a.gid, sym: s, pid: ctx.pid, business: f('business'), growth: f('growth'), valuation: f('valuation'), risks: f('risks'),
+    verdict: ['buy','watch','pass'].includes(a.verdict) ? a.verdict : 'watch', price: Market.price(s), ts: cur ? cur.ts : Date.now(), updatedTs: Date.now() });
+  return id;
+};
+/* ---------- recurring investments (practice portfolios) ---------- */
+const FREQ = { weekly: 7, biweekly: 14, monthly: 30 };
+A.setRecurring = async (tx, ctx, a) => {
+  await needProfile(tx, ctx); const s = sym(a.sym), amount = Math.round(Number(a.amount) * 100) / 100;
+  if (!(amount >= 5) || amount > 100000) throw fail('Enter an amount from $5 to $100,000.');
+  if (!FREQ[a.freq]) throw fail('Pick how often.');
+  const first = Number(a.startTs) > Date.now() - 3600000 ? Number(a.startTs) : Date.now();
+  await tx.set('recurring', ctx.pid + '__' + s, { pid: ctx.pid, sym: s, amount, freq: a.freq, nextTs: first, paused: false, createdTs: Date.now(), runs: 0 });
+};
+A.pauseRecurring = async (tx, ctx, a) => { const r = await tx.get('recurring', ctx.pid + '__' + sym(a.sym)); if (!r) throw fail('Not found.'); await tx.update('recurring', r.id, { paused: !!a.paused, nextTs: a.paused ? r.nextTs : Math.max(r.nextTs, Date.now()) }); };
+A.deleteRecurring = async (tx, ctx, a) => tx.del('recurring', ctx.pid + '__' + sym(a.sym));
+async function runRecurring(tx){
+  if (!Market.canFillNow(await clockMode(tx))) return 0;
+  let n = 0;
+  for (const r of await tx.find('recurring')){
+    if (r.paused || r.nextTs > Date.now()) continue;
+    const next = r.nextTs + FREQ[r.freq] * 86400000 * Math.max(1, Math.ceil((Date.now() - r.nextTs + 1) / (FREQ[r.freq] * 86400000)));
+    try { const pf = await tx.get('portfolios', r.pid); if (!pf || pf.cash < r.amount) throw fail('Not enough cash');
+      await executeTrade(tx, r.pid, r.sym, 'buy', f3(r.amount / Market.price(r.sym)), {}); await tx.update('recurring', r.id, { nextTs: next, lastRunTs: Date.now(), lastError: null, runs: (r.runs || 0) + 1 }); n++; }
+    catch (e){ await tx.update('recurring', r.id, { nextTs: next, lastRunTs: Date.now(), lastError: e.userFacing ? e.message : 'Could not buy' }); }
+  }
+  return n;
+}
+A.clubContribute = async (tx, ctx, a) => {
+  const g = await tx.get('groups', a.gid); if (!g || !g.pooled) throw fail('This group is not a pooled club.');
+  const r = await roleIn(tx, a.gid, ctx.pid); if (!r || r === 'observer') throw fail('Only full members can add money to the club.');
+  const amount = Math.round(Number(a.amount) * 100) / 100; if (!(amount >= 1)) throw fail('Enter at least $1.');
+  const mine = await tx.get('portfolios', ctx.pid, { lock: true }); if (!mine || amount > mine.cash + 0.005) throw fail('Not enough cash in your practice portfolio.');
+  const pot = await tx.get('portfolios', clubPid(a.gid), { lock: true }); if (!pot) throw fail('Club account not found.');
+  await clubEntry(tx, a.gid, { kind: 'valuation', amount: Math.round(pv(pot) * 100) / 100, note: 'Automatic valuation', by: ctx.pid });
+  await clubEntry(tx, a.gid, { kind: 'payment', pid: ctx.pid, amount, note: str(a.note, 120) || 'Added to the club', by: ctx.pid });
+  await tx.update('portfolios', ctx.pid, { cash: Math.round((mine.cash - amount) * 100) / 100 });
+  await tx.update('portfolios', clubPid(a.gid), { cash: Math.round((pot.cash + amount) * 100) / 100, updatedTs: Date.now() });
+  return { amount };
+};
+A.clubRequestWithdrawal = async (tx, ctx, a) => {
+  const g = await tx.get('groups', a.gid); if (!g || !g.pooled) throw fail('This group is not a pooled club.');
+  const r = await roleIn(tx, a.gid, ctx.pid); if (!r || r === 'observer') throw fail('Only full members can withdraw.');
+  const amount = Math.round(Number(a.amount) * 100) / 100; if (!(amount >= 1)) throw fail('Enter at least $1.');
+  const pot = await tx.get('portfolios', clubPid(a.gid)), S = await clubState(tx, a.gid), me = S.members.find(m => m.pid === ctx.pid);
+  const share = me && S.units > 1e-9 ? me.units / S.units * pv(pot) : 0;
+  if (amount > share + 0.005) throw fail(`Your share of the club is worth about $${share.toFixed(2)}.`);
+  await tx.query('INSERT INTO club_submissions (id, gid, pid, data) VALUES ($1, $2, $3, $4)', [tx.newId(), a.gid, ctx.pid, JSON.stringify({ kind: 'withdrawal', amount, note: str(a.note, 300), status: 'pending', ts: Date.now() })]);
+};
+A.clubDecideWithdrawal = async (tx, ctx, a) => {
+  const row = (await tx.query('SELECT id, gid, pid, data FROM club_submissions WHERE id = $1 FOR UPDATE', [a.id])).rows[0];
+  if (!row || row.data.kind !== 'withdrawal') throw fail('Request not found.');
+  if (!['owner','admin','treasurer'].includes(await roleIn(tx, row.gid, ctx.pid))) throw fail('Only the Treasurer, Owner or Admins can decide withdrawals.');
+  if (row.data.status !== 'pending') throw fail('This request was already decided.');
+  const note = str(a.note, 300), patch = { status: a.decision === 'confirmed' ? 'confirmed' : 'declined', reviewNote: note, reviewerPid: ctx.pid, reviewedTs: Date.now() };
+  if (patch.status === 'confirmed'){
+    const pot = await tx.get('portfolios', clubPid(row.gid), { lock: true }), amount = row.data.amount;
+    if (amount > pot.cash + 0.005) throw fail(`The club has $${pot.cash.toFixed(2)} in cash. Members can vote to sell holdings first.`);
+    const S = await clubState(tx, row.gid), m = S.members.find(x => x.pid === row.pid), share = m && S.units > 1e-9 ? m.units / S.units * pv(pot) : 0;
+    if (amount > share + 0.005) throw fail(`That member's share is now worth about $${share.toFixed(2)}.`);
+    await clubEntry(tx, row.gid, { kind: 'valuation', amount: Math.round(pv(pot) * 100) / 100, note: 'Automatic valuation', by: ctx.pid });
+    await clubEntry(tx, row.gid, { kind: 'withdrawal', pid: row.pid, amount, note: 'Withdrawal approved', by: ctx.pid });
+    const mem = await tx.get('portfolios', row.pid, { lock: true });
+    await tx.update('portfolios', clubPid(row.gid), { cash: Math.round((pot.cash - amount) * 100) / 100, updatedTs: Date.now() });
+    await tx.update('portfolios', row.pid, { cash: Math.round((mem.cash + amount) * 100) / 100 });
+  }
+  await tx.query('UPDATE club_submissions SET data = data || $2::jsonb WHERE id = $1', [a.id, JSON.stringify(patch)]);
 };
 async function checkJoin(tx, g, pid, rules){
   const ms = await tx.find('memberships', { gid: g.id });
@@ -232,7 +380,7 @@ A.join = async (tx, ctx, a) => {
   let invitedBy = null;
   if (!cur){
     if (rules.joinMode === 'request') throw fail('This group reviews new members. Request to join instead.');
-    if (rules.joinMode === 'invite'){ if (!a.code || String(a.code).toUpperCase() !== g.inviteCode) throw fail('This group is invite only. Ask a member for an invite link.'); }
+    if (rules.joinMode === 'invite'){ if (!a.code || String(a.code).toUpperCase() !== g.inviteCode || g.inviteOff) throw fail(g.inviteOff ? "This group's invite link is turned off. Ask a member for a new one." : 'This group is invite only. Ask a member for an invite link.'); }
     if (a.by && a.by !== ctx.pid && (await tx.get('memberships', a.gid + '__' + a.by))) invitedBy = a.by;
     await checkJoin(tx, g, ctx.pid, rules);
     if (rules.rulesText && !a.acceptRules) throw fail("Please accept the group's rules to join.");
@@ -242,7 +390,8 @@ A.join = async (tx, ctx, a) => {
   if (cur && cur.role !== 'observer') return;
   await tx.set('memberships', a.gid + '__' + ctx.pid, Object.assign({ gid: a.gid, pid: ctx.pid, role, copyPct: cur ? cur.copyPct : rules.defaultCopyPct, joinedTs: cur ? cur.joinedTs : Date.now(), rulesAcceptedTs: cur ? cur.rulesAcceptedTs || null : (rules.rulesText ? Date.now() : null) }, invitedBy ? { invitedBy } : cur && cur.invitedBy ? { invitedBy: cur.invitedBy } : {}));
 };
-A.groupByCode = async (tx, ctx, a) => { const g = (await tx.find('groups', { inviteCode: String(a.code || '').toUpperCase() }))[0]; if (!g) throw fail("That invite link isn't valid anymore."); return g.id; };
+A.groupByCode = async (tx, ctx, a) => { const g = (await tx.find('groups', { inviteCode: String(a.code || '').toUpperCase() }))[0]; if (!g || g.inviteOff) throw fail("That invite link isn't valid anymore."); return g.id; };
+A.setInviteLink = async (tx, ctx, a) => { if (!canManage(await roleIn(tx, a.gid, ctx.pid))) throw fail('Only Owners and Admins can change the invite link.'); await tx.update('groups', a.gid, { inviteOff: !a.on }); };
 A.leave = async (tx, ctx, a) => { const r = await roleIn(tx, a.gid, ctx.pid); if (!r) return; if (r === 'owner') throw fail("Owners can't leave their own group."); await tx.del('memberships', a.gid + '__' + ctx.pid); };
 A.setRole = async (tx, ctx, a) => {
   if (!canManage(await roleIn(tx, a.gid, ctx.pid))) throw fail('Only Owners and Admins can change roles.');
@@ -299,7 +448,7 @@ A.updateGroup = async (tx, ctx, a) => {
   if (a.category != null) patch.category = ['growth','dividends','value','beginners','index','consumer'].includes(a.category) ? a.category : null;
   await tx.update('groups', a.gid, patch);
 };
-A.newInviteCode = async (tx, ctx, a) => { if (!canManage(await roleIn(tx, a.gid, ctx.pid))) throw fail('Only Owners and Admins can reset the invite link.'); await tx.update('groups', a.gid, { inviteCode: tx.newId().slice(0, 8).toUpperCase() }); };
+A.newInviteCode = async (tx, ctx, a) => { if (!canManage(await roleIn(tx, a.gid, ctx.pid))) throw fail('Only Owners and Admins can reset the invite link.'); await tx.update('groups', a.gid, { inviteCode: tx.newId().slice(0, 8).toUpperCase(), inviteOff: false }); };
 A.setCopyPct = async (tx, ctx, a) => { if (!(await roleIn(tx, a.gid, ctx.pid))) throw fail('Join the group first.'); await tx.update('memberships', a.gid + '__' + ctx.pid, { copyPct: Math.max(0.1, Math.min(1, num(a.pct))) }); };
 A.propose = async (tx, ctx, a) => {
   const g = await tx.get('groups', a.gid); if (!g) throw fail('Group not found.'); const rules = rulesOf(g);
@@ -337,11 +486,33 @@ A.deletePost = async (tx, ctx, a) => { const p = await tx.get('posts', a.id); if
 A.deleteComment = async (tx, ctx, a) => { const c = await tx.get('comments', a.id); if (!c) return; const p = await tx.get('posts', c.postId); if (c.pid !== ctx.pid && !ctx.isAdmin && !(p && p.groupId && canModerate(await roleIn(tx, p.groupId, ctx.pid)))) throw fail('You can only delete your own comments.'); await tx.del('comments', a.id); };
 A.follow = async (tx, ctx, a) => { await needProfile(tx, ctx); if (a.pid === ctx.pid) return; await tx.set('follows', ctx.pid + '__' + a.pid, { from: ctx.pid, to: a.pid, ts: Date.now() }); };
 A.unfollow = async (tx, ctx, a) => tx.del('follows', ctx.pid + '__' + a.pid);
-A.upgradePro = async (tx, ctx) => { await needProfile(tx, ctx); await tx.update('profiles', ctx.pid, { plan: 'pro', proSince: Date.now() }); };
+A.upgradePro = async (tx, ctx, a) => { await needProfile(tx, ctx); const patch = { plan: 'pro', proSince: Date.now() }; if (a && ['yes','maybe','no'].includes(a.wouldPay)){ patch.wouldPay = a.wouldPay; patch.wouldPayTs = Date.now(); } await tx.update('profiles', ctx.pid, patch); };
 A.cancelPro = async (tx, ctx) => {
   await needProfile(tx, ctx); await tx.update('profiles', ctx.pid, { plan: 'free' });
   for (const m of (await tx.find('memberships', { pid: ctx.pid })).filter(m => m.role === 'member')) await tx.update('memberships', m.id, { role: 'observer' });
   for (const c of await tx.find('copies', { from: ctx.pid })) await tx.del('copies', c.id);
+};
+/* Copy once: buy an investor's (or a group's) current mix of stocks in one approved step, scaled to the amount chosen. */
+A.copyPortfolio = async (tx, ctx, a) => {
+  await needProfile(tx, ctx);
+  if (!(await isPro(tx, ctx.pid))) throw fail('Copying a portfolio is part of Pro.');
+  let src, gid = null;
+  if (a.gid){ const g = await tx.get('groups', a.gid); if (!g) throw fail('Group not found.'); const r = await roleIn(tx, a.gid, ctx.pid);
+    if (!r || r === 'observer') throw fail("Only full members can copy the group's holdings."); src = g.leadPid; gid = a.gid;
+    if (src === ctx.pid) throw fail("You're the Lead Trader, so these are already your holdings."); }
+  else { src = a.pid; if (!src || src === ctx.pid) throw fail('Pick another investor.'); }
+  if (!Market.canFillNow(await clockMode(tx))) throw fail('Markets are closed. Try again during market hours.');
+  const spf = await tx.get('portfolios', src); const held = Object.entries((spf && spf.positions) || {});
+  if (!held.length) throw fail("They don't hold any stocks right now.");
+  const amount = Number(a.amount); if (!(amount >= 10)) throw fail('Enter at least $10.');
+  const mine = await tx.get('portfolios', ctx.pid); if (!mine || amount > mine.cash + 0.01) throw fail('Not enough cash for this amount.');
+  const vals = held.map(([s, p]) => [s, p.shares * Market.price(s)]), tot = vals.reduce((x, [, v]) => x + v, 0);
+  const filled = [], skipped = [];
+  for (const [s, v] of vals){ const dollars = amount * v / tot, px = Market.price(s), sh = Math.floor(dollars / px * 1000) / 1000;
+    if (dollars < 1 || sh <= 0){ skipped.push(s); continue; }
+    const t = await executeTrade(tx, ctx.pid, s, 'buy', sh, { groupId: gid, copyOf: 'portfolio:' + src }); filled.push({ sym: s, shares: t.shares, price: t.price }); }
+  if (a.follow && !gid) await tx.set('copies', ctx.pid + '__' + src, { from: ctx.pid, to: src, copyPct: 1, ts: Date.now() });
+  return { filled, skipped };
 };
 A.copyInvestor = async (tx, ctx, a) => { await needProfile(tx, ctx); if (!(await isPro(tx, ctx.pid))) throw fail('Copying investors is part of Pro.'); if (a.pid === ctx.pid) throw fail("You can't copy yourself."); await tx.set('copies', ctx.pid + '__' + a.pid, { from: ctx.pid, to: a.pid, copyPct: 1, ts: Date.now() }); };
 A.stopCopying = async (tx, ctx, a) => tx.del('copies', ctx.pid + '__' + a.pid);
@@ -497,6 +668,7 @@ async function housekeeping(tx){
   for (const r of await tx.find('copyRequests', { status: 'pending' })) if (requestState(r, now) === 'expired'){ await tx.update('copyRequests', r.id, { status: 'expired' }); n++; }
   for (const rv of await tx.find('reviews', { status: 'pending' })) if (now > rv.expiresTs){ await releaseReview(tx, rv, 'auto'); n++; }
   await settleReviews(tx);
+  n += await runRecurring(tx);
   if (Market.canFillNow(mode, now)) for (const r of await tx.find('copyRequests', { status: 'queued' })){ try { await fillRequest(tx, r); n++; } catch (e){ if (!e.userFacing) throw e; await tx.update('copyRequests', r.id, { status: 'declined', note: e.message, decidedTs: Date.now() }); } }
   return n;
 }

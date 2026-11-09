@@ -226,8 +226,12 @@ async function reset(tx){
 async function merge(tx){
   const docs = seed(Date.now(), { prefix: 's2' });
   let added = 0, updated = 0;
+  /* Sample investors' portfolios are replaced below, so their trade history is replaced with them;
+     otherwise old and new trades pile up and no longer add up to their holdings. Testers' trades are kept. */
+  for (const [pid] of PEOPLE) for (const t of await tx.find('trades', { pid })) await tx.del('trades', t.id);
   for (const [path, data] of Object.entries(docs)){
     const [c, id] = path.split('/');
+    if (c === 'trades' && String(data.pid || '').startsWith('demo_')){ await tx.set(c, id, data); updated++; continue; }
     const cur = await tx.get(c, id);
     if (c === 'portfolios'){ if (id.startsWith('demo_')){ await tx.set(c, id, data); updated++; } continue; }
     if (!cur){ await tx.set(c, id, data); added++; continue; }
@@ -242,6 +246,22 @@ async function createAccount(tx, userId, name, risk){
   await tx.set('portfolios', pid, { cash: START_CASH, startValue: START_CASH, positions: {}, updatedTs: Date.now() });
   return pid;
 }
+/* One-time repair for databases where "Add new sample data" left sample trade histories that
+   don't add up to the sample portfolios. Rebuilds sample data the same way the button does. */
+async function repairSampleTrades(withTx){
+  const { pool } = require('./db');
+  const done = await pool.query(`SELECT 1 FROM settings WHERE key = 'sampleTradesRepaired'`); if (done.rows.length) return false;
+  let broken = 0;
+  for (const [pid] of PEOPLE){
+    const pf = ((await pool.query('SELECT data FROM doc_portfolios WHERE id = $1', [pid])).rows[0] || {}).data; if (!pf) continue;
+    const pos = {}; (await pool.query(`SELECT data FROM doc_trades WHERE data->>'pid' = $1`, [pid])).rows.forEach(({ data: t }) => { pos[t.sym] = (pos[t.sym] || 0) + (t.side === 'buy' ? t.shares : -t.shares); });
+    const syms = new Set([...Object.keys(pos), ...Object.keys(pf.positions || {})]);
+    if ([...syms].some(sym => Math.abs((pos[sym] || 0) - (((pf.positions || {})[sym] || {}).shares || 0)) > 0.01)) broken++;
+  }
+  if (broken) await withTx(tx => merge(tx));
+  await pool.query(`INSERT INTO settings (key, value) VALUES ('sampleTradesRepaired', 'true') ON CONFLICT (key) DO NOTHING`);
+  return broken;
+}
 async function seedIfEmpty(withTx){
   const { pool } = require('./db');
   const r = await pool.query('SELECT count(*)::int AS n FROM doc_profiles');
@@ -249,4 +269,4 @@ async function seedIfEmpty(withTx){
   await withTx(tx => reset(tx));
   return true;
 }
-module.exports = { seed, reset, merge, createAccount, seedIfEmpty, PEOPLE, STYLE_SYMS, TPL, COMMENTS };
+module.exports = { seed, reset, merge, createAccount, seedIfEmpty, repairSampleTrades, PEOPLE, STYLE_SYMS, TPL, COMMENTS };
