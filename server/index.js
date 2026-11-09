@@ -274,7 +274,7 @@ app.get('/healthz', (req, res) => res.json({ ok: true, mode: config.mode }));
 const realDeps = { q, wrap, ok, bad, needUser, needAdmin, sendTo, newId: db.newId, getSetting: setting, setSetting,
   isPro: async pid => { const r = await q('SELECT data FROM doc_profiles WHERE id = $1', [pid]); const p = r.rows[0] && r.rows[0].data; return !!p && (p.kind === 'demo' || p.plan === 'pro'); } };
 real.mount(app, realDeps);
-marketdata.mount(app, { q, wrap, ok, bad, needUser, broadcastMsg: obj => broadcastRaw(obj), push, pool: db.pool });
+marketdata.mount(app, { q, wrap, ok, bad, needUser, needAdmin, broadcastMsg: obj => broadcastRaw(obj), push, pool: db.pool });
 
 /* ---------- the app ---------- */
 const pub = path.join(__dirname, '..', 'public');

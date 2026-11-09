@@ -84,6 +84,8 @@ Set the keys on **both** Railway services:
 
 Without keys, both sites work as before with the 20 built-in stocks and no news.
 
+**Troubleshooting: Beta admin → Market data.** Shows the Alpaca settings in use, how many stocks and headlines are stored, when news was last fetched, and the last error. **Run check** tests sign-in, the stock list, a price quote and news live, and shows Alpaca's exact response for each. **Fetch news now** pulls headlines immediately. Failed news and price requests are also written to the Railway logs (`news fetch failed: …`).
+
 - **Stock list:** synced from Alpaca once a day. Only stocks on major US exchanges are included (no over-the-counter stocks), and stocks under $5 can't be added. A stock joins Pocket the first time someone opens, searches and picks, or trades it; then everyone sees it.
 - **News:** headlines (Benzinga, via Alpaca) are fetched every 5 minutes and kept for 30 days. Each one shows its source and time and links to the full story.
 - **News alerts:** off by default. People can turn on "News about stocks I own or watch" in Notifications: at most 3 a day, never in quiet hours, only for headlines under 2 hours old.

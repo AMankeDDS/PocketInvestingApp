@@ -10,6 +10,9 @@ const Market = require('./market');
 const EXCHANGES = new Set(['NYSE', 'NASDAQ', 'ARCA', 'AMEX', 'BATS']); /* no over-the-counter stocks */
 const MIN_PRICE = 5;                                                   /* no penny stocks */
 let deps = null;
+/* what happened last time each job ran, shown in Beta admin → Market data */
+const status = { assets: null, news: null, quotes: null };
+const errInfo = e => ({ status: e.status == null ? null : e.status, message: String(e.detail || e.message || e).slice(0, 400) });
 
 async function migrate(q){
   await q(`CREATE TABLE IF NOT EXISTS assets (sym text PRIMARY KEY, name text NOT NULL, exchange text, fractionable boolean, in_use boolean NOT NULL DEFAULT false, ref_price numeric, ref_ts timestamptz, updated_at timestamptz NOT NULL DEFAULT now())`);
@@ -24,6 +27,7 @@ async function migrate(q){
 async function syncAssets(){
   const { q } = deps;
   const list = (await alpaca.assets()) || [];
+  status.assets = { at: Date.now(), received: list.length };
   const ok = list.filter(a => a.tradable && EXCHANGES.has(a.exchange) && /^[A-Z]{1,5}(\.[A-Z])?$/.test(a.symbol) && a.name);
   for (let i = 0; i < ok.length; i += 1000){
     const part = ok.slice(i, i + 1000);
@@ -31,6 +35,7 @@ async function syncAssets(){
              ON CONFLICT (sym) DO UPDATE SET name = EXCLUDED.name, exchange = EXCLUDED.exchange, fractionable = EXCLUDED.fractionable, updated_at = now()`,
       [part.map(a => a.symbol), part.map(a => cleanName(a.name)), part.map(a => a.exchange), part.map(a => !!a.fractionable)]);
   }
+  status.assets.kept = ok.length;
   return ok.length;
 }
 const cleanName = n => String(n).replace(/\s+(Common Stock|Class [A-C] Common Stock|Ordinary Shares|Inc\.? Common Stock|American Depositary Shares.*)$/i, '').replace(/\s+/g, ' ').trim().slice(0, 80);
@@ -80,7 +85,7 @@ async function refreshQuotes(){
     const snap = (await alpaca.snapshots(syms.slice(i, i + 100))) || {};
     for (const [s, x] of Object.entries(snap)){ const p = snapPrice(x); if (p > 0) out[s] = { p, prev: snapPrev(x), t: Date.now() }; }
   }
-  Market.setQuotes(out);
+  Market.setQuotes(out); status.quotes = { at: Date.now(), count: Object.keys(out).length };
   if (Object.keys(out).length) deps.broadcastMsg({ type: 'market', quotes: out });
 }
 const barCache = new Map();
@@ -102,9 +107,10 @@ async function pullNews(){
   const { q } = deps;
   const batches = [null]; const syms = await trackedSymbols();
   for (let i = 0; i < syms.length; i += 50) batches.push(syms.slice(i, i + 50));
-  const fresh = [];
+  const fresh = [], errors = []; let received = 0;
   for (const b of batches){
-    const r = await alpaca.news(b, 50).catch(() => null);
+    const r = await alpaca.news(b, 50).catch(e => { const x = errInfo(e); errors.push(x); console.error('news fetch failed:', x.status, x.message); return null; });
+    received += ((r && r.news) || []).length;
     for (const n of (r && r.news) || []){
       if (!n.headline) continue;
       const ins = await q(`INSERT INTO news (id, ts, headline, summary, url, source, symbols) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (id) DO NOTHING RETURNING id`,
@@ -112,6 +118,7 @@ async function pullNews(){
       if (ins.rows.length) fresh.push({ id: String(n.id), headline: n.headline, symbols: n.symbols || [], ts: Date.parse(n.created_at || n.updated_at || Date.now()) });
     }
   }
+  status.news = { at: Date.now(), received, added: fresh.length, requests: batches.length, failed: errors.length, error: errors[0] || null };
   await q(`DELETE FROM news WHERE ts < now() - interval '30 days'`);
   if (fresh.length) deps.broadcastMsg({ type: 'news', n: fresh.length });
   await newsAlerts(fresh).catch(e => console.error('news alerts', e.message));
@@ -154,6 +161,31 @@ function mount(app, d){
   app.get('/api/assets/search', wrap(async (req, res) => ok(res, { results: await search(req.query.q) })));
   app.post('/api/assets/ensure', wrap(async (req, res) => { const u = await needUser(req, res); if (!u) return; try { ok(res, { stock: await ensure(req.body.sym) }); } catch (e){ if (e.userFacing) return bad(res, e.message); throw e; } }));
   app.get('/api/news', wrap(async (req, res) => ok(res, { news: await listNews(String(req.query.symbols || '').split(',').filter(Boolean), req.query.limit), real: config.marketData })));
+  /* Beta admin → Market data: settings, last results, and a live check of each Alpaca call */
+  app.get('/api/admin/marketdata', wrap(async (req, res) => {
+    if (!(await d.needAdmin(req, res))) return;
+    const n = (await d.q(`SELECT (SELECT count(*)::int FROM assets) AS assets, (SELECT count(*)::int FROM assets WHERE in_use) AS added, (SELECT count(*)::int FROM news) AS news, (SELECT max(ts) FROM news) AS newest`)).rows[0];
+    const log = (await d.q(`SELECT method, path, status, message, created_at FROM broker_log ORDER BY id DESC LIMIT 15`).catch(() => ({ rows: [] }))).rows;
+    ok(res, { on: config.marketData, env: config.alpaca.env, authMode: config.alpaca.authMode, urls: { auth: config.alpaca.authUrl, broker: config.alpaca.baseUrl, data: config.alpaca.dataUrl },
+      realPrices: config.realPrices, counts: { assets: n.assets, added: n.added, news: n.news, newest: n.newest ? new Date(n.newest).getTime() : null }, status, log });
+  }));
+  app.post('/api/admin/marketdata/check', wrap(async (req, res) => {
+    if (!(await d.needAdmin(req, res))) return;
+    if (!config.marketData) return bad(res, 'Add ALPACA_KEY and ALPACA_SECRET to this service first.');
+    const steps = [];
+    const step = async (name, fn) => { const t = Date.now(); try { const detail = await fn(); steps.push({ name, ok: true, ms: Date.now() - t, detail }); } catch (e){ const x = errInfo(e); steps.push({ name, ok: false, ms: Date.now() - t, status: x.status, detail: x.message }); } };
+    await step('Sign in to Alpaca', async () => { if (config.alpaca.authMode === 'legacy') return 'Using older key pair (no token needed)'; await alpaca.getToken(true); return 'Access token received'; });
+    await step('Stock list (Broker API)', async () => { const a = await alpaca.asset('AAPL'); return `AAPL: ${a.name || 'found'}, ${a.exchange || ''}, tradable ${!!a.tradable}`; });
+    await step('Price quote (Market Data)', async () => { const s = (await alpaca.snapshots(['AAPL'])) || {}; const p = snapPrice(s.AAPL); if (!p) throw new Error('No price returned for AAPL: ' + JSON.stringify(s).slice(0, 200)); return `AAPL last price $${p}`; });
+    await step('News for AAPL', async () => { const r = await alpaca.news(['AAPL'], 3); const list = (r && r.news) || []; if (!list.length) throw new Error('Request worked but returned no headlines: ' + JSON.stringify(r).slice(0, 200)); return `${list.length} headlines, newest: "${String(list[0].headline).slice(0, 90)}"`; });
+    await step('General news', async () => { const r = await alpaca.news(null, 3); const list = (r && r.news) || []; if (!list.length) throw new Error('Request worked but returned no headlines: ' + JSON.stringify(r).slice(0, 200)); return `${list.length} headlines`; });
+    ok(res, { steps });
+  }));
+  app.post('/api/admin/marketdata/fetch', wrap(async (req, res) => {
+    if (!(await d.needAdmin(req, res))) return;
+    if (!config.marketData) return bad(res, 'Add ALPACA_KEY and ALPACA_SECRET to this service first.');
+    const added = await pullNews(); ok(res, { added, status: status.news });
+  }));
   app.get('/api/bars', wrap(async (req, res) => {
     const sym = String(req.query.sym || '').toUpperCase(); if (!config.realPrices || !Market.MAP[sym]) return ok(res, { bars: [] });
     try { ok(res, { bars: await bars(sym, String(req.query.span || '1d')) }); } catch (e){ ok(res, { bars: [] }); }
@@ -162,7 +194,7 @@ function mount(app, d){
 async function start(){
   if (!config.marketData) return;
   const { q } = deps;
-  const run = (fn, label) => fn().catch(e => console.error(label, e.message));
+  const run = (fn, label) => fn().catch(e => { const x = errInfo(e); console.error(label + ' failed:', x.status, x.message); if (label === 'asset sync') status.assets = { at: Date.now(), error: x }; if (label === 'quotes') status.quotes = { at: Date.now(), error: x }; if (label === 'news') status.news = { at: Date.now(), error: x }; });
   const n = (await q('SELECT count(*)::int AS n, max(updated_at) AS t FROM assets')).rows[0];
   if (!n.n || Date.now() - new Date(n.t).getTime() > 86400000) await run(async () => console.log('Stock list synced:', await syncAssets()), 'asset sync');
   setInterval(() => run(syncAssets, 'asset sync'), 24 * 3600000);

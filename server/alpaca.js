@@ -87,6 +87,7 @@ const A = {
   snapshots: symbols => call('GET', `/v2/stocks/snapshots?symbols=${encodeURIComponent(symbols.join(','))}`, null, { data: true }),
   bars: (sym, timeframe, startIso, limit = 400) => call('GET', `/v2/stocks/${encodeURIComponent(sym)}/bars?timeframe=${timeframe}&start=${encodeURIComponent(startIso)}&limit=${limit}&adjustment=split`, null, { data: true }),
   news: (symbols, limit = 50) => call('GET', `/v1beta1/news?limit=${limit}&sort=desc${symbols && symbols.length ? '&symbols=' + encodeURIComponent(symbols.join(',')) : ''}`, null, { data: true }),
-  assets: () => call('GET', '/v1/assets?status=active&asset_class=us_equity', null, { timeout: 60000 })
+  assets: () => call('GET', '/v1/assets?status=active&asset_class=us_equity', null, { timeout: 60000 }),
+  asset: sym => call('GET', `/v1/assets/${encodeURIComponent(sym)}`)
 };
 module.exports = Object.assign(A, { BrokerError, setLogger, getToken, configured: () => !!(config.alpaca.key && config.alpaca.secret) });

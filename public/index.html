@@ -1496,7 +1496,7 @@ function vAdmin(){
   if (!Store.canEdit) return `<div class="empty">The beta admin is available to demo admins.</div>`;
   if (!ui.admin){ loadAdmin(); return '<div class="loading">Loading beta admin…</div>'; }
   const A = ui.admin, tab = ui.adminTab;
-  const T = [['testers','Testers ' + A.users.length],['invites','Invites'],['feedback','Feedback ' + A.feedback.filter(f => f.status === 'open').length],['errors','Errors ' + A.errors.length]].concat(Store.site.realMoney ? [['real','Real money']] : []).concat([['settings','Settings']]);
+  const T = [['testers','Testers ' + A.users.length],['invites','Invites'],['feedback','Feedback ' + A.feedback.filter(f => f.status === 'open').length],['errors','Errors ' + A.errors.length]].concat(Store.site.realMoney ? [['real','Real money']] : []).concat([['market','Market data'], ['settings','Settings']]);
   const when = t => t ? ago(new Date(t).getTime()) + ' ago' : 'never';
   let body = '';
   if (tab === 'testers') body = `<div class="list">${A.users.map(u => `<div class="row" style="flex-wrap:wrap"><div class="grow" style="min-width:200px"><b>${esc(u.display_name)}</b> <span class="muted small">@${esc(u.username)}</span> ${u.env_admin || u.is_admin ? '<span class="tag blue">Admin</span>' : ''} ${u.disabled ? '<span class="tag">Turned off</span>' : ''}
@@ -1508,6 +1508,7 @@ function vAdmin(){
   else if (tab === 'feedback') body = `<div class="list">${A.feedback.map(f => `<div class="row" style="align-items:flex-start"><div class="grow"><div class="small muted">${esc(f.username || 'Signed-out visitor')}, ${when(f.created_at)}, on ${esc(f.screen || '?')}</div><div style="white-space:pre-wrap;margin-top:4px">${esc(f.body)}</div></div><button class="btn sm ${f.status === 'open' ? '' : 'ghost'}" data-act="adm-fb" data-id="${f.id}">${f.status === 'open' ? 'Mark done' : 'Reopen'}</button></div>`).join('') || '<div class="empty">No feedback yet.</div>'}</div>`;
   else if (tab === 'errors') body = `${A.errors.length ? '<div style="margin-bottom:14px"><button class="btn ghost" data-act="adm-errclear">Clear all</button></div>' : ''}<div class="list">${A.errors.map(e => `<div class="row" style="align-items:flex-start"><div class="grow" style="min-width:0"><b class="small">${esc(e.message)}</b><div class="small muted">${esc(e.username || 'visitor')}, ${when(e.created_at)}, ${esc(e.url || '')}</div>${e.stack ? `<pre style="white-space:pre-wrap;font-size:12px;margin:6px 0 0;max-height:120px;overflow:auto;color:var(--muted)">${esc(e.stack)}</pre>` : ''}<div class="small muted">${esc(e.ua || '')}</div></div></div>`).join('') || '<div class="empty">No errors reported. Good news.</div>'}</div>`;
   else if (tab === 'real') body = adminReal();
+  else if (tab === 'market') body = adminMarket();
   else body = `<section class="panel" style="padding:18px 20px"><h2>Invite only</h2><p class="muted small">When on, new accounts need an invite code. Admins listed in ADMIN_USERNAMES can always sign up.</p><div class="seg"><button class="${A.inviteOnly ? 'on' : ''}" data-act="adm-io" data-k="1">On</button><button class="${A.inviteOnly ? '' : 'on'}" data-act="adm-io" data-k="0">Off</button></div></section>
     <section class="panel" style="padding:18px 20px;margin-top:16px"><h2>Announcement</h2><p class="muted small">Shown at the top of every screen until each tester dismisses it.</p><textarea class="input" id="adm-ann" maxlength="300" placeholder="e.g. New version: please test buy-at-open today">${esc((A.announcement || {}).text || '')}</textarea><div style="display:flex;gap:10px;margin-top:10px"><button class="btn" data-act="adm-ann">Post</button>${A.announcement ? '<button class="btn ghost" data-act="adm-annclear">Remove</button>' : ''}</div></section>`;
   return `<div class="pagehead"><div><h1>Beta admin</h1><p class="muted">Testers, invite codes, feedback and error reports.</p></div><button class="btn ghost sm" data-act="adm-refresh">Refresh</button></div>
@@ -1531,6 +1532,27 @@ function adminReal(){
       ${I.byStatus.length ? `<div class="list">${I.byStatus.map(b => `<div class="row"><div class="grow">${esc(b.status)}</div><b class="num">${b.n}, ${usd(b.amount)}</b></div>`).join('')}</div>` : ''}
       ${I.shortfalls.length ? `<div class="banner ember" style="margin-top:12px"><div><b>Needs attention:</b> ${I.shortfalls.map(x => '@' + esc(x.username) + ' ' + usd(x.amount)).join(', ')}. Their bank transfer was returned and their cash didn't cover the instant amount.</div></div>` : ''}</section>
     <section class="block"><header><h2>Brokerage errors</h2></header><div class="list">${X.log.map(l => `<div class="row"><div class="grow small"><b>${esc(l.method)} ${esc(l.path)}</b> <span class="muted">${l.status}</span><div class="muted">${esc(l.message || '')}</div></div><span class="small muted">${ago(new Date(l.created_at).getTime())}</span></div>`).join('') || '<div class="empty">No errors from the brokerage.</div>'}</div></section>`;
+}
+function adminMarket(){
+  const X = ui.amd;
+  if (!X || X === 'loading'){ if (!X){ ui.amd = 'loading'; Store.http('GET', '/api/admin/marketdata').then(r => { ui.amd = r; render(); }, e => { ui.amd = { error: e.message }; render(); }); } return '<div class="loading" style="min-height:20vh">Loading…</div>'; }
+  if (X.error) return `<div class="panel empty">${esc(X.error)}</div>`;
+  const when = t => t ? ago(t) + ' ago' : 'never';
+  const st = X.status || {}, N = st.news, A = st.assets;
+  const C = ui.amdCheck;
+  return `<section class="panel" style="padding:18px 20px"><h2>Market data <span class="tag ${X.on ? 'blue' : ''}">${X.on ? 'On' : 'Off: no Alpaca keys'}</span></h2>
+      <p class="small muted" style="margin:6px 0 0">Alpaca ${esc(X.env)} · sign-in: ${X.authMode === 'legacy' ? 'older key pair' : 'Client ID + Secret (access token)'} · prices: ${X.realPrices ? 'real' : 'simulated'}</p>
+      <p class="small muted" style="margin:4px 0 0;word-break:break-all">${esc(X.urls.auth)} · ${esc(X.urls.broker)} · ${esc(X.urls.data)}</p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px"><button class="btn" data-act="amdcheck" ${X.on ? '' : 'disabled'}>Run check</button><button class="btn ghost" data-act="amdfetch" ${X.on ? '' : 'disabled'}>Fetch news now</button><button class="btn ghost" data-act="amdreload">Refresh</button></div></section>
+    ${C ? `<section class="block"><header><h2>Check results</h2></header><div class="list">${C === 'loading' ? '<div class="empty">Checking each Alpaca service…</div>' : C.map(s => `<div class="row" style="align-items:flex-start"><span class="tag ${s.ok ? 'blue' : 'ember'}" style="min-width:52px;text-align:center">${s.ok ? 'OK' : 'Failed'}</span><div class="grow"><b>${esc(s.name)}</b> <span class="muted small">${s.ms} ms${s.status != null && !s.ok ? ', HTTP ' + s.status : ''}</span><div class="small ${s.ok ? 'muted' : ''}" style="margin-top:3px;word-break:break-word">${esc(s.detail || '')}</div></div></div>`).join('')}</div>
+      ${Array.isArray(C) && C.some(s => !s.ok) ? '<p class="hint">Copy the failed lines and send them to Claude in the project chat. They contain Alpaca\u2019s exact response, never your keys.</p>' : ''}</section>` : ''}
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-top:16px">
+      <div class="panel" style="padding:14px 16px"><div class="small muted">Stocks in the list</div><div class="num" style="font-size:24px;font-weight:700">${X.counts.assets.toLocaleString('en-US')}</div><div class="small muted">${X.counts.added} added to Pocket · synced ${A && A.at ? when(A.at) : 'at startup'}</div></div>
+      <div class="panel" style="padding:14px 16px"><div class="small muted">Headlines stored</div><div class="num" style="font-size:24px;font-weight:700">${X.counts.news}</div><div class="small muted">Newest ${when(X.counts.newest)}</div></div>
+      <div class="panel" style="padding:14px 16px"><div class="small muted">Last news fetch</div><div class="num" style="font-size:24px;font-weight:700">${N && N.at ? (N.error && !N.received ? 'Failed' : (N.added || 0) + ' new') : '—'}</div><div class="small muted">${N && N.at ? when(N.at) + (N.requests ? `, ${N.requests - (N.failed || 0)} of ${N.requests} requests worked` : '') : 'Not run yet'}</div></div></div>
+    ${N && N.error ? `<div class="banner ember" style="margin-top:14px"><div><b>Last news error${N.error.status != null ? ' (HTTP ' + N.error.status + ')' : ''}:</b> ${esc(N.error.message)}</div></div>` : ''}
+    ${A && A.error ? `<div class="banner ember" style="margin-top:14px"><div><b>Stock list error${A.error.status != null ? ' (HTTP ' + A.error.status + ')' : ''}:</b> ${esc(A.error.message)}</div></div>` : ''}
+    <section class="block"><header><h2>Recent Alpaca errors</h2></header><div class="list">${(X.log || []).map(l => `<div class="row"><div class="grow small"><b>${esc(l.method)} ${esc(l.path)}</b> <span class="muted">${l.status}</span><div class="muted" style="word-break:break-word">${esc(l.message || '')}</div></div><span class="small muted">${ago(new Date(l.created_at).getTime())}</span></div>`).join('') || '<div class="empty">No errors from Alpaca.</div>'}</div></section>`;
 }
 function newInviteSheet(){
   openModal(`<header><h2>New invite code</h2><button class="x" data-close aria-label="Close">×</button></header>
@@ -1997,6 +2019,9 @@ async function act(el, ev){ /* eslint-disable-line */
     case 'tfsetup': return busy(async () => { ui.sec = await Store.twofaSetup(); render(); });
     case 'tfenable': return busy(async () => { await Store.twofaEnable($('#tf-code').value); ui.sec = null; ui.real = null; toast('Two-step sign-in is on.'); render(); });
     case 'tfoff': return busy(async () => { await Store.twofaDisable($('#tf-off').value); toast('Two-step sign-in is off.'); render(); });
+    case 'amdreload': ui.amd = null; return render();
+    case 'amdcheck': ui.amdCheck = 'loading'; render(); return Store.http('POST', '/api/admin/marketdata/check').then(r => { ui.amdCheck = r.steps; ui.amd = null; render(); }, e => { ui.amdCheck = [{ name: 'Check', ok: false, ms: 0, detail: e.message }]; render(); });
+    case 'amdfetch': return busy(async () => { const r = await Store.http('POST', '/api/admin/marketdata/fetch'); toast(r.status && r.status.error && !r.status.received ? 'News fetch failed. See the error below.' : `Fetched news: ${r.added} new headline${r.added === 1 ? '' : 's'}.`); ui.amd = null; render(); });
     case 'arpause': return busy(async () => { await Store.http('POST', '/api/admin/real/pause', { paused: el.dataset.k === '1' }); ui.areal = null; toast(el.dataset.k === '1' ? 'Real-money trading paused.' : 'Real-money trading running.'); render(); });
     case 'annoff': try { localStorage.setItem('pi_ann_off', el.dataset.k); } catch(e){} return render();
     case 'feedback': return feedbackSheet();
@@ -2019,7 +2044,7 @@ async function act(el, ev){ /* eslint-disable-line */
       await Store.setNotifPrefs({ approvals: c('n-ap'), votes: c('n-vo'), social: c('n-so'), news: $('#n-nw') ? c('n-nw') : false, approvalsInQuiet: c('n-aq'), mutedGroups: muted, quiet: { on: c('n-qon'), start: $('#n-qs').value, end: $('#n-qe').value }, tz: Intl.DateTimeFormat().resolvedOptions().timeZone });
       toast('Notification settings saved.');
     });
-    case 'adm-tab': ev.preventDefault(); ui.adminTab = el.dataset.k; ui.areal = null; return render();
+    case 'adm-tab': ev.preventDefault(); ui.adminTab = el.dataset.k; ui.areal = null; ui.amd = null; ui.amdCheck = null; return render();
     case 'adm-refresh': ui.admin = null; return render();
     case 'adm': return busy(async () => {
       const op = el.dataset.op;
