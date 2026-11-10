@@ -16,6 +16,7 @@ const real = require('./real');
 const marketdata = require('./marketdata');
 const metrics = require('./metrics');
 const stats = require('./stats');
+const vis = require('./visibility');
 const club = require('./club');
 const Market = require('./market');
 const totp = require('./totp');
@@ -47,13 +48,13 @@ const wrap = fn => (req, res) => fn(req, res).catch(e => { if (e.userFacing) ret
 function readCookie(req){ const m = (req.headers.cookie || '').match(new RegExp('(?:^|; )' + COOKIE + '=([a-f0-9]{64})')); return m && m[1]; }
 async function currentUser(req){
   const token = readCookie(req); if (!token) return null;
-  const r = await q('SELECT u.id, u.username, u.display_name, u.is_admin, u.last_seen_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = $1 AND s.expires_at > now() AND NOT u.disabled', [token]);
+  const r = await q('SELECT u.id, u.username, u.display_name, u.is_admin, u.last_seen_at, u.totp_enabled FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = $1 AND s.expires_at > now() AND NOT u.disabled', [token]);
   const u = r.rows[0]; if (!u) return null;
   if (!u.last_seen_at || Date.now() - new Date(u.last_seen_at).getTime() > 300000) q('UPDATE users SET last_seen_at = now() WHERE id = $1', [u.id]).catch(() => {});
   return u;
 }
 const isAdmin = u => !!u && (u.is_admin || ENV_ADMINS.includes(u.username));
-function ctxFor(u){ return u ? { userId: u.id, pid: 'u_' + u.id, username: u.username, isAdmin: isAdmin(u) } : { pid: null, isAdmin: false }; }
+function ctxFor(u){ return u ? { userId: u.id, pid: 'u_' + u.id, username: u.username, isAdmin: isAdmin(u), twoStep: !!u.totp_enabled } : { pid: null, isAdmin: false }; }
 async function startSession(req, res, userId){
   const token = crypto.randomBytes(32).toString('hex');
   await q(`INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, now() + interval '${SESSION_DAYS} days')`, [token, userId]);
@@ -69,15 +70,36 @@ const logEvent = (userId, name, props) => q('INSERT INTO events (user_id, name, 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 function broadcastRaw(obj){ const msg = JSON.stringify(obj); for (const c of wss.clients) if (c.readyState === 1) c.send(msg); }
-function broadcast(changes){
-  if (!changes.length) return;
-  broadcastRaw({ type: 'changes', changes });
+/* Live updates are filtered per person. When memberships or groups change, each open app's
+   access is recomputed, and anyone whose groups changed reloads to pick up what they can now see. */
+const lookupDoc = async (col, id) => { const t = { posts: 'doc_posts', proposals: 'doc_proposals' }[col]; if (!t || !id) return null; const r = await q(`SELECT id, data FROM ${t} WHERE id = $1`, [id]); return r.rows[0] ? Object.assign({ id: r.rows[0].id }, r.rows[0].data) : null; };
+async function sharedForVis(){ const ms = (await q('SELECT data FROM doc_memberships')).rows.map(r => r.data); const gs = (await q('SELECT id, data FROM doc_groups')).rows.map(r => Object.assign({ id: r.id }, r.data)); return { ms, gs }; }
+async function visCtx(userId, admin, shared){ shared = shared || await sharedForVis(); return vis.makeCtx({ pid: userId ? 'u_' + userId : null, isAdmin: !!admin }, shared.ms, shared.gs, config.sampleData); }
+async function broadcast(changes){
+  if (!changes || !changes.length) return;
+  for (const n of changes.filter(c => c.col === '_notify')) push.send(db.pool, n.pids, n.payload).catch(() => {});
+  changes = changes.filter(c => c.col !== '_notify'); if (!changes.length) return;
   push.fromChanges(db.pool, changes).catch(e => console.error('push', e.message));
+  try {
+    const structural = changes.some(c => c.wipe || c.col === 'memberships' || c.col === 'groups');
+    const shared = structural || [...wss.clients].some(c => !c.ctx) ? await sharedForVis() : null;
+    for (const c of wss.clients){
+      if (c.readyState !== 1) continue;
+      try {
+        if (structural || !c.ctx){
+          const before = c.ctx ? JSON.stringify(c.ctx.role) : null;
+          c.ctx = await visCtx(c.userId, c.isAdmin, shared);
+          if (before !== null && before !== JSON.stringify(c.ctx.role)){ c.send(JSON.stringify({ type: 'resync' })); continue; }
+        }
+        c.send(JSON.stringify({ type: 'changes', changes: await vis.filterChanges(c.ctx, changes, lookupDoc) }));
+      } catch (e){}
+    }
+  } catch (e){ console.error('broadcast', e.message); }
 }
 setInterval(() => { for (const c of wss.clients){ if (c.isAlive === false){ c.terminate(); continue; } c.isAlive = false; c.ping(); } }, 30000);
 wss.on('connection', async (ws, req) => {
   ws.isAlive = true; ws.on('pong', () => { ws.isAlive = true; });
-  try { const u = await currentUser(req); if (u) ws.userId = u.id; } catch (e){}
+  try { const u = await currentUser(req); if (u){ ws.userId = u.id; ws.isAdmin = isAdmin(u); } } catch (e){}
 });
 /* Private messages (real balances, order fills) go only to that person's open sessions. */
 function sendTo(userId, obj){ const msg = JSON.stringify(obj); for (const c of wss.clients) if (c.readyState === 1 && c.userId === userId) c.send(msg); }
@@ -139,7 +161,7 @@ app.get('/api/me', wrap(async (req, res) => {
   const u = await currentUser(req); const c = ctxFor(u);
   const tf = u ? (await q('SELECT totp_enabled FROM users WHERE id = $1', [u.id])).rows[0] : null;
   res.json({ signedIn: !!u, pid: c.pid, username: u && u.username, name: u && u.display_name, isAdmin: c.isAdmin, inviteOnly: (await setting('inviteOnly', true)) !== false, pushKey: push.publicKey,
-    twofa: !!(tf && tf.totp_enabled), site: config.publicInfo() });
+    twofa: !!(tf && tf.totp_enabled), site: config.publicInfo(), accountNumber: u ? await require('./accounts').personal('u_' + u.id).catch(() => null) : null });
 }));
 app.post('/api/reset-password', authLimit, wrap(async (req, res) => {
   const username = clean(req.body.username).toLowerCase(), code = clean(req.body.code).toUpperCase();
@@ -171,14 +193,28 @@ app.post('/api/delete-account', authLimit, wrap(async (req, res) => {
 }));
 
 /* ---------- data and actions ---------- */
-app.get('/api/state', wrap(async (req, res) => { res.set('Cache-Control', 'no-store'); const snap = await db.snapshot(); snap.market = { extras: marketdata.extras(), bases: marketdata.bases(), quotes: config.realPrices ? Market.QUOTES : {} }; res.json(snap); }));
+app.get('/api/state', wrap(async (req, res) => { res.set('Cache-Control', 'no-store'); const snap = await db.snapshot();
+  { const u = await currentUser(req), C = snap.collections || {};
+    const ctx = vis.makeCtx({ pid: u ? 'u_' + u.id : null, isAdmin: isAdmin(u) }, C.memberships || [], C.groups || [], config.sampleData);
+    snap.collections = await vis.filterCollections(ctx, C, lookupDoc); } snap.market = { extras: marketdata.extras(), bases: marketdata.bases(), quotes: config.realPrices ? Market.QUOTES : {} }; res.json(snap); }));
+app.get('/api/invite/:code', wrap(async (req, res) => {
+  const code = String(req.params.code || '').toUpperCase().slice(0, 16);
+  const r = (await q(`SELECT id, data FROM doc_groups WHERE upper(data->>'inviteCode') = $1`, [code])).rows[0];
+  if (!r || r.data.inviteOff) return ok(res, { group: null });
+  const g = Object.assign({ id: r.id }, r.data);
+  const members = (await q(`SELECT count(*)::int AS n FROM doc_memberships WHERE data->>'gid' = $1 AND data->>'role' <> 'observer'`, [g.id])).rows[0].n;
+  const lead = g.pooled ? null : ((await q('SELECT data FROM doc_portfolios WHERE id = $1', [g.leadPid])).rows[0] || {}).data;
+  const value = lead ? (lead.cash || 0) + Object.entries(lead.positions || {}).reduce((a, [s, p]) => a + p.shares * Market.price(s), 0) : null;
+  ok(res, { group: { id: g.id, name: g.name, description: g.description, strategy: g.strategy, category: g.category, createdTs: g.createdTs, rules: g.rules, membership: g.membership, pooled: !!g.pooled, template: g.template, ownerPid: g.ownerPid, leadPid: g.leadPid, inviteCode: g.inviteCode },
+    members, leadReturn: lead ? value / (lead.startValue || 100000) - 1 : null });
+}));
 app.post('/api/action/:name', actionLimit, wrap(async (req, res) => {
   const fn = actions[req.params.name]; if (!fn) return bad(res, 'Unknown action.', 404);
   if (!config.demoTools && /^(demo|setClock$|resetAll$|setSampleActivity$)/.test(req.params.name)) return bad(res, "That's only available on the demo site.", 403);
   const u = await needUser(req, res); if (!u) return;
   const { out, changes } = await db.withTx(tx => fn(tx, ctxFor(u), req.body || {}));
   broadcast(changes); logEvent(u.id, 'action:' + req.params.name);
-  ok(res, { result: out === undefined ? null : out, changes });
+  ok(res, { result: out === undefined ? null : out, changes: await vis.filterChanges(await visCtx(u.id, isAdmin(u)), changes.filter(c => c.col !== '_notify'), lookupDoc) });
 }));
 app.get('/api/export/trades.csv', wrap(async (req, res) => {
   const u = await needUser(req, res); if (!u) return;
@@ -290,8 +326,9 @@ const realDeps = { q, wrap, ok, bad, needUser, needAdmin, sendTo, newId: db.newI
 real.mount(app, realDeps);
 marketdata.mount(app, { q, wrap, ok, bad, needUser, needAdmin, getSetting: setting, setSetting, broadcastMsg: obj => broadcastRaw(obj), push, pool: db.pool });
 metrics.mount(app, { q, wrap, ok, bad, needAdmin, getSetting: setting, setSetting });
-stats.mount(app, { q, wrap, ok, bad });
-club.mount(app, { q, wrap, ok, bad, needUser, needAdmin, isAdmin: u => isAdmin(u) });
+stats.mount(app, { q, wrap, ok, bad, currentUser, isAdmin });
+club.mount(app, { q, wrap, ok, bad, needUser, needAdmin, isAdmin: u => isAdmin(u), push: (pids, payload) => push.send(db.pool, pids, payload).catch(() => 0) });
+require('./statements').mount(app, { q, wrap, ok, bad, needUser, needAdmin, isAdmin: u => isAdmin(u), push: (pids, payload) => push.send(db.pool, pids, payload).catch(() => 0) });
 
 /* ---------- the app ---------- */
 const pub = path.join(__dirname, '..', 'public');

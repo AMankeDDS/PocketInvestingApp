@@ -346,12 +346,14 @@ const Store = (() => {
   }
   function connect(){
     try { ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws'); } catch(e){ return; }
-    ws.onmessage = e => { try { const m = JSON.parse(e.data); if (m.type === 'changes') applyChanges(m.changes); else if (m.type === 'real') realListeners.forEach(fn => { try { fn(m); } catch(x){} });
+    ws.onmessage = e => { try { const m = JSON.parse(e.data); if (m.type === 'changes') applyChanges(m.changes); else if (m.type === 'resync'){ loadState().then(emit, () => {}); } else if (m.type === 'real') realListeners.forEach(fn => { try { fn(m); } catch(x){} });
       else if (m.type === 'market'){ (m.extras || []).forEach(x => Market.add(x.s, x.n, x.b)); if (m.bases) Market.setBases(m.bases); if (m.quotes) Market.setQuotes(m.quotes); if (m.extras || m.bases) emit(); }
       else if (m.type === 'news'){ newsCache.clear(); emit(); } } catch(err){} };
     ws.onclose = () => setTimeout(async () => { try { await loadState(); emit(); } catch(e){} connect(); }, 2000 + Math.random() * 2000);
   }
   /* After signing in or out, reopen the live channel so private updates reach the right person. */
+  /* Put a document the server sent separately (like an invite preview) into the local store. */
+  function inject(col, d){ if (cache[col] && d && d.id && !cache[col].has(d.id)) cache[col].set(d.id, d); }
   function reconnect(){
     if (ws){ ws.onclose = null; try { ws.close(); } catch(e){} }
     connect();
@@ -397,9 +399,9 @@ const Store = (() => {
   function membersOf(gid){ return all('memberships').filter(m => m.gid === gid); }
   function membership(gid, pid = myPid){ return get('memberships', gid + '__' + pid); }
   function myGroups(){ return all('memberships').filter(m => m.pid === myPid).map(m => get('groups', m.gid)).filter(Boolean); }
-  const ROLE_LABEL = { owner:'Owner', admin:'Admin', lead:'Lead Trader', junior:'Junior Trader', analyst:'Analyst', risk:'Risk Manager', moderator:'Moderator', treasurer:'Treasurer', member:'Member', observer:'Observer' };
+  const ROLE_LABEL = { owner:'Owner', admin:'Admin', lead:'Lead Trader', junior:'Junior Trader', analyst:'Analyst', risk:'Risk Manager', moderator:'Moderator', treasurer:'Treasurer', asstTreasurer:'Assistant Treasurer', member:'Member', observer:'Observer' };
   const ROLE_INFO = { owner:'Runs the group: settings, members and roles', admin:'Helps manage settings and members', lead:'Trades for the group; members approve each trade', junior:'Suggests trades for the Lead Trader to approve',
-    analyst:'Creates trade proposals for the group to vote on', risk:'Reviews group trades before members see them, and can pause one for a vote', moderator:'Keeps discussion on track and removes posts', treasurer:'Keeps the club books: dues, withdrawals and valuations', member:'Votes and copies group trades with approval', observer:'Follows along without voting or copying' };
+    analyst:'Creates trade proposals for the group to vote on', risk:'Reviews group trades before members see them, and can pause one for a vote', moderator:'Keeps discussion on track and removes posts', treasurer:'Keeps the club books: dues, withdrawals and valuations', asstTreasurer:'Second approver for club money: withdrawals, payments and the monthly close', member:'Votes and copies group trades with approval', observer:'Follows along without voting or copying' };
   const DEFAULT_RULES = { joinMode:'open', maxMembers:null, minAccount:0, rulesText:'', proposeRoles:['owner','admin','lead','analyst'], quorum:0, passRule:'majority', votingDays:3, voteWaitDays:0, maxPositionPct:null, allowed:'any', allowedList:[], approvalMinutes:30, riskReview:false, defaultCopyPct:1, hidden:false, feeMonthly:null };
   function rulesOf(g){ const r = Object.assign({}, DEFAULT_RULES, (g && g.rules) || {}); if (!(g && g.rules && g.rules.joinMode) && g && g.membership === 'invite') r.joinMode = 'request'; return r; }
   const votingAge = (m, rules) => !rules.voteWaitDays || Date.now() - (m.joinedTs || 0) >= rules.voteWaitDays * 86400000;
@@ -527,7 +529,7 @@ const Store = (() => {
     feedback: (text, screen) => http('POST', '/api/feedback', { text, screen }),
     updateGroup: (gid, o) => api('updateGroup', Object.assign({ gid }, o)), removeMember: (gid, pid) => api('removeMember', { gid, pid }), transferOwnership: (gid, pid) => api('transferOwnership', { gid, pid }),
     copyPortfolio: o => api('copyPortfolio', o),
-    clubContribute: (gid, amount) => api('clubContribute', { gid, amount }), clubRequestWithdrawal: (gid, amount, note) => api('clubRequestWithdrawal', { gid, amount, note }), clubDecideWithdrawal: (id, decision, note) => api('clubDecideWithdrawal', { id, decision, note }),
+    clubContribute: (gid, amount) => api('clubContribute', { gid, amount }), clubRequestExit: (gid, pid, note) => api('clubRequestExit', { gid, pid, note }), clubLiquidate: gid => api('clubLiquidate', { gid }), clubDistribute: gid => api('clubDistribute', { gid }), clubRequestWithdrawal: (gid, amount, note) => api('clubRequestWithdrawal', { gid, amount, note }), clubDecideWithdrawal: (id, decision, note) => api('clubDecideWithdrawal', { id, decision, note }),
     createMeeting: o => api('createMeeting', o), meetingStatus: o => api('meetingStatus', o), meetingCheckIn: id => api('meetingCheckIn', { id }), meetingNote: (id, text) => api('meetingNote', { id, text }),
     addGroupWatch: (gid, sym, reason) => api('addGroupWatch', { gid, sym, reason }), removeGroupWatch: id => api('removeGroupWatch', { id }), saveStudy: o => api('saveStudy', o),
     setRecurring: o => api('setRecurring', o), pauseRecurring: (sym, paused) => api('pauseRecurring', { sym, paused }), deleteRecurring: sym => api('deleteRecurring', { sym }),
@@ -547,11 +549,11 @@ const Store = (() => {
     addSampleData: () => api('demoAddSampleData'),
     toggleWatch: sym => api('toggleWatch', { sym }), setTags: tags => api('setTags', { tags }), setPinned: (gid, text) => api('setPinned', { gid, text }),
     featureGroup: (gid, featured) => api('featureGroup', { gid, featured }), setSampleActivity: o => api('setSampleActivity', o),
-    all, get, displayName, portfolioValue, membersOf, membership, myGroups, tally, requestState, myPending, ROLE_LABEL,
-    canTradeFor, canPropose, canVote, canManage, ROLE_INFO_KEYS: ['owner','admin','lead','junior','analyst','risk','moderator','treasurer','member','observer'], isFollowing, isDemo, isPro, isCopying, copiersOf, performance, notifications, unreadCount, START_CASH,
+    inject, all, get, displayName, portfolioValue, membersOf, membership, myGroups, tally, requestState, myPending, ROLE_LABEL,
+    canTradeFor, canPropose, canVote, canManage, ROLE_INFO_KEYS: ['owner','admin','lead','junior','analyst','risk','moderator','treasurer','asstTreasurer','member','observer'], isFollowing, isDemo, isPro, isCopying, copiersOf, performance, notifications, unreadCount, START_CASH,
     signup: (username, password, name, risk) => auth('/api/signup', { username, password, name, risk }),
     login: (username, password, code) => auth('/api/login', { username, password, code: code || undefined }),
-    get site(){ return me.site || { mode:'demo', realMoney:false, demoTools:true, instantDeposits:{ enabled:false } }; }, get twofa(){ return !!me.twofa; },
+    get site(){ return me.site || { mode:'demo', realMoney:false, demoTools:true, instantDeposits:{ enabled:false } }; }, get twofa(){ return !!me.twofa; }, get accountNumber(){ return me.accountNumber || null; },
     onReal: fn => (realListeners.add(fn), () => realListeners.delete(fn)),
     twofaSetup: () => http('POST', '/api/2fa/setup'),
     twofaEnable: async code => { await http('POST', '/api/2fa/enable', { code }); await loadMe(); emit(); },
@@ -817,6 +819,8 @@ function comingUp(){
   if (!items.length) return '';
   return `<section class="block"><header><h2>Coming up</h2></header><div class="list">${items.sort((a, b) => a.t - b.t).slice(0, 8).map(x => x.html).join('')}</div></section>`;
 }
+function clubWaiting(){ if (!Store.signedIn) return []; if (!ui.cwait || Date.now() - ui.cwait.at > 60000){ const prev = ui.cwait; ui.cwait = Object.assign({ list: [] }, prev, { at: Date.now() }); Store.http('GET', '/api/club-waiting').then(r => { ui.cwait = { at: Date.now(), list: r.waiting || [] }; render(); }, () => {}); } return ui.cwait.list || []; }
+function waitingOnYou(){ const W = clubWaiting(); if (!W.length) return ''; return `<section class="block"><header><h2>Waiting on you</h2></header><div class="list">${W.map(w => `<a class="row" href="#/group/${w.gid}/club"><div class="grow"><b>${esc(w.name)}</b><div class="small muted">Club money to approve or sign off</div></div><span class="tag ember">${w.count}</span></a>`).join('')}</div></section>`; }
 function recurringList(){
   const rs = Store.all('recurring').filter(r => r.pid === Store.myPid); if (!rs.length) return '';
   const F = { weekly: 'Every week', biweekly: 'Every 2 weeks', monthly: 'Every month' };
@@ -834,6 +838,70 @@ function recurringSheet(sym){
     <button class="btn" id="rc-go" style="width:100%">${cur ? 'Update schedule' : 'Start investing'}</button><p class="hint" style="text-align:center;margin-top:10px">The first buy happens at the next market open. Pause or stop anytime from Home.</p>`, sh => {
     sh.querySelector('#rc-go').onclick = async () => { try { await Store.setRecurring({ sym, amount: Number(sh.querySelector('#rc-a').value), freq: sh.querySelector('#rc-f').value }); closeModal(); toast('Recurring investment set.'); } catch(e){ errToast(e); } };
   });
+}
+/* ---------- statements ---------- */
+function stPeriod(){
+  const P = ui.stP || (ui.stP = { type: 'month', month: new Date(Date.now() - 20 * 86400000).toISOString().slice(0, 7), year: String(new Date().getUTCFullYear()), q: String(Math.floor(new Date().getUTCMonth() / 3) || 1), from: '', to: '', asof: new Date().toISOString().slice(0, 10) });
+  const pad = n => String(n).padStart(2, '0'), last = (y, m) => new Date(Date.UTC(y, m, 0)).getUTCDate();
+  if (P.type === 'month'){ const [y, m] = P.month.split('-').map(Number); return { from: `${y}-${pad(m)}-01`, to: `${y}-${pad(m)}-${last(y, m)}`, label: new Date(Date.UTC(y, m - 1, 15)).toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' }) }; }
+  if (P.type === 'quarter'){ const y = +P.year, qn = +P.q, m0 = (qn - 1) * 3 + 1; return { from: `${y}-${pad(m0)}-01`, to: `${y}-${pad(m0 + 2)}-${last(y, m0 + 2)}`, label: `Q${qn} ${y}` }; }
+  if (P.type === 'year') return { from: P.year + '-01-01', to: P.year + '-12-31', label: 'Year ' + P.year };
+  if (P.type === 'asof') return { from: P.asof, to: P.asof, label: 'As of ' + P.asof };
+  return { from: P.from, to: P.to, label: '' };
+}
+function stQuery(acc, per){ return 'kind=' + acc.kind + (acc.gid ? '&gid=' + encodeURIComponent(acc.gid) : '') + (acc.pid ? '&pid=' + encodeURIComponent(acc.pid) : '') + '&from=' + per.from + '&to=' + per.to + (per.label ? '&label=' + encodeURIComponent(per.label) : ''); }
+function stFmt(v, t){ if (v == null || v === '') return '—'; if (t === '$') return (v < 0 ? '−' : '') + usd(Math.abs(v)); if (t === '%') return (v * 100).toFixed(2) + '%'; if (t === 'n3') return Number(v).toLocaleString('en-US', { maximumFractionDigits: 3 }); return esc(String(v)); }
+function stView(S, links){
+  return `<div class="panel" style="padding:20px 22px;margin-top:16px"><div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-start"><div><h2 style="margin:0">${esc(S.title)}</h2>
+      <div class="small" style="margin-top:6px">Account <b class="num">${esc(S.account)}</b> · ${esc(S.holder)} · ${esc(S.period.label)}</div></div>
+      <div style="display:flex;gap:8px"><a class="btn sm" href="${links.pdf}" download>Download PDF</a><a class="btn ghost sm" href="${links.csv}" download>CSV</a></div></div>
+    <p class="hint" style="margin:10px 0 0">${esc(S.note)}</p>
+    <div class="kv" style="margin-top:14px">${S.summary.map(([k, v, t]) => `<div><span>${esc(k)}</span><b class="${t === '$' || t === '%' ? (v < 0 ? 'loss' : '') : ''}">${stFmt(v, t)}</b></div>`).join('')}</div></div>
+    ${S.tables.map(T => `<section class="block"><header><h2>${esc(T.title)}</h2></header>${T.rows.length ? `<div class="panel mtable"><table><thead><tr>${T.columns.map(x => `<th>${esc(x)}</th>`).join('')}</tr></thead><tbody>${T.rows.map(r => `<tr>${r.map((v, i) => `<td>${T.types[i] === 's' ? esc(v == null ? '' : String(v)) : stFmt(v, T.types[i])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>` : '<div class="panel empty">None in this period.</div>'}</section>`).join('')}`;
+}
+function vPocketStatements(){
+  if (!Store.signedIn) return vProfile(null);
+  const L = ui.stList;
+  if (!L){ ui.stList = 'loading'; Store.http('GET', '/api/statements').then(r => { ui.stList = r; if (ui.stAcc == null) ui.stAcc = 0; render(); }, e => { ui.stList = { error: e.message }; render(); }); }
+  if (!L || L === 'loading') return '<div class="loading" style="min-height:30vh">Loading statements…</div>';
+  if (L.error) return `<div class="panel empty">${esc(L.error)}</div>`;
+  const P = ui.stP || (stPeriod(), ui.stP), acc = L.accounts[ui.stAcc || 0] || L.accounts[0], now = new Date().getUTCFullYear();
+  const accLabel = s => { const a = L.accounts.find(x => x.kind === s.kind && (x.gid || null) === (s.gid || null) && (s.kind === 'club' || x.pid === s.pid)); return a ? a.label : s.kind === 'member' ? 'Member stake' : 'Account'; };
+  const S = ui.stShown;
+  return `<div class="pagehead"><div><a href="#/u/${Store.myPid}" class="small">← Profile</a><h1 style="margin-top:6px">Statements</h1><p class="muted">Statements are created automatically after each month, quarter and year. For clubs, they wait until the month is closed and signed off. You can also create one for any period.</p>${Store.site.realMoney ? '<p class="small"><a href="#/documents">Brokerage statements and tax documents from Alpaca</a></p>' : ''}</div></div>
+    <div class="panel" style="padding:16px 18px"><h2 style="margin:0 0 10px;font-size:17px">Create a statement</h2>
+      <div class="grid2"><div class="field"><label for="st-acc">Account</label><select class="input" id="st-acc">${L.accounts.map((a, i) => `<option value="${i}" ${i === (ui.stAcc || 0) ? 'selected' : ''}>${esc(a.label)} · ${esc(a.number)}</option>`).join('')}</select></div>
+      <div class="field"><label for="st-type">Period</label><select class="input" id="st-type">${[['month','Month'],['quarter','Quarter'],['year','Year'],['custom','Custom dates'],['asof','As of a date']].map(([k, l]) => `<option value="${k}" ${P.type === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>
+      <div class="grid2">${P.type === 'month' ? `<div class="field"><label for="st-m">Month</label><input class="input" id="st-m" type="month" value="${P.month}"></div>`
+        : P.type === 'quarter' ? `<div class="field"><label for="st-q">Quarter</label><select class="input" id="st-q">${[1, 2, 3, 4].map(n => `<option value="${n}" ${+P.q === n ? 'selected' : ''}>Q${n}</option>`).join('')}</select></div><div class="field"><label for="st-y">Year</label><select class="input" id="st-y">${[now, now - 1, now - 2].map(y => `<option ${+P.year === y ? 'selected' : ''}>${y}</option>`).join('')}</select></div>`
+        : P.type === 'year' ? `<div class="field"><label for="st-y">Year</label><select class="input" id="st-y">${[now, now - 1, now - 2].map(y => `<option ${+P.year === y ? 'selected' : ''}>${y}</option>`).join('')}</select></div>`
+        : P.type === 'asof' ? `<div class="field"><label for="st-d">Date</label><input class="input" id="st-d" type="date" value="${P.asof}"></div>`
+        : `<div class="field"><label for="st-f">From</label><input class="input" id="st-f" type="date" value="${P.from}"></div><div class="field"><label for="st-t">To</label><input class="input" id="st-t" type="date" value="${P.to}"></div>`}</div>
+      <button class="btn" data-act="stbuild">View statement</button></div>
+    ${S ? stView(S.data, S.links) : ''}
+    <section class="block"><header><h2>Your statements</h2></header><div class="list">${L.statements.map(s => `<button class="row" style="width:100%;text-align:left;background:none;border:0;font:inherit;color:inherit;cursor:pointer" data-act="stopen" data-id="${s.id}"><div class="grow"><b>${esc(s.label)}</b><div class="small muted">${esc(accLabel(s))}</div></div><span class="small muted">${s.key[0] === 'M' ? 'Monthly' : s.key[0] === 'Q' ? 'Quarterly' : 'Yearly'}</span></button>`).join('') || '<div class="empty">None yet. The first monthly statement appears after this month ends.</div>'}</div></section>`;
+}
+/* ---------- club money controls (mirrors the server rules; the server always decides) ---------- */
+const MONEY_OFFICERS = ['owner', 'admin', 'treasurer', 'asstTreasurer'], VOTED_ROLES = ['owner', 'admin', 'lead', 'treasurer', 'asstTreasurer'];
+function mayApprove(gid, pid, exclude){
+  if (exclude.includes(pid)) return false;
+  const ms = Store.membersOf(gid).filter(m => m.role !== 'observer' && !exclude.includes(m.pid));
+  const officers = ms.filter(m => MONEY_OFFICERS.includes(m.role) && !(m.roleChangedTs && Date.now() - m.roleChangedTs < 3 * 86400000)).map(m => m.pid);
+  return officers.length ? officers.includes(pid) : ms.some(m => m.pid === pid);
+}
+function moneyControls(gid, C){
+  const B = C.book, closes = B.closes || [], cur = new Date().toISOString().slice(0, 7), start = (C.entries[0] || {}).date || cur;
+  const months = []; for (let d = new Date(start.slice(0, 7) + '-15T12:00:00Z'); d.toISOString().slice(0, 7) < cur; d.setUTCMonth(d.getUTCMonth() + 1)) months.push(d.toISOString().slice(0, 7));
+  const locked = closes.filter(x => x.signedBy).map(x => x.month).sort().slice(-1)[0] || '', next = months.find(m => m > locked && !closes.some(x => x.month === m));
+  const pend = closes.filter(x => !x.signedBy), nm = p => esc(Store.displayName(p)), fmt = m => new Date(m + '-15T12:00:00Z').toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  return `<section class="block"><header><h2>Monthly close</h2></header><div class="panel" style="padding:14px 18px">
+    <p class="small muted" style="margin-top:0">An officer closes each month after checking the books against the account. A different person signs off, and the month is locked: corrections go in as new entries.</p>
+    <div class="list">${closes.slice().reverse().slice(0, 6).map(x => `<div class="row"><div class="grow"><b>${fmt(x.month)}</b><div class="small muted">Closed by ${nm(x.preparedBy)} ${ago(x.preparedTs)} ago${x.signedBy ? ` · signed off by ${nm(x.signedBy)}` : ''}</div></div>
+      ${x.signedBy ? '<span class="tag blue">Locked</span>' : mayApprove(gid, Store.myPid, [x.preparedBy]) && Store.canWrite ? `<button class="btn sm" data-act="cbsign" data-gid="${gid}" data-k="${x.month}">Sign off</button>` : '<span class="tag ember">Waiting for sign-off</span>'}</div>`).join('') || '<div class="empty">No months closed yet.</div>'}</div>
+    ${C.canEdit && next && !pend.length && Store.canWrite ? `<p style="margin:10px 0 0"><button class="btn ghost sm" data-act="cbclose" data-gid="${gid}" data-k="${next}">Close ${fmt(next)}</button></p>` : ''}</div></section>
+    <section class="block"><header><h2>Money log</h2></header><div class="list">${(C.log || []).slice(0, ui.clubLogAll ? 100 : 12).map(l => `<div class="row"><div class="grow small">${esc(l.text)}<div class="muted">${l.pid ? nm(l.pid) + ', ' : ''}${ago(l.ts)} ago</div></div></div>`).join('') || '<div class="empty">No money activity yet.</div>'}</div>
+      ${(C.log || []).length > 12 && !ui.clubLogAll ? '<p style="margin-top:8px"><button class="linkbtn small" data-act="cblogall">Show all</button></p>' : ''}
+      <p class="hint">Every addition, payment, withdrawal, approval, correction and money-role change is recorded here. Only club members can see it.</p></section>`;
 }
 /* ---------- voting participation: passive members are the risk in a pooled club ---------- */
 function participation(gid, m){
@@ -929,21 +997,25 @@ function reviewSheet(gid, id, decision, kind){
     <div class="field"><label for="rv-n">Note to the member${decision === 'declined' ? '' : ' (optional)'}</label><input class="input" id="rv-n" maxlength="300" placeholder="${decision === 'declined' ? "e.g. Amount doesn't match the receipt" : 'e.g. Thanks, received'}"></div>
     <button class="btn" id="rv-go" style="width:100%">${decision === 'confirmed' ? (kind === 'withdrawal' ? 'Approve and pay out' : 'Confirm and record payment') : 'Decline'}</button>`, sh => {
     sh.querySelector('#rv-go').onclick = async () => { const note = sh.querySelector('#rv-n').value;
-      try { if (kind === 'withdrawal'){ await Store.clubDecideWithdrawal(id, decision, note); ui.club[gid] = null; } else ui.club[gid] = await Store.http('POST', `/api/club/${gid}/review`, { id, decision, note });
+      try { if (kind === 'withdrawal'){ const r = await Store.clubDecideWithdrawal(id, decision, note); ui.club[gid] = null; if (r && r.waiting){ closeModal(); toast('Approved. It now needs a second approver.'); render(); return; } } else ui.club[gid] = await Store.http('POST', `/api/club/${gid}/review`, { id, decision, note });
         closeModal(); toast(decision === 'confirmed' ? 'Done.' : 'Declined. The member will see your note.'); render(); } catch(e){ errToast(e); } };
   });
 }
 function submissionRow(gid, x, editor){
   const st = STATUS[x.status], fileLink = x.fileId ? ` · <a href="/api/club/${gid}/file/${x.fileId}" target="_blank" rel="noopener">View file</a>` : '';
-  const what = x.kind === 'document' ? esc(x.docType) : x.kind === 'withdrawal' ? `Withdrawal of ${usd(x.amount)}` : `Payment of ${usd(x.amount)} on ${esc(x.date)}`;
+  const what = x.kind === 'document' ? esc(x.docType) : x.kind === 'distribution' ? `Final payout to all members (${usd(x.amount)})` : x.exit ? `Exit payout, leaving the club (about ${usd(x.amount)})` : x.kind === 'withdrawal' ? `Withdrawal of ${usd(x.amount)}` : `Payment of ${usd(x.amount)} on ${esc(x.date)}`;
   return `<div class="row" style="flex-wrap:wrap;align-items:flex-start"><div class="grow" style="min-width:200px"><b>${what}</b>${x.kind !== 'document' && editor ? ' · ' + esc(Store.displayName(x.pid)) : ''} <span class="tag ${st[1]}" style="font-size:11px">${x.kind === 'document' ? { pending: 'Waiting for Pocket review', confirmed: 'Verified by Pocket', declined: 'Needs changes' }[x.status] : st[0]}</span>
     <div class="small muted">${ago(x.ts)} ago${x.note ? ' · ' + esc(x.note) : ''}${fileLink}</div>${x.reviewNote ? `<div class="small" style="margin-top:4px"><b>Note:</b> ${esc(x.reviewNote)}</div>` : ''}</div>
-    ${editor && x.status === 'pending' && x.kind !== 'document' ? `<button class="btn sm" data-act="cbreview" data-gid="${gid}" data-id="${x.id}" data-k="confirmed" data-v="${x.kind}">${x.kind === 'withdrawal' ? 'Approve' : 'Confirm'}</button><button class="btn sm ghost" data-act="cbreview" data-gid="${gid}" data-id="${x.id}" data-k="declined" data-v="${x.kind}">Decline</button>` : ''}</div>`;
+    ${['withdrawal', 'distribution'].includes(x.kind) && x.status === 'pending' ? `<div class="small" style="width:100%;margin-top:4px">Approvals: ${(x.approvals || []).length} of ${x.needed || 2}${(x.approvals || []).length ? ' (' + x.approvals.map(a => esc(Store.displayName(a.pid))).join(', ') + ')' : ''}</div>` : ''}
+    ${editor && x.status === 'pending' && x.kind !== 'document' && mayApprove(gid, Store.myPid, (x.kind === 'distribution' ? [] : [x.pid]).concat(x.initiatedBy ? [x.initiatedBy] : []).concat((x.approvals || []).map(a => a.pid))) ? `<button class="btn sm" data-act="cbreview" data-gid="${gid}" data-id="${x.id}" data-k="confirmed" data-v="${x.kind === 'distribution' ? 'withdrawal' : x.kind}">${x.kind === 'payment' ? 'Confirm' : 'Approve'}</button><button class="btn sm ghost" data-act="cbreview" data-gid="${gid}" data-id="${x.id}" data-k="declined" data-v="${x.kind === 'distribution' ? 'withdrawal' : x.kind}">Decline</button>` : ''}</div>`;
 }
 function clubRequests(gid, C){
-  const subs = C.submissions || [], editor = C.canEdit, mine = subs.filter(x => x.pid === Store.myPid && x.kind !== 'document'), queue = editor ? subs.filter(x => x.kind !== 'document' && x.status === 'pending') : [];
+  const subs = C.submissions || [], editor = C.canEdit || mayApprove(gid, Store.myPid, []), mine = subs.filter(x => x.pid === Store.myPid && x.kind !== 'document'), queue = editor ? subs.filter(x => x.kind !== 'document' && x.status === 'pending' && (x.kind === 'distribution' || x.pid !== Store.myPid)) : [];
   const docs = subs.filter(x => x.kind === 'document');
-  return `${queue.length ? `<section class="block"><header><h2>Waiting for your review</h2></header><div class="list">${queue.map(x => submissionRow(gid, x, true)).join('')}</div></section>` : ''}
+  const meR = (Store.membership(gid) || {}).role;
+  return `${MONEY_OFFICERS.includes(meR) && !Store.twofa ? `<div class="banner ember" style="margin-top:14px"><div style="flex:1"><b>Turn on two-step sign-in</b><div class="small">Officers need it to approve or record club money.</div></div><a class="btn sm" href="#/u/${Store.myPid}">Set it up</a></div>` : ''}
+    ${C.roleWaitUntil && C.roleWaitUntil > Date.now() ? `<div class="banner" style="margin-top:14px">Your new money role can approve things from ${new Date(C.roleWaitUntil).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}. Until then, other officers approve.</div>` : ''}
+    ${queue.length ? `<section class="block"><header><h2>Waiting for review</h2></header><div class="list">${queue.map(x => submissionRow(gid, x, true)).join('')}</div></section>` : ''}
     ${mine.length ? `<section class="block"><header><h2>Your requests</h2></header><div class="list">${mine.slice(0, 10).map(x => submissionRow(gid, x, false)).join('')}</div></section>` : ''}
     <section class="block"><header style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h2>Club documents</h2>${editor ? `<button class="btn ghost sm" data-act="cbupload" data-gid="${gid}" data-k="document">Send a document</button>` : ''}</header>
       <div class="list">${docs.map(x => submissionRow(gid, x, false)).join('') || '<div class="empty">No documents yet. A pooled club needs its LLC or partnership papers and tax ID letter verified before it can open a real account.</div>'}</div></section>`;
@@ -954,7 +1026,11 @@ function pooledClub(gid, C){
   const held = Object.entries(pot.positions || {}).map(([s, p]) => [s, p.shares, p.shares * Market.price(s)]).sort((a, b) => b[2] - a[2]);
   return `<div class="panel" style="padding:18px 20px"><div class="kv"><div><span>Club account</span><b>${usd(V)}</b></div><div><span>Cash</span><b>${usd(pot.cash)}</b></div><div><span>Unit value</span><b>${usd(uv)}</b></div><div><span>Units</span><b>${C.units.toFixed(3)}</b></div></div>
       <div class="est" style="display:block;margin-top:12px"><b>Your share: ${usd(mineV)} (${C.units > 1e-9 && me ? (me.units / C.units * 100).toFixed(1) : '0.0'}%)</b><div class="small muted" style="margin-top:4px">${me ? me.units.toFixed(3) : '0.000'} units · added ${usd(me ? me.paid : 0)} · withdrawn ${usd(me ? me.withdrawn : 0)}</div></div>
-      ${full ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button class="btn" data-act="potadd" data-gid="${gid}">Add money</button><button class="btn ghost" data-act="potwd" data-gid="${gid}">Request a withdrawal</button></div>` : ''}
+      ${(() => { const g = Store.get('groups', gid) || {}, my = (Store.membership(gid) || {}).role, officer = MONEY_OFFICERS.includes(my);
+        if (g.closed) return `<div class="banner" style="margin-top:12px">The club closed ${new Date(g.closed.ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}. Every member was paid out their share.</div>`;
+        if (g.windDown) return `<div class="banner ember" style="margin-top:12px;display:block"><b>Closing the club.</b> Members voted to wind it down: sell all holdings, then pay everyone out by their units (two approvals).
+          ${full && (officer || my === 'lead') ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">${held.length ? `<button class="btn sm" data-act="potsellall" data-gid="${gid}">Sell all holdings</button>` : ''}${!held.length && officer ? `<button class="btn sm" data-act="potdistribute" data-gid="${gid}">Pay everyone out</button>` : ''}</div>` : ''}</div>`;
+        return full ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button class="btn" data-act="potadd" data-gid="${gid}">Add money</button><button class="btn ghost" data-act="potwd" data-gid="${gid}">Request a withdrawal</button>${my && my !== 'owner' ? `<button class="btn ghost" data-act="potexit" data-gid="${gid}">Leave and get paid out</button>` : ''}</div>` : ''; })()}
       <p class="hint" style="margin-top:10px">Practice money. The club trades only after a member vote: create a trade proposal, and once it passes the Lead Trader, Owner or an Admin executes it for the club.</p></div>
     <section class="block"><header><h2>Club holdings</h2></header><div class="list">${held.map(([s, sh, v]) => `<a class="row" href="#/stock/${s}">${logo(s)}<div class="grow"><b>${s}</b> <span class="small muted">${shs(sh)} shares</span></div><b class="num">${usd(v)}</b></a>`).join('') || '<div class="empty">The club holds only cash so far.</div>'}</div></section>`;
 }
@@ -1033,17 +1109,18 @@ function clubView(gid, role){
     ${C.canEdit ? `<div class="grid2"><div class="field"><label for="cb-d">Books start on</label><input class="input" id="cb-d" type="date" value="${today}"></div><div class="field"><label for="cb-u">Monthly dues per member (optional)</label><input class="input num" id="cb-u" inputmode="decimal" placeholder="e.g. 50"></div></div>
       <p class="hint">Already have club money? After setup, record each member's current balance as an opening payment, then enter valuations as usual.</p><button class="btn" data-act="cbsetup" data-gid="${gid}">Start the club books</button>`
       : '<p class="hint">Ask your Treasurer, Owner or an Admin to start the club books.</p>'}</div>`;
-  if (C.pooled) return pooledClub(gid, C) + clubRequests(gid, C) + clubLedgerTables(gid, C, true);
+  const numLine = C.numbers && C.numbers.club ? `<p class="small muted" style="margin:0 0 10px">Club account <b class="num">${esc(C.numbers.club)}</b>${C.numbers.mine ? ` · Your stake <b class="num">${esc(C.numbers.mine)}</b>` : ''} · <a href="#/statements">Statements</a></p>` : '';
+  if (C.pooled) return numLine + pooledClub(gid, C) + clubRequests(gid, C) + clubLedgerTables(gid, C, true) + moneyControls(gid, C);
   const me = C.members.find(m => m.pid === Store.myPid), lastVal = C.entries.filter(e => e.kind === 'valuation').slice(-1)[0];
   const years = Object.keys(C.years).sort().reverse(), yr = ui.clubYear && C.years[ui.clubYear] ? ui.clubYear : years[0];
   const kindWord = { valuation: 'Valuation', payment: 'Payment', withdrawal: 'Withdrawal' };
-  return `${C.problem ? '<div class="banner" style="margin-bottom:14px">One withdrawal is larger than that member owned. Check the ledger.</div>' : ''}
+  return `${numLine}${C.problem ? '<div class="banner" style="margin-bottom:14px">One withdrawal is larger than that member owned. Check the ledger.</div>' : ''}
     <div class="panel" style="padding:18px 20px"><div class="kv"><div><span>Club value (latest valuation plus payments since)</span><b>${usd(C.value)}</b></div><div><span>Unit value</span><b>${usd(C.unitValue)}</b></div><div><span>Units</span><b>${C.units.toFixed(3)}</b></div><div><span>Last valuation</span><b>${lastVal ? esc(lastVal.date) : '—'}</b></div></div>
       ${me ? `<div class="est" style="display:block;margin-top:12px"><b>Your share: ${usd(me.value)} (${(me.share * 100).toFixed(1)}%)</b><div class="small muted" style="margin-top:4px">${me.units.toFixed(3)} units · paid in ${usd(me.paid)} · withdrawn ${usd(me.withdrawn)} · gain <span class="${sgn(me.gain)}">${me.gain >= 0 ? '+' : '−'}${usd(Math.abs(me.gain))}</span></div></div>` : ''}</div>
     ${Store.canWrite ? `<div style="margin:14px 0 0"><button class="btn ghost sm" data-act="cbupload" data-gid="${gid}" data-k="payment">Send proof of payment</button></div>` : ''}
     ${clubRequests(gid, C)}
     ${C.canEdit ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin:14px 0"><button class="btn" data-act="cbentry" data-gid="${gid}" data-k="dues">Record dues for everyone</button><button class="btn ghost sm" data-act="cbentry" data-gid="${gid}" data-k="payment">Payment</button><button class="btn ghost sm" data-act="cbentry" data-gid="${gid}" data-k="withdrawal">Withdrawal</button><button class="btn ghost sm" data-act="cbentry" data-gid="${gid}" data-k="valuation">Valuation</button></div>` : '<p class="hint" style="margin:12px 0">The Treasurer, Owner and Admins keep these books. Every full member can see them.</p>'}
-    ${clubLedgerTables(gid, C, false)}`;
+    ${clubLedgerTables(gid, C, false)}${moneyControls(gid, C)}`;
 }
 
 function clubLedgerTables(gid, C, pooled){
@@ -1052,13 +1129,16 @@ function clubLedgerTables(gid, C, pooled){
   const pot = pooled ? Store.get('portfolios', 'club_' + gid) : null, liveUV = pot && C.units > 1e-9 ? Store.portfolioValue(pot) / C.units : null;
   const M = C.members.map(m => liveUV ? Object.assign({}, m, { value: m.units * liveUV, gain: m.units * liveUV + m.withdrawn - m.paid }) : m);
   C = Object.assign({}, C, { members: M, canEdit: C.canEdit && !pooled });
-  return `<section class="block"><header style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h2>Members</h2><a class="btn ghost sm" href="/api/club/${gid}/csv" download>Download CSV</a></header><div class="panel mtable"><table><thead><tr><th>Member</th><th>Units</th><th>Value</th><th>Share</th><th>Paid in</th><th>Withdrawn</th><th>Gain</th></tr></thead>
-      <tbody>${C.members.map(m => `<tr><td>${nm(m.pid)}${m.former ? ' <span class="muted">(former)</span>' : ''}</td><td>${m.units.toFixed(3)}</td><td>${usd(m.value)}</td><td>${(m.share * 100).toFixed(1)}%</td><td>${usd(m.paid)}</td><td>${usd(m.withdrawn)}</td><td class="${sgn(m.gain)}">${m.gain >= 0 ? '+' : '−'}${usd(Math.abs(m.gain))}</td></tr>`).join('')}</tbody></table></div></section>
-    <section class="block"><header><h2>Ledger</h2></header><div class="list">${C.entries.slice().reverse().map(e => `<div class="row"><div class="grow"><b>${kindWord[e.kind]}</b>${e.pid ? ' · ' + nm(e.pid) : ''} <span class="small muted">${esc(e.date)}${e.note ? ' · ' + esc(e.note) : ''}</span>
-      <div class="small muted">${e.kind === 'valuation' ? `Club value ${usd(e.amount)}, unit value ${usd(e.unitValue)}` : `${usd(e.amount)} at ${usd(e.unitValue)} a unit = ${e.units.toFixed(3)} units`}</div></div>
-      ${C.canEdit && e.note !== 'Books started' ? `<button class="btn sm ghost" data-act="cbdel" data-gid="${gid}" data-id="${e.id}" aria-label="Delete entry">Delete</button>` : ''}</div>`).join('')}</div></section>
+  return `<section class="block"><header style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h2>Members</h2><a class="btn ghost sm" href="/api/club/${gid}/csv" download>Download CSV</a></header><div class="panel mtable"><table><thead><tr><th>Member</th>${C.numbers && Object.keys(C.numbers.members || {}).length ? '<th>Account</th>' : ''}<th>Units</th><th>Value</th><th>Share</th><th>Paid in</th><th>Withdrawn</th><th>Gain</th></tr></thead>
+      <tbody>${C.members.map(m => `<tr><td>${nm(m.pid)}${m.former ? ' <span class="muted">(former)</span>' : ''}</td>${C.numbers && Object.keys(C.numbers.members || {}).length ? `<td class="num">${esc((C.numbers.members || {})[m.pid] || '')}</td>` : ''}<td>${m.units.toFixed(3)}</td><td>${usd(m.value)}</td><td>${(m.share * 100).toFixed(1)}%</td><td>${usd(m.paid)}</td><td>${usd(m.withdrawn)}</td><td class="${sgn(m.gain)}">${m.gain >= 0 ? '+' : '−'}${usd(Math.abs(m.gain))}</td></tr>`).join('')}</tbody></table></div></section>
+    <section class="block"><header><h2>Ledger</h2></header><div class="list">${C.entries.slice().reverse().map(e => `<div class="row"><div class="grow"><b style="${e.voided ? 'text-decoration:line-through' : ''}">${kindWord[e.kind]}</b>${e.pid ? ' · ' + nm(e.pid) : ''} <span class="small muted">${esc(e.date)}${e.note ? ' · ' + esc(e.note) : ''}</span>${e.voided ? ` <span class="tag" style="font-size:11px">Voided: ${esc(e.voided.reason)}</span>` : ''}
+      <div class="small muted">${e.voided ? usd(e.amount) + ' (not counted)' : e.kind === 'valuation' ? `Club value ${usd(e.amount)}, unit value ${usd(e.unitValue)}` : `${usd(e.amount)} at ${usd(e.unitValue)} a unit = ${e.units.toFixed(3)} units`}</div></div>
+      ${C.canEdit && e.note !== 'Books started' && !e.voided && Store.canWrite ? `<button class="btn sm ghost" data-act="cbvoid" data-gid="${gid}" data-id="${e.id}" aria-label="Void entry">Void</button>` : ''}</div>`).join('')}</div></section>
     ${years.length ? `<section class="block"><header style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h2>Year-end summary</h2><div class="seg">${years.map(y => `<button class="${y === yr ? 'on' : ''}" data-act="cbyear" data-k="${y}">${y}</button>`).join('')}</div></header>
       <div class="panel mtable"><table><thead><tr><th>Member</th><th>Start of year</th><th>Paid in</th><th>Withdrawn</th><th>End of year</th><th>Gain</th></tr></thead><tbody>${(C.years[yr] || []).map(r => `<tr><td>${nm(r.pid)}</td><td>${usd(r.startValue)}</td><td>${usd(r.paid)}</td><td>${usd(r.withdrawn)}</td><td>${usd(r.endValue)}</td><td class="${sgn(r.gain)}">${r.gain >= 0 ? '+' : '−'}${usd(Math.abs(r.gain))}</td></tr>`).join('')}</tbody></table></div>
+      ${(() => { const rv = (C.book.yearReviews || {})[yr], me = Store.membership(gid); return rv ? `<p class="small" style="margin:10px 0 0"><span class="tag blue">Reviewed</span> by ${nm(rv.pid)} ${ago(rv.ts)} ago${rv.note ? ': ' + esc(rv.note) : ''}</p>`
+        : me && !MONEY_OFFICERS.includes(me.role) && me.role !== 'observer' && Store.canWrite ? `<p style="margin:10px 0 0"><button class="btn ghost sm" data-act="cbyrrev" data-gid="${gid}" data-k="${yr}">Mark ${yr} reviewed</button> <span class="hint">A member who isn't a money officer checks the year's books.</span></p>` : '<p class="hint" style="margin-top:10px">Not yet reviewed. A member who isn\'t a money officer reviews each year.</p>'; })()}
+      <p style="margin:10px 0 0"><a class="btn ghost sm" href="/api/club/${gid}/tax.csv?year=${yr}" download>Year-end figures for your tax preparer (CSV)</a></p>
       <p class="hint">Most investment clubs are taxed as partnerships, which file a partnership return and give each member a Schedule K-1. Share these figures with whoever prepares the club's taxes; this summary isn't a tax form.</p></section>` : ''}
     <details style="margin-top:16px"><summary class="small">How unit values work</summary><p class="small muted">Each payment buys units at the latest unit value, so members who join later or pay different amounts are treated fairly. A valuation sets the club's total value; dividing by all units gives the new unit value. Your share is your units times the unit value.</p></details>`;
 }
@@ -1212,6 +1292,7 @@ function vPracticeHome(){
   return `${showInstallTip()}${starterCard(prof, groups)}${hero}
   ${sec('Waiting on you', waiting)}
   ${sec('Your groups', latest ? `<div class="list">${latest}</div>` : '', '<button class="linkbtn small" data-act="gofeedgroups">See all</button>')}
+  ${waitingOnYou()}
   ${comingUp()}
   ${recurringList()}
   ${marketBrief()}
@@ -1296,7 +1377,7 @@ function vReal(){
   ${openOrders.length ? `<section class="block"><header><h2>Open orders</h2></header><div class="list">${openOrders.map(o => orderRow(o, true)).join('')}</div></section>` : ''}
   <section class="block"><header><h2>Bank account</h2></header><div class="list">${bank ? `<div class="row"><div class="grow"><b>${esc(bank.nickname || 'Bank account')}</b> <span class="muted small">${esc(bank.type || '')} ending ${esc(bank.last4)}</span><div class="small muted">${esc(bank.status === 'APPROVED' ? 'Linked' : bank.status)}</div></div><button class="btn sm ghost" data-act="runbank" data-id="${esc(bank.id)}">Remove</button></div>`
     : `<div class="row"><div class="grow"><b>No bank linked</b><div class="small muted">Link a bank account to deposit and withdraw.</div></div><button class="btn sm" data-act="rbank">Link a bank</button></div>`}</div></section>
-  <section class="block"><header><h2>Activity</h2><a class="small" href="#/statements">Statements and tax documents</a></header><div class="list">
+  <section class="block"><header><h2>Activity</h2><a class="small" href="#/documents">Brokerage statements and tax documents</a></header><div class="list">
     ${R.transfers.map(t => `<div class="row"><div class="grow"><b>${t.direction === 'INCOMING' ? 'Deposit' : 'Withdrawal'}</b><div class="small muted">${new Date(t.createdAt).toLocaleDateString('en-US', { month:'short', day:'numeric' })}, ${esc(TSTATUS[t.status] || t.status)}</div></div><b class="num">${t.direction === 'INCOMING' ? '+' : '−'}${usd(t.amount)}</b></div>`).join('')}
     ${R.orders.filter(o => !ROPEN.includes(o.status)).slice(0, 15).map(o => orderRow(o, false)).join('')}
     ${!R.transfers.length && !R.orders.length ? '<div class="empty">No activity yet.</div>' : ''}</div></section>
@@ -1559,7 +1640,7 @@ function vGroup(gid, tab){
       ${role && Store.canWrite ? `<button class="btn ghost sm" data-act="invite" data-id="${gid}">Invite friends</button>` : ''}
       ${hasMe && Store.canWrite && role !== 'owner' ? `<button class="btn ghost sm" data-act="report" data-id="${gid}">Report</button>` : ''}
       ${Store.canEdit && Store.canWrite ? `<button class="btn ghost sm" data-act="feature" data-id="${gid}" data-k="${g.featured ? '0' : '1'}">${g.featured ? 'Remove from Featured' : 'Feature in Discover'}</button>` : ''}</div></div>`;
-  const tabs = `<nav class="tabs">${[['activity','Activity'],['performance','Performance'],['proposals','Proposals'],['ideas','Ideas'],['meetings','Meetings'],['members','Members']].concat(role && role !== 'observer' ? [['club','Club books']] : []).concat([['rules', Store.canManage(role) ? 'Settings' : 'Rules']]).map(([k, l]) => `<a class="${tab === k ? 'on' : ''}" href="#/group/${gid}/${k}">${l}</a>`).join('')}</nav>`;
+  const tabs = `<nav class="tabs">${[['activity','Activity'],['performance','Performance'],['proposals','Proposals'],['ideas','Ideas'],['meetings','Meetings'],['members','Members']].concat(role && role !== 'observer' ? [['club', 'Club books' + ((clubWaiting().find(w => w.gid === gid) || {}).count ? ' (' + clubWaiting().find(w => w.gid === gid).count + ')' : '')]] : []).concat([['rules', Store.canManage(role) ? 'Settings' : 'Rules']]).map(([k, l]) => `<a class="${tab === k ? 'on' : ''}" href="#/group/${gid}/${k}">${l}</a>`).join('')}</nav>`;
   let body = '';
   if (tab === 'activity'){
     const mine = Store.myPending().filter(r => r.gid === gid);
@@ -1585,11 +1666,11 @@ function vGroup(gid, tab){
       ${role && Store.canPropose(role, R) && Store.canWrite ? `<div style="margin-bottom:14px"><button class="btn" data-act="newprop" data-gid="${gid}">New proposal</button></div>` : role ? `<p class="hint">${R.proposeRoles.map(x => Store.ROLE_LABEL[x]).join(', ')} can create proposals. Members vote.</p>` : ''}
       <div class="list">${prs.map(p => proposalCard(p, role)).join('') || '<div class="empty">No proposals yet.</div>'}</div>`;
   } else {
-    const order = ['owner','admin','lead','member','observer'];
+    const order = ['owner','admin','lead','treasurer','asstTreasurer','member','observer'];
     body = `${role ? `<div class="panel" style="padding:16px 18px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap"><div><b>Your copy size</b><div class="small muted">Share of your capital used when sizing the group's trades for you.</div></div><div class="seg">${[0.5, 1].map(x => `<button class="${(my.copyPct ?? 1) === x ? 'on' : ''}" data-act="copypct" data-gid="${gid}" data-k="${x}">${x * 100}%</button>`).join('')}</div></div>` : ''}
       ${(() => { const jr = Store.all('joinRequests').filter(j => j.gid === gid && j.status === 'pending'); return Store.canManage(role) && jr.length ? `<section style="margin-bottom:16px"><header class="pagehead" style="margin:0 0 10px"><h3>Requests to join</h3></header><div class="list">${jr.map(j => `<div class="row">${avatar(j.pid)}<div class="grow">${nameLink(j.pid)}<div class="small muted">Asked ${ago(j.ts)} ago</div></div><button class="btn sm" data-act="joinyes" data-id="${j.id}">Approve</button><button class="btn sm ghost" data-act="joinno" data-id="${j.id}">Decline</button></div>`).join('')}</div></section>` : ''; })()}
       <div class="list">${ms.sort((a, b) => order.indexOf(a.role) - order.indexOf(b.role)).map(m => `<div class="row">${avatar(m.pid)}<div class="grow">${nameLink(m.pid)}<div class="small muted">Joined ${ago(m.joinedTs)} ago${(Store.canManage(role) || role === 'treasurer') && m.role !== 'observer' ? participation(gid, m) : ''}${m.invitedBy ? ' from ' + esc(Store.displayName(m.invitedBy)) + "'s invite" : ''}</div></div>
-        ${Store.canManage(role) && m.role !== 'owner' && m.pid !== Store.myPid && Store.canWrite ? `<select class="input" style="width:auto;padding:7px 10px;font-size:14px" data-act="role" data-gid="${gid}" data-pid="${m.pid}" aria-label="Role">${['admin','lead','junior','analyst','risk','moderator','treasurer','member','observer'].map(r => `<option value="${r}" ${m.role === r ? 'selected' : ''}>${Store.ROLE_LABEL[r]}</option>`).join('')}</select><button class="btn sm ghost" data-act="rmmember" data-gid="${gid}" data-pid="${m.pid}" aria-label="Remove ${esc(Store.displayName(m.pid))}">Remove</button>` : `<span class="tag ${['lead','risk'].includes(m.role) ? 'ember' : ['owner','admin'].includes(m.role) ? 'blue' : ''}">${Store.ROLE_LABEL[m.role]}</span>`}</div>`).join('')}</div>
+        ${Store.canManage(role) && m.role !== 'owner' && m.pid !== Store.myPid && Store.canWrite ? `<select class="input" style="width:auto;padding:7px 10px;font-size:14px" data-act="role" data-gid="${gid}" data-pid="${m.pid}" aria-label="Role">${['admin','lead','junior','analyst','risk','moderator','treasurer','asstTreasurer','member','observer'].filter(r => !(Store.get('groups', gid).pooled && (VOTED_ROLES.includes(r) || VOTED_ROLES.includes(m.role)) && r !== m.role)).map(r => `<option value="${r}" ${m.role === r ? 'selected' : ''}>${Store.ROLE_LABEL[r]}</option>`).join('')}</select>${Store.get('groups', gid).pooled ? `<button class="btn sm ghost" data-act="potexit" data-gid="${gid}" data-pid="${m.pid}" aria-label="Exit payout for ${esc(Store.displayName(m.pid))}">Exit payout</button>` : `<button class="btn sm ghost" data-act="rmmember" data-gid="${gid}" data-pid="${m.pid}" aria-label="Remove ${esc(Store.displayName(m.pid))}">Remove</button>`}` : `<span class="tag ${['lead','risk'].includes(m.role) ? 'ember' : ['owner','admin'].includes(m.role) ? 'blue' : ''}">${Store.ROLE_LABEL[m.role]}</span>`}</div>`).join('')}</div>
       ${role === 'owner' && Store.canWrite && ms.length > 1 ? `<div class="panel" style="padding:16px 18px;margin-top:16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap"><div style="flex:1;min-width:200px"><b>Transfer ownership</b><div class="small muted">You become an Admin. The new Owner needs Pro.</div></div><select class="input" id="xfer" style="width:auto">${ms.filter(m => m.pid !== Store.myPid).map(m => `<option value="${m.pid}">${esc(Store.displayName(m.pid))}</option>`).join('')}</select><button class="btn sm ghost" data-act="xfer" data-gid="${gid}">Transfer</button></div>` : ''}
       <section class="block"><header><h2>What each role does</h2></header><div class="list">${Store.ROLE_INFO_KEYS.map(k => `<div class="row"><span class="tag" style="min-width:110px;justify-content:center">${Store.ROLE_LABEL[k]}</span><div class="grow small">${Store.ROLE_INFO[k]}</div></div>`).join('')}</div></section>
       ${role && role !== 'owner' && Store.canWrite ? `<p style="margin-top:16px"><button class="btn ghost sm" data-act="leave" data-id="${gid}">Leave group</button></p>` : ''}`;
@@ -1696,7 +1777,10 @@ function proposalCard(p, role){
     ${t.waitDays && !t.closed ? `<div class="small muted" style="margin-top:8px">You can vote in this group in ${t.waitDays} day${t.waitDays === 1 ? '' : 's'}.</div>` : ''}
     ${canV ? `<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">${['yes','no','abstain'].map(v => `<button class="btn sm ${t.mine === v ? '' : 'ghost'}" data-act="vote" data-id="${p.id}" data-k="${v}" aria-pressed="${t.mine === v}">${v[0].toUpperCase() + v.slice(1)}</button>`).join('')}
       ${Store.canManage(role) ? `<button class="btn sm ghost" data-act="closeprop" data-id="${p.id}" style="margin-left:auto">Close vote</button>` : ''}</div>` : (t.mine ? `<div class="small muted" style="margin-top:8px">You voted ${t.mine}.</div>` : '')}
-    ${p.tradeSym && t.closed && t.result === 'passed' ? (p.executed ? `<div class="banner" style="margin:12px 0 0"><div style="flex:1">Executed by ${esc(Store.displayName(p.executedBy))} ${ago(p.executedTs)} ago. Members received approval requests.</div><a class="btn sm ghost" href="#/group/${p.gid}/activity">See trade</a></div>`
+    ${p.type === 'windDown' && t.closed && t.result === 'passed' ? (p.executed ? `<div class="banner" style="margin:12px 0 0"><div style="flex:1">The club is closing. See Club books.</div></div>` : Store.canTradeFor(role) && Store.canWrite ? `<div style="margin-top:12px"><button class="btn ember sm" data-act="execprop" data-id="${p.id}">Start closing the club</button></div>` : '<div class="small muted" style="margin-top:10px">Passed. Waiting for the Owner, an Admin or the Lead Trader to start closing the club.</div>') : ''}
+    ${p.rolePid ? `<div class="small" style="margin-top:10px"><b>Role change:</b> ${esc(Store.displayName(p.rolePid))}, ${Store.ROLE_LABEL[p.roleFrom] || ''} → ${Store.ROLE_LABEL[p.roleName]}</div>` : ''}
+    ${p.rolePid && t.closed && t.result === 'passed' ? (p.executed ? `<div class="banner" style="margin:12px 0 0"><div style="flex:1">Role change applied by ${esc(Store.displayName(p.executedBy))} ${ago(p.executedTs)} ago.</div></div>` : Store.canTradeFor(role) && Store.canWrite ? `<div style="margin-top:12px"><button class="btn ember sm" data-act="execprop" data-id="${p.id}">Apply the role change</button></div>` : `<div class="small muted" style="margin-top:10px">Passed. Waiting for the Owner, an Admin or the Lead Trader to apply it.</div>`) : ''}
+    ${p.tradeSym && t.closed && t.result === 'passed' ? (p.executed ? `<div class="banner" style="margin:12px 0 0"><div style="flex:1">Executed by ${esc(Store.displayName(p.executedBy))} ${ago(p.executedTs)} ago. ${(Store.get('groups', p.gid) || {}).pooled ? 'Bought or sold in the club account.' : 'Members received approval requests.'}</div><a class="btn sm ghost" href="#/group/${p.gid}/activity">See trade</a></div>`
       : (Store.canTradeFor(role) && Store.canWrite ? `<div style="margin-top:12px"><button class="btn ember sm" data-act="execprop" data-id="${p.id}">Execute the group's decision</button><span class="hint" style="margin-left:10px">Places the trade and asks every member to approve</span></div>` : `<div class="small muted" style="margin-top:10px">Passed. Waiting for the Lead Trader to execute it.</div>`)) : ''}
   </article>`;
 }
@@ -1742,6 +1826,8 @@ function vProfile(pid){
   ${!self && Store.isCopying(pid) ? `<div class="banner ember" style="margin-top:16px">You copy ${esc(Store.displayName(pid))}. Each of their trades sends you an approval request sized to your capital.</div>` : ''}
   ${trackRecord('investor', pid)}
   ${self ? `<section class="block"><header><h2>Account</h2></header><div class="list">
+    ${Store.accountNumber ? `<div class="row"><div class="grow"><b>Account number</b><div class="small muted">Your practice account</div></div><b class="num">${esc(Store.accountNumber)}</b></div>` : ''}
+    <a class="row" href="#/statements"><div class="grow"><b>Statements</b><div class="small muted">Monthly, quarterly and yearly statements, or create one for any period</div></div><span class="muted">›</span></a>
     <div class="row"><div class="grow"><b>Plan</b><div class="small muted">${Store.isPro() ? 'Pro, $9.99 a month (simulated)' : 'Free: browse, trade, and observe groups'}</div></div>${Store.canWrite ? (Store.isPro() ? `<button class="btn sm ghost" data-act="cancelpro">Cancel Pro</button>` : `<button class="btn sm" data-act="upgrade">Upgrade to Pro</button>`) : ''}</div>
     <div class="row"><div class="grow"><b>Investing style</b><div class="small muted">Used to suggest groups</div></div>${Store.canWrite ? `<select class="input" style="width:auto;padding:7px 10px;font-size:14px" data-act="setrisk" aria-label="Investing style">${Object.entries(RISK).map(([k, [a]]) => `<option value="${k}" ${p.riskProfile === k ? 'selected' : ''}>${a}</option>`).join('')}</select>` : ''}</div>
     <div class="row"><div class="grow"><b>Trading account</b><div class="small muted">Simulated, with ${usd(Store.START_CASH, 0)} to start</div></div><span class="tag blue">Active</span></div>
@@ -1903,14 +1989,16 @@ function inviteRules(R){
   return out;
 }
 function vInvite(code, by){
-  const g = Store.all('groups').find(x => (x.inviteCode || '').toUpperCase() === String(code || '').toUpperCase());
+  ui.invitePrev = ui.invitePrev || {}; const P = ui.invitePrev[code];
+  if (!P){ ui.invitePrev[code] = 'loading'; Store.http('GET', '/api/invite/' + encodeURIComponent(code)).then(r => { ui.invitePrev[code] = r; if (r.group) Store.inject('groups', r.group); render(); }, () => { ui.invitePrev[code] = { group: null }; render(); }); }
+  if (!P || P === 'loading') return '<div class="loading" style="min-height:30vh">Opening the invite…</div>';
+  const g = P.group ? Object.assign({}, Store.get('groups', P.group.id) || {}, P.group) : null;
   if (!g || g.inviteOff) return `<div class="panel empty" style="margin-top:24px">That invite link isn't valid anymore. Ask the person who sent it for a new one.</div>`;
   ui.inviteFor = g.id; ui.inviteCode = g.inviteCode; ui.inviteBy = by || null;
   try { localStorage.setItem('pi_src', JSON.stringify({ kind: 'group-invite', detail: g.id })); } catch(e){}
   const mine = Store.signedIn && Store.membership(g.id);
   if (mine && mine.role !== 'observer'){ setTimeout(() => { location.hash = '#/group/' + g.id; }, 0); return '<div class="loading">Opening the group…</div>'; }
-  const R = Store.rulesOf(g), n = Store.membersOf(g.id).filter(m => m.role !== 'observer').length;
-  const lead = Store.get('portfolios', g.leadPid), ret = lead ? Store.portfolioValue(lead) / (lead.startValue || Store.START_CASH) - 1 : null;
+  const R = Store.rulesOf(g), n = P.members, ret = P.leadReturn;
   const days = Math.max(1, Math.round((Date.now() - (g.createdTs || Date.now())) / 86400000));
   const back = '#/invite/' + g.inviteCode + (by ? '/' + by : '');
   const cta = !Store.signedIn ? `<button class="btn" data-act="invsignup" data-k="${esc(back)}" style="width:100%">Create a free account to join</button><p class="small" style="text-align:center;margin-top:10px">Already have an account? <button class="linkbtn" data-act="invsignin" data-k="${esc(back)}">Sign in</button></p>`
@@ -1920,7 +2008,7 @@ function vInvite(code, by){
       <div style="display:flex;gap:12px;align-items:center"><div class="avatar" style="background:${AV[Market.hash(g.id) % AV.length]};border-radius:12px">${esc(g.name.slice(0, 1))}</div><h1 style="margin:0">${esc(g.name)}</h1></div>
       ${g.strategy ? `<p style="margin:12px 0 0"><b>${esc(g.strategy)}</b></p>` : ''}${g.description ? `<p class="muted" style="margin:6px 0 0">${esc(g.description)}</p>` : ''}
       <div class="kv" style="margin-top:16px"><div><span>Members</span><b>${n}</b></div><div><span>Started</span><b>${days} day${days === 1 ? '' : 's'} ago</b></div>${ret != null ? `<div><span>Lead Trader's portfolio since it started</span><b class="${sgn(ret)}">${pct(ret)}</b></div>` : ''}</div>
-      ${(() => { const S = statsFor('group', g.id); return S && !S.none ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">${riskBadge(S)}<span class="tag">Worst drop ${(S.maxDrawdown * 100).toFixed(1)}%</span></div>` : ''; })()}
+      ${(() => { const S = g.pooled ? null : statsFor('group', g.id); return S && !S.none ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">${riskBadge(S)}<span class="tag">Worst drop ${(S.maxDrawdown * 100).toFixed(1)}%</span></div>` : ''; })()}
       <p class="hint" style="margin-top:8px">${Store.site.realMoney ? 'Practice-portfolio results. ' : 'Simulated money. '}Member names are shown once you join. Past results don't predict future returns.</p></div>
     <section class="block"><header><h2>How this group works</h2></header><div class="panel" style="padding:16px 20px"><ul style="margin:0;padding-left:20px;line-height:1.6">${inviteRules(R).map(x => `<li>${esc(x)}</li>`).join('')}</ul>
       ${R.rulesText ? `<details style="margin-top:10px"><summary>The Owner's group rules</summary><p style="white-space:pre-wrap" class="muted">${esc(R.rulesText)}</p></details>` : ''}</div></section>
@@ -2133,7 +2221,8 @@ function render(){
     case 'open': html = vOpenAccount(); break;
     case 'markets': html = vMarkets(); break;
     case 'security': html = vSecurity(); break;
-    case 'statements': html = vStatements(); break;
+    case 'statements': html = vPocketStatements(); break;
+    case 'documents': html = vStatements(); break;
     case 'join': html = Store.signedIn ? vHome() : vOnboard(); break;
     case 'terms': html = vLegal('terms'); break;
     case 'privacy': html = vLegal('privacy'); break;
@@ -2319,18 +2408,20 @@ function groupSheet(){
 }
 function proposalSheet(gid, presym){
   openModal(`<header><h2>New proposal</h2><button class="x" data-close aria-label="Close">×</button></header>
-    <div class="field"><label for="p-t">Type</label><select class="input" id="p-t"><option value="trade">Trade idea</option><option value="strategy">Strategy change</option><option value="policy">Policy change</option><option value="role">Role change</option></select></div>
+    <div class="field"><label for="p-t">Type</label><select class="input" id="p-t"><option value="trade">Trade idea</option><option value="strategy">Strategy change</option><option value="policy">Policy change</option><option value="role">Role change</option>${(Store.get('groups', gid) || {}).pooled ? '<option value="windDown">Close the club</option>' : ''}</select></div>
     <div id="p-trade" class="grid2"><div class="field"><label for="p-sym">Stock</label><select class="input" id="p-sym">${Market.LIST.map(t => `<option value="${t.s}">${t.s} — ${esc(t.n)}</option>`).join('')}</select></div>
       <div class="field"><label for="p-side">Action</label><select class="input" id="p-side"><option value="buy">Buy</option><option value="sell">Sell</option></select></div>
       <div class="field"><label for="p-pct">Size (% of the portfolio)</label><select class="input" id="p-pct"><option value="0.02">2%</option><option value="0.05" selected>5%</option><option value="0.1">10%</option></select></div></div>
+    <div id="p-role" class="grid2" style="display:none"><div class="field"><label for="p-rpid">Member</label><select class="input" id="p-rpid">${Store.membersOf(gid).map(m => `<option value="${m.pid}">${esc(Store.displayName(m.pid))} (${Store.ROLE_LABEL[m.role]})</option>`).join('')}</select></div>
+      <div class="field"><label for="p-rname">New role</label><select class="input" id="p-rname">${['owner','admin','lead','junior','analyst','risk','moderator','treasurer','asstTreasurer','member','observer'].map(r => `<option value="${r}">${Store.ROLE_LABEL[r]}</option>`).join('')}</select></div></div>
     <div class="field"><label for="p-title">Title</label><input class="input" id="p-title" maxlength="120" placeholder="e.g. Add $COST at 5% of the portfolio"></div>
     <div class="field"><label for="p-d">Details</label><textarea class="input" id="p-d" maxlength="800" placeholder="The case for it, and what happens if it passes"></textarea></div>
     <div class="field"><label for="p-days">Voting period</label><select class="input" id="p-days"><option value="1">1 day</option><option value="3" selected>3 days</option><option value="7">7 days</option></select></div>
     <button class="btn" id="p-go" style="width:100%">Open voting</button>`, sh => {
-    const tSel = sh.querySelector('#p-t'), syncT = () => { sh.querySelector('#p-trade').style.display = tSel.value === 'trade' ? '' : 'none'; }; tSel.onchange = syncT; syncT();
+    const tSel = sh.querySelector('#p-t'), syncT = () => { sh.querySelector('#p-trade').style.display = tSel.value === 'trade' ? '' : 'none'; sh.querySelector('#p-role').style.display = tSel.value === 'role' ? '' : 'none'; }; tSel.onchange = syncT; syncT();
     if (presym && sh.querySelector('#p-sym')){ sh.querySelector('#p-sym').value = presym; const ti = sh.querySelector('#p-title'); if (ti && !ti.value) ti.value = 'Buy $' + presym; }
     sh.querySelector('#p-go').onclick = async () => {
-      try { await Store.propose(gid, { type: tSel.value, title: sh.querySelector('#p-title').value, details: sh.querySelector('#p-d').value, days: sh.querySelector('#p-days').value, sym: sh.querySelector('#p-sym').value, side: sh.querySelector('#p-side').value, pct: sh.querySelector('#p-pct').value });
+      try { await Store.propose(gid, { type: tSel.value, title: sh.querySelector('#p-title').value, details: sh.querySelector('#p-d').value, days: sh.querySelector('#p-days').value, sym: sh.querySelector('#p-sym').value, side: sh.querySelector('#p-side').value, pct: sh.querySelector('#p-pct').value, rolePid: tSel.value === 'role' ? sh.querySelector('#p-rpid').value : undefined, roleName: tSel.value === 'role' ? sh.querySelector('#p-rname').value : undefined });
         closeModal(); toast('Voting is open.'); } catch(e){ errToast(e); }
     };
   });
@@ -2665,9 +2756,18 @@ async function act(el, ev){ /* eslint-disable-line */
     case 'copyonce': { const o = el.dataset.gid ? { gid: el.dataset.gid } : { pid: id }; if (!Store.isPro()) return upgradeSheet(() => copyOnceSheet(o)); return copyOnceSheet(o); }
     case 'cbsetup': return busy(async () => { const gid = el.dataset.gid; ui.club[gid] = await Store.http('POST', `/api/club/${gid}/setup`, { startDate: document.getElementById('cb-d').value, dues: document.getElementById('cb-u').value }); ui.club[gid].canEdit = true; toast('Club books started.'); render(); });
     case 'cbentry': return clubEntrySheet(el.dataset.gid, el.dataset.k);
+    case 'stbuild': { const v = id2 => (document.getElementById(id2) || {}).value; ui.stAcc = +v('st-acc') || 0; const P = ui.stP; P.type = v('st-type') || P.type;
+      if (v('st-m')) P.month = v('st-m'); if (v('st-q')) P.q = v('st-q'); if (v('st-y')) P.year = v('st-y'); if (v('st-d')) P.asof = v('st-d'); if (v('st-f') != null) P.from = v('st-f') || P.from; if (v('st-t') != null) P.to = v('st-t') || P.to;
+      const per = stPeriod(), acc = ui.stList.accounts[ui.stAcc]; if (!per.from || !per.to) { toast('Pick the dates.'); return; }
+      return busy(async () => { const qy = stQuery(acc, per); const r = await Store.http('GET', '/api/statements/build?' + qy); ui.stShown = { data: r.statement, links: { pdf: '/api/statements/build.pdf?' + qy, csv: '/api/statements/build.csv?' + qy } }; render(); }); }
+    case 'stopen': return busy(async () => { const r = await Store.http('GET', '/api/statements/' + id); ui.stShown = { data: r.statement, links: { pdf: '/api/statements/' + id + '.pdf', csv: '/api/statements/' + id + '.csv' } }; render(); });
     case 'cbupload': return uploadSheet(el.dataset.gid, el.dataset.k);
     case 'cbreview': return reviewSheet(el.dataset.gid, id, el.dataset.k, el.dataset.v);
     case 'potadd': return potSheet(el.dataset.gid, 'add');
+    case 'potexit': { const other = el.dataset.pid && el.dataset.pid !== Store.myPid; if (!confirm(other ? `Start an exit payout for ${Store.displayName(el.dataset.pid)}? Their full share is paid out after two approvals, and they leave the club.` : 'Leave the club? Your full share is paid to your portfolio after two approvals, and then you leave.')) return;
+      return busy(async () => { const r = await Store.clubRequestExit(el.dataset.gid, el.dataset.pid || undefined); ui.club = {}; ui.cwait = null; toast(r && r.left ? 'Done.' : 'Exit payout requested. Two approvals are needed.'); render(); }); }
+    case 'potsellall': if (!confirm('Sell every holding in the club account at market price?')) return; return busy(async () => { const r = await Store.clubLiquidate(el.dataset.gid); ui.club = {}; toast(`Sold ${r.sold} holding${r.sold === 1 ? '' : 's'}.`); render(); });
+    case 'potdistribute': return busy(async () => { await Store.clubDistribute(el.dataset.gid); ui.club = {}; toast('Final payout started. It needs two approvals.'); render(); });
     case 'potwd': return potSheet(el.dataset.gid, 'withdraw');
     case 'gwadd': return busy(async () => { const s = (document.getElementById('gw-s').value || '').trim().toUpperCase(); if (!s) throw Object.assign(new Error('Enter a stock symbol.'), { userFacing: true }); if (!Market.MAP[s]) await Store.ensureStock(s); await Store.addGroupWatch(el.dataset.gid, s, document.getElementById('gw-r').value); toast(s + ' added to the group watchlist.'); });
     case 'gwdel': return busy(async () => { await Store.removeGroupWatch(id); });
@@ -2685,7 +2785,11 @@ async function act(el, ev){ /* eslint-disable-line */
     case 'recdel': if (!confirm('Stop this recurring investment?')) return; return busy(async () => { await Store.deleteRecurring(el.dataset.k); toast('Stopped.'); });
     case 'adm-docreview': { const dec = el.dataset.k; const note = dec === 'declined' ? prompt('What needs to change? The club will see this note.') : (prompt('Note to the club (optional)') || ''); if (dec === 'declined' && !note) return;
       return busy(async () => { await Store.http('POST', '/api/admin/club-docs/review', { id, decision: dec, note }); ui.adocs = null; toast(dec === 'confirmed' ? 'Marked verified.' : 'Sent back with your note.'); render(); }); }
-    case 'cbdel': if (!confirm('Delete this entry? Units are recalculated for everything after it.')) return; return busy(async () => { const gid = el.dataset.gid; ui.club[gid] = await Store.http('POST', `/api/club/${gid}/delete`, { id }); ui.club[gid].canEdit = true; toast('Entry deleted.'); render(); });
+    case 'cbvoid': { const reason = prompt('Why is this entry being voided? Members will see this.'); if (!reason) return; return busy(async () => { const gid = el.dataset.gid; ui.club[gid] = await Store.http('POST', `/api/club/${gid}/void`, { id, reason }); toast('Entry voided. It stays on the ledger, marked as not counted.'); render(); }); }
+    case 'cbclose': { const note = prompt('Checked the books against the account statement? Add a note (optional).') ; if (note === null) return; return busy(async () => { const gid = el.dataset.gid; ui.club[gid] = await Store.http('POST', `/api/club/${gid}/close`, { month: el.dataset.k, note }); toast('Month closed. Another officer signs off to lock it.'); render(); }); }
+    case 'cbsign': return busy(async () => { const gid = el.dataset.gid; ui.club[gid] = await Store.http('POST', `/api/club/${gid}/signoff`, { month: el.dataset.k }); toast('Signed off. The month is locked.'); render(); });
+    case 'cbyrrev': { const note = prompt('Anything to note from your review? (optional)'); if (note === null) return; return busy(async () => { const gid = el.dataset.gid; ui.club[gid] = await Store.http('POST', `/api/club/${gid}/review-year`, { year: el.dataset.k, note }); toast('Thanks. The review is recorded.'); render(); }); }
+    case 'cblogall': ui.clubLogAll = true; return render();
     case 'cbyear': ui.clubYear = el.dataset.k; return render();
     case 'copy': if (!Store.isPro()) return upgradeSheet(() => Store.copyInvestor(id).then(() => toast(`You copy ${Store.displayName(id)}. Their trades will ask for your approval.`))); return busy(async () => { await Store.copyInvestor(id); toast(`You copy ${Store.displayName(id)}. Their trades will ask for your approval.`); });
     case 'uncopy': return busy(async () => { await Store.stopCopying(id); toast('Stopped copying.'); });
@@ -2698,7 +2802,7 @@ async function act(el, ev){ /* eslint-disable-line */
     case 'joinyes': return busy(async () => { await Store.decideJoin(id, true); toast('Request approved.'); });
     case 'joinno': return busy(async () => { await Store.decideJoin(id, false); toast('Request declined.'); });
     case 'invite': return inviteSheet(id);
-    case 'execprop': return busy(async () => { const g = Store.get('groups', Store.get('proposals', id).gid); const role = (Store.membership(g.id) || {}).role; const res = await Store.executeProposal(id, Store.canTradeFor(role) ? Store.myPid : g.leadPid); toast(`Decision executed: ${res.trade.side === 'buy' ? 'bought' : 'sold'} ${shs(res.trade.shares)} ${res.trade.sym}. ${res.sent} member${res.sent === 1 ? '' : 's'} asked to approve.`); });
+    case 'execprop': return busy(async () => { const g = Store.get('groups', Store.get('proposals', id).gid); const role = (Store.membership(g.id) || {}).role; const res = await Store.executeProposal(id, Store.canTradeFor(role) ? Store.myPid : g.leadPid); if (res.role){ toast(`${Store.displayName(res.pid)} is now ${Store.ROLE_LABEL[res.role]}.`); return; } if (res.windDown){ toast('The club is closing. Next: sell holdings, then pay everyone out.'); return; } toast(`Decision executed: ${res.trade.side === 'buy' ? 'bought' : 'sold'} ${shs(res.trade.shares)} ${res.trade.sym}${g.pooled ? ' for the club.' : `. ${res.sent} member${res.sent === 1 ? '' : 's'} asked to approve.`}`); });
     case 'demoexec': return busy(async () => { const res = await Store.executeProposal(id); toast(`${Store.displayName(res.trade.pid)} executed the decision. ${res.sent} member${res.sent === 1 ? '' : 's'} asked to approve.`); });
     case 'demojoins': return busy(async () => { const n = await Store.simulateJoinDecisions(); toast(n ? `${n} request${n === 1 ? '' : 's'} approved by sample owners.` : 'No pending requests to sample-owned groups.'); });
     case 'demoinvites': return busy(async () => { const gid = $('#v-g').value; const n = await Store.simulateInviteJoins(gid, 2); toast(n ? `${n} friend${n === 1 ? '' : 's'} joined from your invite.` : 'All sample friends have already joined.'); });
@@ -2742,7 +2846,7 @@ async function act(el, ev){ /* eslint-disable-line */
   }
 }
 document.addEventListener('click', ev => { const el = ev.target.closest('[data-act]'); if (!el || el.tagName === 'SELECT') return; if (el.tagName === 'A') ev.preventDefault(); act(el, ev); });
-document.addEventListener('change', ev => { const el = ev.target; if (el.dataset && el.dataset.act === 'setrisk'){ Store.setRisk(el.value).then(() => toast('Investing style updated.'), errToast); return; } if (el.dataset && el.dataset.act === 'role'){ Store.setRole(el.dataset.gid, el.dataset.pid, el.value).then(() => toast('Role updated.'), errToast); } });
+document.addEventListener('change', ev => { const el = ev.target; if (el.id === 'st-type' && ui.stP){ ui.stP.type = el.value; return render(); } if (el.id === 'st-acc'){ ui.stAcc = +el.value || 0; return; } if (el.dataset && el.dataset.act === 'setrisk'){ Store.setRisk(el.value).then(() => toast('Investing style updated.'), errToast); return; } if (el.dataset && el.dataset.act === 'role'){ Store.setRole(el.dataset.gid, el.dataset.pid, el.value).then(() => toast('Role updated.'), errToast); } });
 document.addEventListener('input', ev => { const el = ev.target; if (el.dataset && el.dataset.draft) ui.drafts[el.dataset.draft] = el.value; });
 window.addEventListener('hashchange', () => { ui.feedLimit = 30; ui.stats = {}; if (route().name !== 'markets'){ ui.searchQ = ''; ui.search = null; } if (ui.lastRoute === 'feed' || ui.lastRoute === 'home') ui.lastSeenPost = Date.now(); ui.lastRoute = route().name; closeModal(); window.scrollTo(0, 0); if (route().name !== 'admin') ui.admin = null; if (route().name !== 'metrics') ui.usage = null; if (route().name !== 'settings') ui.pushState = null; if (route().name !== 'statements') ui.docs = null; if (route().name !== 'security') ui.sec = null; render(); if (route().name === 'notifications') setTimeout(() => Store.markSeen(), 1500); });
 

@@ -13,7 +13,17 @@ const num = v => { const n = Number(v); if (!Number.isFinite(n)) throw fail('Ent
 const sym = v => { if (!Market.MAP[v]) throw fail("That stock isn't in this demo."); return v; };
 const side = v => { if (v !== 'buy' && v !== 'sell') throw fail('Choose buy or sell.'); return v; };
 
-const ROLES = ['owner','admin','lead','junior','analyst','risk','moderator','treasurer','member','observer'];
+const ROLES = ['owner','admin','lead','junior','analyst','risk','moderator','treasurer','asstTreasurer','member','observer'];
+const ROLE_NAME = { owner:'Owner', admin:'Admin', lead:'Lead Trader', junior:'Junior Trader', analyst:'Analyst', risk:'Risk Manager', moderator:'Moderator', treasurer:'Treasurer', asstTreasurer:'Assistant Treasurer', member:'Member', observer:'Observer' };
+/* Club money controls: officers who can approve, roles that change only by member vote in a pooled
+   club, and a 7-day wait before someone newly given a money role can approve anything. */
+const MONEY_OFFICERS = ['owner','admin','treasurer','asstTreasurer'];
+const VOTED_ROLES = ['owner','admin','lead','treasurer','asstTreasurer'];
+const ROLE_WAIT = 3 * 86400000;
+function needTwoStep(ctx){ if (!ctx.twoStep) throw fail('Club money actions need two-step sign-in. Turn it on in your Profile, then try again.'); }
+/* Notifications ride along with the transaction's changes and are sent after it commits. */
+function notify(tx, pids, payload){ const p = [...new Set((pids || []).filter(Boolean))]; if (p.length) tx.__notes = (tx.__notes || []).concat([{ pids: p, payload }]); }
+async function eligibleApprovers(tx, gid, exclude){ const A = await approvers(tx, gid, exclude); return A.fallback ? A.others : A.officers; }
 const canTradeFor = r => ['owner','admin','lead'].includes(r);
 const canVote = r => !!r && r !== 'observer';
 const canManage = r => ['owner','admin'].includes(r);
@@ -160,6 +170,26 @@ async function executeProposal(tx, prid, leaderPid){
   const pr = t.pr;
   if (!(t.closed && t.result === 'passed')) throw fail('Only a passed proposal can be executed.');
   if (pr.executed) throw fail('This proposal was already executed.');
+  if (pr.type === 'windDown'){
+    const wg = await tx.get('groups', pr.gid); if (wg.windDown) throw fail('The club is already winding down.');
+    if (pr.status === 'open') await tx.update('proposals', prid, { status: 'passed', closedTs: Date.now() });
+    await tx.update('groups', pr.gid, { windDown: { ts: Date.now(), by: leaderPid, prid } });
+    await tx.update('proposals', prid, { executed: true, executedTs: Date.now(), executedBy: leaderPid });
+    await tx.set('posts', tx.newId(), { pid: leaderPid, ts: Date.now(), groupId: pr.gid, text: 'Members voted to close the club. Next: sell all holdings, then pay everyone out by their units.' });
+    await clubLog(tx, pr.gid, leaderPid, 'Members voted to wind down the club');
+    notify(tx, (await tx.find('memberships', { gid: pr.gid })).map(m => m.pid), { title: wg.name + ' is closing', body: 'Members voted to wind down the club. Holdings will be sold and everyone paid out.', url: '/#/group/' + pr.gid + '/club', tag: 'club-' + pr.gid });
+    return { windDown: true };
+  }
+  if (pr.rolePid){
+    const tm = await tx.get('memberships', pr.gid + '__' + pr.rolePid); if (!tm) throw fail('That person is no longer in the group.');
+    if (pr.status === 'open') await tx.update('proposals', prid, { status: 'passed', closedTs: Date.now() });
+    if (pr.roleName === 'owner'){ const g = await tx.get('groups', pr.gid); await tx.update('memberships', pr.gid + '__' + g.ownerPid, { role: 'admin', roleChangedTs: Date.now() }); await tx.update('groups', pr.gid, { ownerPid: pr.rolePid }); }
+    await applyRole(tx, pr.gid, pr.rolePid, tm.role, pr.roleName, leaderPid, prid);
+    const g2 = await tx.get('groups', pr.gid);
+    if (pr.roleName === 'lead') await tx.update('groups', pr.gid, { leadPid: pr.rolePid }); else if (g2.leadPid === pr.rolePid) await tx.update('groups', pr.gid, { leadPid: g2.ownerPid });
+    await tx.update('proposals', prid, { executed: true, executedTs: Date.now(), executedBy: leaderPid });
+    return { role: pr.roleName, pid: pr.rolePid };
+  }
   if (!pr.tradeSym) throw fail('This proposal has no trade attached.');
   const pg = await tx.get('groups', pr.gid);
   if (pg && pg.pooled){
@@ -328,8 +358,28 @@ async function runRecurring(tx){
   }
   return n;
 }
+A.clubLiquidate = async (tx, ctx, a) => {
+  const g = await tx.get('groups', a.gid); if (!g || !g.windDown) throw fail('Members have to vote to wind down the club first.');
+  if (!MONEY_OFFICERS.concat(['lead']).includes(await roleIn(tx, a.gid, ctx.pid))) throw fail('Only officers can sell the holdings.');
+  needTwoStep(ctx); if (!Market.canFillNow(await clockMode(tx))) throw fail('Markets are closed. Try again during market hours.');
+  const pot = await tx.get('portfolios', clubPid(a.gid)); let n = 0;
+  for (const [s, p] of Object.entries(pot.positions || {})){ await executeTrade(tx, clubPid(a.gid), s, 'sell', p.shares, { groupId: a.gid }); n++; }
+  await clubLog(tx, a.gid, ctx.pid, `Sold all ${n} holding${n === 1 ? '' : 's'} to close the club`); return { sold: n };
+};
+A.clubDistribute = async (tx, ctx, a) => {
+  const g = await tx.get('groups', a.gid); if (!g || !g.windDown) throw fail('Members have to vote to wind down the club first.'); if (g.closed) throw fail('The club is already closed.');
+  if (!MONEY_OFFICERS.includes(await roleIn(tx, a.gid, ctx.pid))) throw fail('Only officers with a money role can start the final payout.');
+  needTwoStep(ctx);
+  const pot = await tx.get('portfolios', clubPid(a.gid)); if (Object.keys(pot.positions || {}).length) throw fail('Sell all the holdings first.');
+  if ((await tx.query(`SELECT 1 FROM club_submissions WHERE gid = $1 AND data->>'kind' = 'distribution' AND data->>'status' = 'pending'`, [a.gid])).rows.length) throw fail('The final payout is already waiting for approval.');
+  const others = (await tx.find('memberships', { gid: a.gid })).filter(m => m.role !== 'observer' && m.pid !== ctx.pid).length;
+  await tx.query('INSERT INTO club_submissions (id, gid, pid, data) VALUES ($1, $2, $3, $4)', [tx.newId(), a.gid, ctx.pid, JSON.stringify({ kind: 'distribution', initiatedBy: ctx.pid, amount: pot.cash, note: 'Final payout to all members by units', status: 'pending', ts: Date.now(), approvals: [], needed: Math.max(1, Math.min(2, others)) })]);
+  await clubLog(tx, a.gid, ctx.pid, `Final payout of $${pot.cash.toFixed(2)} to all members started; needs approval`);
+  notify(tx, await eligibleApprovers(tx, a.gid, [ctx.pid]), { title: g.name + ': final payout to approve', body: 'The club is closing. Approve paying every member their share.', url: '/#/group/' + a.gid + '/club', tag: 'club-' + a.gid });
+};
 A.clubContribute = async (tx, ctx, a) => {
   const g = await tx.get('groups', a.gid); if (!g || !g.pooled) throw fail('This group is not a pooled club.');
+  if (g.windDown) throw fail('The club is winding down, so it no longer takes new money.');
   const r = await roleIn(tx, a.gid, ctx.pid); if (!r || r === 'observer') throw fail('Only full members can add money to the club.');
   const amount = Math.round(Number(a.amount) * 100) / 100; if (!(amount >= 1)) throw fail('Enter at least $1.');
   const mine = await tx.get('portfolios', ctx.pid, { lock: true }); if (!mine || amount > mine.cash + 0.005) throw fail('Not enough cash in your practice portfolio.');
@@ -338,24 +388,87 @@ A.clubContribute = async (tx, ctx, a) => {
   await clubEntry(tx, a.gid, { kind: 'payment', pid: ctx.pid, amount, note: str(a.note, 120) || 'Added to the club', by: ctx.pid });
   await tx.update('portfolios', ctx.pid, { cash: Math.round((mine.cash - amount) * 100) / 100 });
   await tx.update('portfolios', clubPid(a.gid), { cash: Math.round((pot.cash + amount) * 100) / 100, updatedTs: Date.now() });
+  await clubLog(tx, a.gid, ctx.pid, `Added $${amount.toFixed(2)} to the club`);
   return { amount };
+};
+A.clubRequestExit = async (tx, ctx, a) => {
+  const g = await tx.get('groups', a.gid); if (!g || !g.pooled) throw fail('This group is not a pooled club.');
+  if (g.windDown) throw fail('The club is winding down; everyone is paid out together.');
+  const target = a.pid || ctx.pid, myRole = await roleIn(tx, a.gid, ctx.pid), tr = await roleIn(tx, a.gid, target);
+  if (!tr) throw fail('Member not found.'); if (tr === 'owner') throw fail('The Owner hands over ownership by member vote before leaving.');
+  if (target !== ctx.pid){ if (!['owner','admin','treasurer'].includes(myRole)) throw fail('Only the Owner, an Admin or the Treasurer can start an exit payout for someone else.'); needTwoStep(ctx); }
+  const units = await unitsOf(tx, a.gid, target);
+  if (units <= 1e-6){ await tx.del('memberships', a.gid + '__' + target); if (g.leadPid === target) await tx.update('groups', a.gid, { leadPid: g.ownerPid }); return { left: true }; }
+  const open = (await tx.query(`SELECT 1 FROM club_submissions WHERE gid = $1 AND pid = $2 AND data->>'status' = 'pending' AND (data->>'exit')::boolean`, [a.gid, target])).rows.length; if (open) throw fail('An exit payout is already waiting for approval.');
+  const pot = await tx.get('portfolios', clubPid(a.gid)), S = await clubState(tx, a.gid), share = units / S.units * pv(pot);
+  const exclude = [target].concat(target === ctx.pid ? [] : [ctx.pid]);
+  const others = (await tx.find('memberships', { gid: a.gid })).filter(m => m.role !== 'observer' && !exclude.includes(m.pid)).length; if (!others) throw fail('Another member has to approve the payout.');
+  await tx.query('INSERT INTO club_submissions (id, gid, pid, data) VALUES ($1, $2, $3, $4)', [tx.newId(), a.gid, target, JSON.stringify({ kind: 'withdrawal', exit: true, initiatedBy: ctx.pid, amount: Math.round(share * 100) / 100, note: str(a.note, 300) || 'Leaving the club: full payout', status: 'pending', ts: Date.now(), approvals: [], needed: Math.min(2, others) })]);
+  const name = ((await tx.get('profiles', target)) || {}).name || 'A member';
+  await clubLog(tx, a.gid, ctx.pid, `Exit payout requested for ${name} (about $${share.toFixed(2)})`);
+  notify(tx, await eligibleApprovers(tx, a.gid, exclude), { title: g.name + ': exit payout to approve', body: `${name} is leaving the club. Two approvals are needed to pay out their share.`, url: '/#/group/' + a.gid + '/club', tag: 'club-' + a.gid });
 };
 A.clubRequestWithdrawal = async (tx, ctx, a) => {
   const g = await tx.get('groups', a.gid); if (!g || !g.pooled) throw fail('This group is not a pooled club.');
+  if (g.windDown) throw fail('The club is winding down; everyone is paid out together.');
   const r = await roleIn(tx, a.gid, ctx.pid); if (!r || r === 'observer') throw fail('Only full members can withdraw.');
   const amount = Math.round(Number(a.amount) * 100) / 100; if (!(amount >= 1)) throw fail('Enter at least $1.');
   const pot = await tx.get('portfolios', clubPid(a.gid)), S = await clubState(tx, a.gid), me = S.members.find(m => m.pid === ctx.pid);
   const share = me && S.units > 1e-9 ? me.units / S.units * pv(pot) : 0;
   if (amount > share + 0.005) throw fail(`Your share of the club is worth about $${share.toFixed(2)}.`);
-  await tx.query('INSERT INTO club_submissions (id, gid, pid, data) VALUES ($1, $2, $3, $4)', [tx.newId(), a.gid, ctx.pid, JSON.stringify({ kind: 'withdrawal', amount, note: str(a.note, 300), status: 'pending', ts: Date.now() })]);
+  const others = (await tx.find('memberships', { gid: a.gid })).filter(m => m.role !== 'observer' && m.pid !== ctx.pid).length;
+  if (!others) throw fail('Another member has to approve withdrawals, and you are the only member.');
+  await tx.query('INSERT INTO club_submissions (id, gid, pid, data) VALUES ($1, $2, $3, $4)', [tx.newId(), a.gid, ctx.pid, JSON.stringify({ kind: 'withdrawal', amount, note: str(a.note, 300), status: 'pending', ts: Date.now(), approvals: [], needed: Math.min(2, others) })]);
+  await clubLog(tx, a.gid, ctx.pid, `Withdrawal of $${amount.toFixed(2)} requested`);
+  notify(tx, await eligibleApprovers(tx, a.gid, [ctx.pid]), { title: g.name + ': withdrawal to approve', body: `A $${amount.toFixed(2)} withdrawal needs two approvals.`, url: '/#/group/' + a.gid + '/club', tag: 'club-' + a.gid });
 };
 A.clubDecideWithdrawal = async (tx, ctx, a) => {
   const row = (await tx.query('SELECT id, gid, pid, data FROM club_submissions WHERE id = $1 FOR UPDATE', [a.id])).rows[0];
-  if (!row || row.data.kind !== 'withdrawal') throw fail('Request not found.');
-  if (!['owner','admin','treasurer'].includes(await roleIn(tx, row.gid, ctx.pid))) throw fail('Only the Treasurer, Owner or Admins can decide withdrawals.');
+  if (!row || !['withdrawal', 'distribution'].includes(row.data.kind)) throw fail('Request not found.');
   if (row.data.status !== 'pending') throw fail('This request was already decided.');
-  const note = str(a.note, 300), patch = { status: a.decision === 'confirmed' ? 'confirmed' : 'declined', reviewNote: note, reviewerPid: ctx.pid, reviewedTs: Date.now() };
-  if (patch.status === 'confirmed'){
+  needTwoStep(ctx);
+  if (row.data.kind === 'withdrawal' && row.pid === ctx.pid) throw fail("You can't approve your own withdrawal.");
+  if (row.data.initiatedBy === ctx.pid) throw fail('You started this request, so someone else approves it.');
+  const prior = (row.data.approvals || []).map(x => x.pid), base = (row.data.kind === 'withdrawal' ? [row.pid] : []).concat(row.data.initiatedBy ? [row.data.initiatedBy] : []);
+  if (prior.includes(ctx.pid)) throw fail('You already approved this. It needs a different second approver.');
+  if (!(await canApprove(tx, row.gid, ctx.pid, base.concat(prior)))) throw fail("You can't approve this one. Approvers are officers with a money role (after a 3-day wait if it's new), or any other member when no officer is available.");
+  const note = str(a.note, 300), approvals = (row.data.approvals || []).concat(a.decision === 'confirmed' ? [{ pid: ctx.pid, ts: Date.now(), note }] : []);
+  const needed = row.data.needed || 2;
+  if (a.decision === 'confirmed' && approvals.length < needed){
+    await tx.query('UPDATE club_submissions SET data = data || $2::jsonb WHERE id = $1', [a.id, JSON.stringify({ approvals })]);
+    await clubLog(tx, row.gid, ctx.pid, `${row.data.kind === 'distribution' ? 'Final payout' : 'Withdrawal of $' + row.data.amount.toFixed(2)}: first approval`);
+    const gg = await tx.get('groups', row.gid);
+    notify(tx, await eligibleApprovers(tx, row.gid, base.concat(approvals.map(x => x.pid))), { title: gg.name + ': second approval needed', body: (row.data.kind === 'distribution' ? 'The final payout to all members' : `A $${row.data.amount.toFixed(2)} withdrawal`) + ' has one approval and needs a second.', url: '/#/group/' + row.gid + '/club', tag: 'club-' + row.gid });
+    return { waiting: true };
+  }
+  const patch = { status: a.decision === 'confirmed' ? 'confirmed' : 'declined', reviewNote: note, reviewerPid: ctx.pid, reviewedTs: Date.now(), approvals };
+  if (patch.status === 'declined' && !note) throw fail('Add a short note so the member knows why.');
+  if (patch.status === 'confirmed' && row.data.kind === 'distribution'){
+    const pot = await tx.get('portfolios', clubPid(row.gid), { lock: true });
+    if (Object.keys(pot.positions || {}).length) throw fail('Sell all the holdings first.');
+    const S = await clubState(tx, row.gid), uv = S.units > 1e-9 ? pv(pot) / S.units : 0; let left = pot.cash;
+    await clubEntry(tx, row.gid, { kind: 'valuation', amount: Math.round(pv(pot) * 100) / 100, note: 'Final valuation', by: ctx.pid });
+    const payees = S.members.filter(m => m.units > 1e-9);
+    for (let i = 0; i < payees.length; i++){
+      const m = payees[i], amt = i === payees.length - 1 ? Math.floor(left * 100) / 100 : Math.floor(m.units * uv * 100) / 100; if (amt <= 0) continue; left -= amt;
+      await clubEntry(tx, row.gid, { kind: 'withdrawal', pid: m.pid, amount: amt, note: 'Final payout', by: ctx.pid });
+      const mp = await tx.get('portfolios', m.pid, { lock: true }); if (mp) await tx.update('portfolios', m.pid, { cash: Math.round((mp.cash + amt) * 100) / 100 });
+    }
+    await tx.update('portfolios', clubPid(row.gid), { cash: Math.round(left * 100) / 100, updatedTs: Date.now() });
+    await tx.update('groups', row.gid, { closed: { ts: Date.now(), by: ctx.pid } });
+    await tx.set('posts', tx.newId(), { pid: ctx.pid, ts: Date.now(), groupId: row.gid, text: 'The club is closed. Every member was paid out their share.' });
+  } else if (patch.status === 'confirmed' && row.data.exit){
+    const pot = await tx.get('portfolios', clubPid(row.gid), { lock: true }), S = await clubState(tx, row.gid), mm = S.members.find(x => x.pid === row.pid);
+    const amount = mm && S.units > 1e-9 ? Math.floor(mm.units / S.units * pv(pot) * 100) / 100 : 0;
+    if (amount > pot.cash + 0.005) throw fail(`The club has $${pot.cash.toFixed(2)} in cash and the payout is $${amount.toFixed(2)}. Members can vote to sell holdings first.`);
+    await clubEntry(tx, row.gid, { kind: 'valuation', amount: Math.round(pv(pot) * 100) / 100, note: 'Automatic valuation', by: ctx.pid });
+    if (amount > 0) await clubEntry(tx, row.gid, { kind: 'withdrawal', pid: row.pid, amount, note: 'Exit payout', by: ctx.pid });
+    const mem = await tx.get('portfolios', row.pid, { lock: true });
+    await tx.update('portfolios', clubPid(row.gid), { cash: Math.round((pot.cash - amount) * 100) / 100, updatedTs: Date.now() });
+    if (mem) await tx.update('portfolios', row.pid, { cash: Math.round((mem.cash + amount) * 100) / 100 });
+    const gx = await tx.get('groups', row.gid); await tx.del('memberships', row.gid + '__' + row.pid); if (gx.leadPid === row.pid) await tx.update('groups', row.gid, { leadPid: gx.ownerPid });
+    patch.amount = amount;
+  } else if (patch.status === 'confirmed'){
     const pot = await tx.get('portfolios', clubPid(row.gid), { lock: true }), amount = row.data.amount;
     if (amount > pot.cash + 0.005) throw fail(`The club has $${pot.cash.toFixed(2)} in cash. Members can vote to sell holdings first.`);
     const S = await clubState(tx, row.gid), m = S.members.find(x => x.pid === row.pid), share = m && S.units > 1e-9 ? m.units / S.units * pv(pot) : 0;
@@ -367,6 +480,10 @@ A.clubDecideWithdrawal = async (tx, ctx, a) => {
     await tx.update('portfolios', row.pid, { cash: Math.round((mem.cash + amount) * 100) / 100 });
   }
   await tx.query('UPDATE club_submissions SET data = data || $2::jsonb WHERE id = $1', [a.id, JSON.stringify(patch)]);
+  const what = row.data.kind === 'distribution' ? 'Final payout to all members' : row.data.exit ? 'Exit payout' : `Withdrawal of $${row.data.amount.toFixed(2)}`;
+  await clubLog(tx, row.gid, ctx.pid, `${what} ${patch.status === 'confirmed' ? 'approved and paid' : 'declined'}`);
+  const gz = await tx.get('groups', row.gid), all = (await tx.find('memberships', { gid: row.gid })).map(m => m.pid).concat([row.pid]);
+  notify(tx, row.data.kind === 'distribution' ? all : [row.pid], { title: gz.name + ': ' + (patch.status === 'confirmed' ? 'paid out' : 'request declined'), body: patch.status === 'confirmed' ? `${what} was approved and paid.` : `${what} was declined${note ? ': ' + note : '.'}`, url: '/#/group/' + row.gid + '/club', tag: 'club-' + row.gid });
 };
 async function checkJoin(tx, g, pid, rules){
   const ms = await tx.find('memberships', { gid: g.id });
@@ -392,26 +509,52 @@ A.join = async (tx, ctx, a) => {
 };
 A.groupByCode = async (tx, ctx, a) => { const g = (await tx.find('groups', { inviteCode: String(a.code || '').toUpperCase() }))[0]; if (!g || g.inviteOff) throw fail("That invite link isn't valid anymore."); return g.id; };
 A.setInviteLink = async (tx, ctx, a) => { if (!canManage(await roleIn(tx, a.gid, ctx.pid))) throw fail('Only Owners and Admins can change the invite link.'); await tx.update('groups', a.gid, { inviteOff: !a.on }); };
-A.leave = async (tx, ctx, a) => { const r = await roleIn(tx, a.gid, ctx.pid); if (!r) return; if (r === 'owner') throw fail("Owners can't leave their own group."); await tx.del('memberships', a.gid + '__' + ctx.pid); };
+async function unitsOf(tx, gid, pid){ const S = await clubState(tx, gid), m = S.members.find(x => x.pid === pid); return m ? m.units : 0; }
+A.leave = async (tx, ctx, a) => { const r = await roleIn(tx, a.gid, ctx.pid); if (!r) return; if (r === 'owner') throw fail("Owners can't leave their own group.");
+  const lg = await tx.get('groups', a.gid); if (lg && lg.pooled && (await unitsOf(tx, a.gid, ctx.pid)) > 1e-6) throw fail('You still own part of the club. Use "Leave and get paid out" on the Club books tab.'); await tx.del('memberships', a.gid + '__' + ctx.pid); };
 A.setRole = async (tx, ctx, a) => {
   if (!canManage(await roleIn(tx, a.gid, ctx.pid))) throw fail('Only Owners and Admins can change roles.');
   if (!ROLES.includes(a.role) || a.role === 'owner') throw fail('Unknown role.');
   const m = await tx.get('memberships', a.gid + '__' + a.pid); if (!m) throw fail('Member not found.'); if (m.role === 'owner') throw fail("The Owner's role can't be changed. Transfer ownership instead.");
   if (a.role !== 'observer' && !(await isPro(tx, a.pid))) throw fail('That person needs Pro for this role.');
-  await tx.update('memberships', a.gid + '__' + a.pid, { role: a.role });
+  const g0 = await tx.get('groups', a.gid);
+  if (g0 && g0.pooled && (VOTED_ROLES.includes(a.role) || VOTED_ROLES.includes(m.role))) throw fail('In a pooled club, money roles change by member vote. Create a role proposal.');
+  await applyRole(tx, a.gid, a.pid, m.role, a.role, ctx.pid, null);
   const g = await tx.get('groups', a.gid);
   if (a.role === 'lead') await tx.update('groups', a.gid, { leadPid: a.pid });
   else if (g.leadPid === a.pid) await tx.update('groups', a.gid, { leadPid: g.ownerPid });
 };
+async function applyRole(tx, gid, pid, from, to, by, prid){
+  const money = VOTED_ROLES.includes(to) || VOTED_ROLES.includes(from);
+  await tx.update('memberships', gid + '__' + pid, Object.assign({ role: to }, money ? { roleChangedTs: Date.now() } : {}));
+  if (money){
+    const name = ((await tx.get('profiles', pid)) || {}).name || 'A member';
+    await tx.set('posts', tx.newId(), { pid: by, ts: Date.now(), groupId: gid, text: `${name} is now ${ROLE_NAME[to]}${prid ? ' by member vote' : ''}. New money roles wait 3 days before approving anything.` });
+    await clubLog(tx, gid, by, `${name}: ${ROLE_NAME[from] || 'Member'} → ${ROLE_NAME[to]}${prid ? ' (member vote)' : ''}`);
+    const gn = await tx.get('groups', gid); notify(tx, (await tx.find('memberships', { gid })).map(m => m.pid), { title: (gn ? gn.name : 'Your group') + ': role change', body: `${name} is now ${ROLE_NAME[to]}. New money roles wait 3 days before approving anything.`, url: '/#/group/' + gid + '/members', tag: 'roles-' + gid });
+  }
+}
+async function clubLog(tx, gid, pid, text){ await tx.query('INSERT INTO club_log (gid, pid, text) VALUES ($1, $2, $3)', [gid, pid, String(text).slice(0, 300)]).catch(() => {}); }
+/* Who may approve a money action: never the person it benefits or anyone who already approved it.
+   Officers with a money role qualify (after the 7-day wait if their role changed); if no such officer
+   is available, any other full member can approve, so small clubs are never blocked. */
+async function approvers(tx, gid, exclude){
+  const ms = (await tx.find('memberships', { gid })).filter(m => m.role !== 'observer' && !exclude.includes(m.pid));
+  const officers = ms.filter(m => MONEY_OFFICERS.includes(m.role) && !(m.roleChangedTs && Date.now() - m.roleChangedTs < ROLE_WAIT));
+  return { officers: officers.map(m => m.pid), others: ms.map(m => m.pid), fallback: !officers.length };
+}
+async function canApprove(tx, gid, pid, exclude){ if (exclude.includes(pid)) return false; const A = await approvers(tx, gid, exclude); return A.fallback ? A.others.includes(pid) : A.officers.includes(pid); }
 A.removeMember = async (tx, ctx, a) => {
   if (!canManage(await roleIn(tx, a.gid, ctx.pid))) throw fail('Only Owners and Admins can remove members.');
   const m = await tx.get('memberships', a.gid + '__' + a.pid); if (!m) return; if (m.role === 'owner') throw fail("The Owner can't be removed.");
   if (a.pid === ctx.pid) throw fail('Use Leave group instead.');
+  const rg = await tx.get('groups', a.gid); if (rg && rg.pooled && (await unitsOf(tx, a.gid, a.pid)) > 1e-6) throw fail('They still own part of the club. Start an exit payout for them on the Club books tab first.');
   await tx.del('memberships', m.id);
   const g = await tx.get('groups', a.gid); if (g.leadPid === a.pid) await tx.update('groups', a.gid, { leadPid: g.ownerPid });
 };
 A.transferOwnership = async (tx, ctx, a) => {
   if ((await roleIn(tx, a.gid, ctx.pid)) !== 'owner') throw fail('Only the Owner can transfer ownership.');
+  const gx = await tx.get('groups', a.gid); if (gx && gx.pooled) throw fail('In a pooled club, ownership changes by member vote. Create a role proposal.');
   const m = await tx.get('memberships', a.gid + '__' + a.pid); if (!m || a.pid === ctx.pid) throw fail('Pick another member.');
   if (!(await isPro(tx, a.pid))) throw fail('The new Owner needs Pro.');
   await tx.update('memberships', m.id, { role: 'owner' });
@@ -455,8 +598,16 @@ A.propose = async (tx, ctx, a) => {
   if (!canPropose(await roleIn(tx, a.gid, ctx.pid), rules)) throw fail("Your role can't create proposals in this group.");
   if (a.type === 'trade' && a.sym) checkAllowed(rules, a.sym);
   const title = str(a.title, 120).trim(); if (!title) throw fail('Give the proposal a title.');
-  const now = Date.now(), type = ['trade','strategy','policy','role'].includes(a.type) ? a.type : 'trade';
-  const extra = type === 'trade' && a.sym ? { tradeSym: sym(a.sym), tradeSide: a.side === 'sell' ? 'sell' : 'buy', tradePct: Math.max(0.005, Math.min(0.5, Number(a.pct) || 0.05)) } : {};
+  const now = Date.now(), type = ['trade','strategy','policy','role','windDown'].includes(a.type) ? a.type : 'trade';
+  if (type === 'windDown' && !g.pooled) throw fail('Only a pooled club can be wound down.');
+  if (g.windDown && type === 'trade' && a.side !== 'sell') throw fail('The club is winding down, so it only sells.');
+  let extra = type === 'trade' && a.sym ? { tradeSym: sym(a.sym), tradeSide: a.side === 'sell' ? 'sell' : 'buy', tradePct: Math.max(0.005, Math.min(0.5, Number(a.pct) || 0.05)) } : {};
+  if (type === 'role' && a.rolePid){
+    const tm = await tx.get('memberships', a.gid + '__' + a.rolePid); if (!tm) throw fail('Pick a member of the group.');
+    if (!ROLES.includes(a.roleName) || a.roleName === tm.role) throw fail('Pick a new role for them.');
+    if (a.roleName !== 'observer' && !(await isPro(tx, a.rolePid))) throw fail('That person needs Pro for this role.');
+    extra = { rolePid: a.rolePid, roleName: a.roleName, roleFrom: tm.role };
+  }
   const id = tx.newId();
   await tx.set('proposals', id, Object.assign({ gid: a.gid, authorPid: ctx.pid, type, title, details: str(a.details, 800), createdTs: now, deadlineTs: now + Math.max(1, Math.min(14, Number(a.days) || rules.votingDays)) * 86400000, status: 'open' }, extra));
   return id;
@@ -691,4 +842,4 @@ async function deleteAccountDocs(tx, pid){
   await by('copyRequests', 'memberPid'); await by('joinRequests', 'pid'); await by('suggestions', 'pid'); await by('reports', 'reporterPid'); await by('trades', 'pid');
   await tx.del('portfolios', pid); await tx.del('profiles', pid);
 }
-module.exports = { actions: A, housekeeping, deleteAccountDocs, rulesOf, UserError, START_CASH, personalTrade, groupTrade, TAGS };
+module.exports = { canApprove, approvers, MONEY_OFFICERS, actions: A, housekeeping, deleteAccountDocs, rulesOf, UserError, START_CASH, personalTrade, groupTrade, TAGS };

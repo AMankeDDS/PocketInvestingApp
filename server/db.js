@@ -79,6 +79,7 @@ async function withTx(fn){
     await client.query('BEGIN');
     const out = await fn(tx);
     await client.query('COMMIT');
+    for (const n of tx.__notes || []) changes.push({ col: '_notify', pids: n.pids, payload: n.payload });
     return { out, changes };
   } catch (e){
     await client.query('ROLLBACK').catch(() => {});
