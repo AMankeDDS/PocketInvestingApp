@@ -32,7 +32,7 @@ app.set('trust proxy', 1);
 app.disable('x-powered-by');
 app.use(require('compression')());
 const jsonSmall = express.json({ limit: '50kb' }), jsonLarge = express.json({ limit: '8mb' });
-app.use((req, res, next) => (/^\/api\/club\/[^/]+\/submit$/.test(req.path) ? jsonLarge : jsonSmall)(req, res, next));
+app.use((req, res, next) => (/^\/api\/club\/[^/]+\/(submit|taxdoc)$/.test(req.path) ? jsonLarge : jsonSmall)(req, res, next));
 app.get(['/j/:code', '/j/:code/:by'], (req, res) => {
   const code = String(req.params.code || '').replace(/[^A-Za-z0-9]/g, '').slice(0, 16), by = String(req.params.by || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 40);
   res.redirect(302, '/#/invite/' + code + (by ? '/' + by : ''));
@@ -328,7 +328,7 @@ marketdata.mount(app, { q, wrap, ok, bad, needUser, needAdmin, getSetting: setti
 metrics.mount(app, { q, wrap, ok, bad, needAdmin, getSetting: setting, setSetting });
 stats.mount(app, { q, wrap, ok, bad, currentUser, isAdmin });
 club.mount(app, { q, wrap, ok, bad, needUser, needAdmin, isAdmin: u => isAdmin(u), push: (pids, payload) => push.send(db.pool, pids, payload).catch(() => 0) });
-require('./statements').mount(app, { q, wrap, ok, bad, needUser, needAdmin, isAdmin: u => isAdmin(u), push: (pids, payload) => push.send(db.pool, pids, payload).catch(() => 0) });
+require('./statements').mount(app, { realMoney: config.realMoney, q, wrap, ok, bad, needUser, needAdmin, isAdmin: u => isAdmin(u), push: (pids, payload) => push.send(db.pool, pids, payload).catch(() => 0) });
 
 /* ---------- the app ---------- */
 const pub = path.join(__dirname, '..', 'public');

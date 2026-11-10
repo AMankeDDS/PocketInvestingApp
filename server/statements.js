@@ -24,7 +24,9 @@ async function events(pid){
     const gid = pid.slice(5);
     (await q(`SELECT data FROM club_entries WHERE gid = $1`, [gid])).rows.map(r => r.data).filter(e => !e.voided && e.kind !== 'valuation' && e.pid).forEach(e => ev.push({ ts: e.ts, type: 'flow', flow: e.kind === 'payment' ? e.amount : -e.amount, desc: e.kind === 'payment' ? 'Member contribution' : 'Paid to member', who: e.pid }));
   } else {
-    (await q(`SELECT gid, data FROM club_entries WHERE data->>'pid' = $1`, [pid])).rows.filter(r => pooled.has(r.gid) && !r.data.voided && r.data.kind !== 'valuation').forEach(r => ev.push({ ts: r.data.ts, type: 'flow', flow: r.data.kind === 'payment' ? -r.data.amount : r.data.amount, gid: r.gid, desc: r.data.kind === 'payment' ? 'Moved to a pooled club' : 'Paid out from a pooled club' }));
+    for (const r of (await q(`SELECT gid, data FROM club_entries WHERE data->>'pid' = $1`, [pid])).rows.filter(r => pooled.has(r.gid) && !r.data.voided && r.data.kind !== 'valuation')){
+      const where = `${await gname(r.gid)} (${await Acc.member(r.gid, pid)})`;
+      ev.push({ ts: r.data.ts, type: 'flow', flow: r.data.kind === 'payment' ? -r.data.amount : r.data.amount, gid: r.gid, desc: r.data.kind === 'payment' ? 'Moved to ' + where : 'Paid out from ' + where }); }
   }
   return ev.sort((a, b) => a.ts - b.ts);
 }
@@ -39,68 +41,106 @@ function stateAt(cur, ev, T){
 }
 const px = (s, T) => T >= Date.now() - 60000 ? Market.price(s) : Market.price(s, T);
 const valueOf = (st, T) => st.cash + Object.entries(st.pos).reduce((a, [s, sh]) => a + Math.max(0, sh) * px(s, T), 0);
-/* Cost basis and realized gains by first-in, first-out lots. */
+/* First-in, first-out lots: cost basis of what's still held, open-lot dates, and each sale's realized gain. */
 function lotsAt(ev, T, from){
-  const lots = {}; let realized = 0;
+  const lots = {}; let realized = 0; const sales = [];
   ev.filter(e => e.type === 'trade' && e.ts <= T).forEach(e => {
-    if (e.side === 'buy'){ (lots[e.sym] = lots[e.sym] || []).push({ sh: e.shares, px: e.price }); return; }
+    if (e.side === 'buy'){ (lots[e.sym] = lots[e.sym] || []).push({ sh: e.shares, px: e.price, ts: e.ts }); return; }
     let left = e.shares; const L = lots[e.sym] || [];
-    while (left > 1e-6 && L.length){ const lot = L[0], use = Math.min(lot.sh, left); if (from != null && e.ts > from) realized += use * (e.price - lot.px); lot.sh -= use; left -= use; if (lot.sh < 1e-6) L.shift(); }
+    while (left > 1e-6 && L.length){ const lot = L[0], use = Math.min(lot.sh, left), g = use * (e.price - lot.px);
+      if (from == null || e.ts > from){ realized += g; sales.push({ ts: e.ts, sym: e.sym, shares: use, proceeds: use * e.price, cost: use * lot.px, gain: g, acquired: lot.ts, long: e.ts - lot.ts > 365 * DAY }); }
+      lot.sh -= use; left -= use; if (lot.sh < 1e-6) L.shift(); }
   });
-  const cost = {}; Object.entries(lots).forEach(([s, L]) => { cost[s] = L.reduce((a, l) => a + l.sh * l.px, 0); });
-  return { cost, realized };
+  const cost = {}, open = {}; Object.entries(lots).forEach(([s, L]) => { cost[s] = L.reduce((a, l) => a + l.sh * l.px, 0); open[s] = L.filter(l => l.sh > 1e-6); });
+  return { cost, realized, sales, open };
 }
 function dietz(begin, end, flows, from, to){
   const net = flows.reduce((a, f) => a + f.amount, 0), span = Math.max(1, to - from);
   const w = flows.reduce((a, f) => a + f.amount * (to - f.ts) / span, 0), base = begin + w;
   return base > 0.005 ? (end - begin - net) / base : null;
 }
+const SECTOR = { AAPL:'Technology', MSFT:'Technology', NVDA:'Technology', AMD:'Technology', GOOGL:'Communication', META:'Communication', NFLX:'Communication', DIS:'Communication', AMZN:'Consumer', TSLA:'Consumer', KO:'Consumer staples', COST:'Consumer staples', JPM:'Financials', V:'Financials', XOM:'Energy', JNJ:'Health care', O:'Real estate', SPY:'Broad market ETF', QQQ:'Broad market ETF', SCHD:'Dividend ETF' };
+const isETF = s => Market.ETFS.includes(s) || /ETF/.test(SECTOR[s] || '');
+/* The numbers for one account over one window. Gains are realized only when shares are sold; the
+   rest of the change in value is unrealized. begin + transfers + dividends + realized + unrealized = end. */
+function metrics(pf, ev, F, T){
+  const sF = stateAt(pf, ev, F), sT = stateAt(pf, ev, T), begin = valueOf(sF, F), end = valueOf(sT, T);
+  const inP = ev.filter(e => e.ts > F && e.ts <= T), flows = inP.filter(e => e.type === 'flow').map(e => ({ ts: e.ts, amount: e.flow }));
+  const deposits = flows.filter(f => f.amount > 0).reduce((a, f) => a + f.amount, 0), withdrawals = -flows.filter(f => f.amount < 0).reduce((a, f) => a + f.amount, 0);
+  const divs = inP.filter(e => e.type === 'dividend').reduce((a, e) => a + e.amount, 0), L = lotsAt(ev, T, F);
+  return { sT, begin, end, inP, flows, deposits, withdrawals, divs, realized: L.realized, unrealized: end - begin - deposits + withdrawals - divs - L.realized, ret: dietz(begin, end, flows, F, T), L };
+}
+const spyRet = (F, T) => { const a = Market.price('SPY', F), b = T >= Date.now() - 60000 ? Market.price('SPY') : Market.price('SPY', T); return a ? b / a - 1 : null; };
 /* Personal or club account statement (anything with its own portfolio). */
 async function accountStatement(pid, from, to, meta){
   const pf = ((await q('SELECT data FROM doc_portfolios WHERE id = $1', [pid])).rows[0] || {}).data; if (!pf) throw Object.assign(new Error('Account not found.'), { userFacing: true });
   const ev = await events(pid), F = dayStart(from), T = Math.min(dayEnd(to), Date.now()), asOf = from === to;
-  const sF = stateAt(pf, ev, F), sT = stateAt(pf, ev, T), begin = valueOf(sF, F), end = valueOf(sT, T);
-  const inP = ev.filter(e => e.ts > F && e.ts <= T), flows = inP.filter(e => e.type === 'flow').map(e => ({ ts: e.ts, amount: e.flow }));
-  const divs = inP.filter(e => e.type === 'dividend').reduce((a, e) => a + e.amount, 0), L = lotsAt(ev, T, F);
-  const holdings = Object.entries(sT.pos).filter(([, sh]) => sh > 1e-4).map(([s, sh]) => { const p = px(s, T), v = sh * p, c = L.cost[s] || 0; return [s, sh, p, v, c, v - c]; }).sort((a, b) => b[3] - a[3]);
-  const ret = dietz(begin, end, flows, F, T), deposits = flows.filter(f => f.amount > 0).reduce((a, f) => a + f.amount, 0), withdrawals = -flows.filter(f => f.amount < 0).reduce((a, f) => a + f.amount, 0);
-  const summary = asOf ? [['Account value', end, '$'], ['Cash', sT.cash, '$'], ['Invested', end - sT.cash, '$'], ['Unrealized gain or loss', holdings.reduce((a, h) => a + h[5], 0), '$']]
-    : [['Beginning value', begin, '$'], [meta.inLabel || 'Money in', deposits, '$'], [meta.outLabel || 'Money out', -withdrawals, '$'], ['Dividends', divs, '$'], ['Realized gains or losses', L.realized, '$'],
-       ['Change in market value', end - begin - deposits + withdrawals - divs, '$'], ['Ending value', end, '$'], ['Return for the period', ret, '%']];
-  const activity = inP.map(e => e.type === 'trade' ? [iso(e.ts), e.side === 'buy' ? 'Bought' : 'Sold', e.sym, e.shares, e.price, (e.side === 'buy' ? -1 : 1) * e.shares * e.price, e.copyOf ? (String(e.copyOf).startsWith('portfolio:') ? 'Copied portfolio' : 'Copied trade') : e.groupId ? 'Group trade' : '']
-    : e.type === 'dividend' ? [iso(e.ts), 'Dividend', e.sym, e.shares, null, e.amount, 'Practice estimate'] : [iso(e.ts), e.flow > 0 ? 'Transfer in' : 'Transfer out', '', null, null, e.flow, e.desc]);
-  const tables = [{ title: asOf ? 'Holdings on ' + to : 'Holdings at period end', columns: ['Stock', 'Shares', 'Price', 'Value', 'Cost', 'Gain or loss'], types: ['s', 'n3', '$', '$', '$', '$'], rows: holdings }];
-  if (!asOf) tables.push({ title: 'Activity', columns: ['Date', 'Type', 'Stock', 'Shares', 'Price', 'Amount', 'Note'], types: ['s', 's', 's', 'n3', '$', '$', 's'], rows: activity });
-  return { summary, tables, begin, end, ret };
+  const opened = Math.min((ev[0] || {}).ts || Date.now(), meta.openedTs || Date.now()), Y = Math.max(dayStart(to.slice(0, 4) + '-01-01'), opened - 1);
+  const M = metrics(pf, ev, F, T), YT = metrics(pf, ev, Y, T), SI = metrics(pf, ev, opened - 1, T);
+  const total = M.end, holdRows = Object.entries(M.sT.pos).filter(([, sh]) => sh > 1e-4).map(([s, sh]) => { const p = px(s, T), v = sh * p, c = M.L.cost[s] || 0, lots = M.L.open[s] || [], first = lots.length ? Math.min(...lots.map(l => l.ts)) : null;
+    const allLong = lots.length && lots.every(l => T - l.ts > 365 * DAY), allShort = lots.every(l => T - l.ts <= 365 * DAY);
+    return [s, sh, p, v, total > 0 ? v / total : 0, c, v - c, first ? iso(first) : '', !lots.length ? '' : allLong ? 'Long-term' : allShort ? 'Short-term' : 'Mixed']; }).sort((a, b) => b[3] - a[3]);
+  const summary = asOf ? [['Account value', M.end, '$'], ['Cash', M.sT.cash, '$'], ['Invested', M.end - M.sT.cash, '$'], ['Unrealized gains or losses (held stocks)', holdRows.reduce((a, h) => a + h[6], 0), '$']]
+    : [['Beginning value', M.begin, '$', YT.begin], [meta.inLabel || 'Money in', M.deposits, '$', YT.deposits], [meta.outLabel || 'Money out', -M.withdrawals, '$', -YT.withdrawals], ['Dividends', M.divs, '$', YT.divs],
+       ['Realized gains or losses (stocks sold)', M.realized, '$', YT.realized], ['Unrealized gains or losses (stocks still held)', M.unrealized, '$', YT.unrealized], ['Ending value', M.end, '$', YT.end], ['Return', M.ret, '%', YT.ret]];
+  const tables = [{ title: asOf ? 'Holdings on ' + to : 'Holdings at period end', columns: ['Stock', 'Shares', 'Price', 'Value', '% of account', 'Cost', 'Unrealized gain or loss', 'Held since', 'Holding period'], types: ['s', 'n3', '$', '$', '%', '$', '$', 's', 's'], rows: holdRows }];
+  /* allocation */
+  const etf = holdRows.filter(h => isETF(h[0])).reduce((a, h) => a + h[3], 0), stk = holdRows.filter(h => !isETF(h[0])).reduce((a, h) => a + h[3], 0), sec = {};
+  holdRows.forEach(h => { const k = SECTOR[h[0]] || 'Other'; sec[k] = (sec[k] || 0) + h[3]; });
+  tables.push({ title: 'Asset allocation', columns: ['Category', 'Value', '% of account'], types: ['s', '$', '%'], rows: [['Cash', M.sT.cash, total > 0 ? M.sT.cash / total : 0], ['Stocks', stk, total > 0 ? stk / total : 0], ['ETFs', etf, total > 0 ? etf / total : 0]].concat(Object.entries(sec).sort((a, b) => b[1] - a[1]).map(([k, v]) => ['   ' + k, v, total > 0 ? v / total : 0])) });
+  if (!asOf){
+    tables.push({ title: 'Performance', note: 'S&P 500 measured by the SPY fund price, without dividends. Past results do not predict future returns.', columns: ['Period', 'This account', 'S&P 500'], types: ['s', '%', '%'],
+      rows: [['This period', M.ret, spyRet(F, T)], ['Year to date', YT.ret, spyRet(Y, T)], ['Since opening (' + iso(opened) + ')', SI.ret, spyRet(opened, T)]] });
+    const dv = {}; M.inP.filter(e => e.type === 'dividend').forEach(e => { dv[e.sym] = dv[e.sym] || [0, 0]; dv[e.sym][0] += e.amount; }); YT.inP.filter(e => e.type === 'dividend').forEach(e => { dv[e.sym] = dv[e.sym] || [0, 0]; dv[e.sym][1] += e.amount; });
+    tables.push({ title: 'Dividend income', columns: ['Stock', 'This period', 'Year to date'], types: ['s', '$', '$'], rows: Object.entries(dv).map(([k, v]) => [k, v[0], v[1]]) });
+    const stP = M.L.sales.filter(x => !x.long).reduce((a, x) => a + x.gain, 0), ltP = M.L.sales.filter(x => x.long).reduce((a, x) => a + x.gain, 0), stY = YT.L.sales.filter(x => !x.long).reduce((a, x) => a + x.gain, 0), ltY = YT.L.sales.filter(x => x.long).reduce((a, x) => a + x.gain, 0);
+    tables.push({ title: 'Realized gains and losses', note: `Short-term ${money(stP)} and long-term ${money(ltP)} this period; short-term ${money(stY)} and long-term ${money(ltY)} year to date.`, columns: ['Sold', 'Stock', 'Shares', 'Acquired', 'Proceeds', 'Cost', 'Gain or loss', 'Term'], types: ['s', 's', 'n3', 's', '$', '$', '$', 's'],
+      rows: M.L.sales.map(x => [iso(x.ts), x.sym, x.shares, iso(x.acquired), x.proceeds, x.cost, x.gain, x.long ? 'Long-term' : 'Short-term']) });
+    tables.push({ title: 'Activity', columns: ['Date', 'Type', 'Stock', 'Shares', 'Price', 'Amount', 'Note'], types: ['s', 's', 's', 'n3', '$', '$', 's'], rows: M.inP.map(e => e.type === 'trade' ? [iso(e.ts), e.side === 'buy' ? 'Bought' : 'Sold', e.sym, e.shares, e.price, (e.side === 'buy' ? -1 : 1) * e.shares * e.price, e.copyOf ? (String(e.copyOf).startsWith('portfolio:') ? 'Copied portfolio' : 'Copied trade') : e.groupId ? 'Group trade' : '']
+      : e.type === 'dividend' ? [iso(e.ts), 'Dividend', e.sym, e.shares, null, e.amount, 'Practice estimate'] : [iso(e.ts), e.flow > 0 ? 'Transfer in' : 'Transfer out', '', null, null, e.flow, e.desc]) });
+  }
+  return { summary, tables, begin: M.begin, end: M.end, ret: M.ret, ytd: !asOf };
 }
-/* A member's stake in a club, from the club ledger (and the club account, for pooled clubs). */
-async function memberStatement(gid, pid, from, to){
+/* A member's stake in a club over a window, from the club ledger (and the club account, for pooled clubs). */
+async function memberMetrics(gid, pid, F, T){
   const pooled = (await pooledSet()).has(gid), B = ((await q('SELECT data FROM club_books WHERE gid = $1', [gid])).rows[0] || {}).data; if (!B) throw Object.assign(new Error('This club has no books yet.'), { userFacing: true });
   const E = (await q('SELECT id, data FROM club_entries WHERE gid = $1', [gid])).rows.map(r => Object.assign({ id: r.id }, r.data)).filter(e => !e.voided);
-  const F = dayStart(from), T = Math.min(dayEnd(to), Date.now()), asOf = from === to;
   const upTo = t => E.filter(e => (e.ts && pooled ? e.ts <= t : e.date <= iso(t)));
   let pf = null, pev = null; if (pooled){ pf = ((await q('SELECT data FROM doc_portfolios WHERE id = $1', ['club_' + gid])).rows[0] || {}).data; pev = await events('club_' + gid); }
   const at = t => { const R = replay(upTo(t), B.startUnitValue), m = R.members[pid] || { units: 0, paid: 0, withdrawn: 0 };
     const clubV = pooled ? valueOf(stateAt(pf, pev, t), t) : R.value, uv = R.units > 1e-9 ? clubV / R.units : B.startUnitValue; return { units: m.units, uv, value: m.units * uv, share: R.units > 1e-9 ? m.units / R.units : 0, paid: m.paid, withdrawn: m.withdrawn, R }; };
-  const a = at(F), b = at(T);
-  const mine = E.filter(e => e.pid === pid && (pooled ? e.ts > F && e.ts <= T : e.date > iso(F) && e.date <= iso(T)));
-  const flows = mine.map(e => ({ ts: e.ts || dayEnd(e.date), amount: e.kind === 'payment' ? e.amount : -e.amount }));
-  let div = 0, gains = 0;
-  if (pooled){ const inP = pev.filter(e => e.ts > F && e.ts <= T), L = [];
-    const lotsAll = {}; pev.filter(e => e.type === 'trade' && e.ts <= T).forEach(e => { if (e.side === 'buy'){ (lotsAll[e.sym] = lotsAll[e.sym] || []).push({ sh: e.shares, px: e.price }); return; } let left = e.shares; const LL = lotsAll[e.sym] || []; while (left > 1e-6 && LL.length){ const lot = LL[0], use = Math.min(lot.sh, left); if (e.ts > F) L.push({ ts: e.ts, g: use * (e.price - lot.px) }); lot.sh -= use; left -= use; if (lot.sh < 1e-6) LL.shift(); } });
-    const shareAt = t => { const x = at(t); return x.R.units > 1e-9 ? (x.R.members[pid] || { units: 0 }).units / x.R.units : 0; };
-    inP.filter(e => e.type === 'dividend').forEach(e => { div += e.amount * shareAt(e.ts); }); L.forEach(x => { gains += x.g * shareAt(x.ts); }); }
-  const net = flows.reduce((s, f) => s + f.amount, 0), ret = dietz(a.value, b.value, flows, F, T);
-  const summary = asOf ? [['Units', b.units, 'n3'], ['Unit value', b.uv, '$'], ['Value of your stake', b.value, '$'], ['Your share of the club', b.share, '%'], ['Paid in to date', b.paid, '$'], ['Withdrawn to date', b.withdrawn, '$']]
-    : [['Beginning value', a.value, '$'], ['Units at start', a.units, 'n3'], ['Contributions', flows.filter(f => f.amount > 0).reduce((s, f) => s + f.amount, 0), '$'], ['Withdrawals', flows.filter(f => f.amount < 0).reduce((s, f) => s + f.amount, 0), '$'],
-       ...(pooled ? [['Your share of dividends', div, '$'], ['Your share of realized gains', gains, '$']] : []), ['Change in value', b.value - a.value - net, '$'], ['Ending value', b.value, '$'], ['Units at end', b.units, 'n3'], ['Unit value at end', b.uv, '$'], ['Your share of the club', b.share, '%'], ['Return for the period', ret, '%']];
+  const a = at(F), b = at(T), mine = E.filter(e => e.pid === pid && (pooled ? e.ts > F && e.ts <= T : e.date > iso(F) && e.date <= iso(T)));
+  const flows = mine.map(e => ({ ts: e.ts || dayEnd(e.date), amount: e.kind === 'payment' ? e.amount : -e.amount })), net = flows.reduce((s, f) => s + f.amount, 0);
+  let div = 0, realized = 0;
+  if (pooled){ const shareAt = t => { const x = at(t); return x.R.units > 1e-9 ? (x.R.members[pid] || { units: 0 }).units / x.R.units : 0; };
+    pev.filter(e => e.type === 'dividend' && e.ts > F && e.ts <= T).forEach(e => { div += e.amount * shareAt(e.ts); });
+    lotsAt(pev, T, F).sales.forEach(x => { realized += x.gain * shareAt(x.ts); }); }
+  const change = b.value - a.value - net;
+  return { pooled, B, E, a, b, mine, flows, contributions: flows.filter(f => f.amount > 0).reduce((s, f) => s + f.amount, 0), withdrawals: -flows.filter(f => f.amount < 0).reduce((s, f) => s + f.amount, 0), div, realized, unrealized: change - div - realized, change, ret: dietz(a.value, b.value, flows, F, T) };
+}
+async function memberStatement(gid, pid, from, to){
+  const F = dayStart(from), T = Math.min(dayEnd(to), Date.now()), asOf = from === to, Y = dayStart(to.slice(0, 4) + '-01-01');
+  const M = await memberMetrics(gid, pid, F, T), YT = await memberMetrics(gid, pid, Math.min(Y, F), T);
+  const summary = asOf ? [['Units', M.b.units, 'n3'], ['Unit value', M.b.uv, '$'], ['Value of your stake', M.b.value, '$'], ['Your share of the club', M.b.share, '%'], ['Paid in to date', M.b.paid, '$'], ['Withdrawn to date', M.b.withdrawn, '$']]
+    : [['Beginning value', M.a.value, '$', YT.a.value], ['Contributions', M.contributions, '$', YT.contributions], ['Withdrawals', -M.withdrawals, '$', -YT.withdrawals],
+       ...(M.pooled ? [['Your share of dividends', M.div, '$', YT.div], ['Your share of realized gains (stocks sold)', M.realized, '$', YT.realized], ['Your share of unrealized gains (stocks still held)', M.unrealized, '$', YT.unrealized]] : [['Change in value (from club valuations)', M.change, '$', YT.change]]),
+       ['Ending value', M.b.value, '$', YT.b.value], ['Return', M.ret, '%', YT.ret], ['Units at end', M.b.units, 'n3'], ['Unit value at end', M.b.uv, '$'], ['Your share of the club', M.b.share, '%']];
   const tables = asOf ? [] : [{ title: 'Your activity', columns: ['Date', 'Type', 'Amount', 'Unit value', 'Units', 'Note'], types: ['s', 's', '$', '$', 'n3', 's'],
-    rows: replay(E, B.startUnitValue).entries.filter(e => e.pid === pid && mine.some(m => m.id === e.id)).map(e => [e.date, e.kind === 'payment' ? 'Contribution' : 'Withdrawal', e.kind === 'payment' ? e.amount : -e.amount, e.unitValue, e.kind === 'payment' ? e.units : -e.units, e.note || '']) }];
-  return { summary, tables };
+    rows: replay(M.E, M.B.startUnitValue).entries.filter(e => e.pid === pid && M.mine.some(m => m.id === e.id)).map(e => [e.date, e.kind === 'payment' ? 'Contribution' : 'Withdrawal', e.kind === 'payment' ? e.amount : -e.amount, e.unitValue, e.kind === 'payment' ? e.units : -e.units, e.note || '']) }];
+  return { summary, tables, ytd: !asOf };
+}
+/* Club stakes for the personal statement: pooled stakes count toward "Total on Pocket"; books-only clubs hold their money elsewhere, so they're listed as memo items. */
+async function clubStakes(pid, from, to){
+  const F = dayStart(from), T = Math.min(dayEnd(to), Date.now()), rows = [];
+  const gids = new Set((await q(`SELECT DISTINCT gid FROM club_entries WHERE data->>'pid' = $1`, [pid])).rows.map(r => r.gid));
+  for (const r of (await q(`SELECT data FROM doc_memberships WHERE data->>'pid' = $1`, [pid])).rows) if (r.data.role !== 'observer' && (await q('SELECT 1 FROM club_books WHERE gid = $1', [r.data.gid])).rows.length) gids.add(r.data.gid);
+  for (const gid of gids){ const M = await memberMetrics(gid, pid, F, T); if (M.b.units < 1e-6 && M.a.units < 1e-6 && !M.flows.length) continue;
+    rows.push([await gname(gid), await Acc.member(gid, pid), M.pooled ? 'Pooled (on Pocket)' : 'Books only (memo)', M.b.units, M.b.uv, M.b.value, M.b.share, M.contributions, -M.withdrawals, M.pooled]); }
+  return rows;
 }
 async function clubStatement(gid, from, to){
   const pooled = (await pooledSet()).has(gid), F = dayStart(from), T = Math.min(dayEnd(to), Date.now()), asOf = from === to;
-  const out = pooled ? await accountStatement('club_' + gid, from, to, { inLabel: 'Member contributions', outLabel: 'Paid to members' }) : { summary: [], tables: [] };
+  const out = pooled ? await accountStatement('club_' + gid, from, to, { inLabel: 'Member contributions', outLabel: 'Paid to members', openedTs: ((((await q('SELECT data FROM doc_groups WHERE id = $1', [gid])).rows[0]) || {}).data || {}).createdTs }) : { summary: [], tables: [] };
   const B = ((await q('SELECT data FROM club_books WHERE gid = $1', [gid])).rows[0] || {}).data || { startUnitValue: 10 };
   const E = (await q('SELECT id, data FROM club_entries WHERE gid = $1', [gid])).rows.map(r => Object.assign({ id: r.id }, r.data));
   const live = E.filter(e => !e.voided), R = replay(live.filter(e => (pooled && e.ts ? e.ts <= T : e.date <= iso(T))), B.startUnitValue);
@@ -121,6 +161,26 @@ async function clubStatement(gid, from, to){
   return out;
 }
 const await0 = p => p;
+const CONTACT = () => `Questions or errors? Use Send feedback in the app or email ${process.env.SUPPORT_EMAIL || 'admin@pocketinvesting.com'} within 30 days of this statement, and include your account number.`;
+async function pendingItems(pid){
+  const rows = [];
+  for (const r of (await q(`SELECT data FROM doc_copy_requests WHERE data->>'memberPid' = $1 AND data->>'status' IN ('pending', 'queued')`, [pid])).rows.map(x => x.data))
+    rows.push([r.status === 'queued' ? 'Order waiting for market open' : 'Approval request', `${r.side === 'buy' ? 'Buy' : 'Sell'} ${r.sym}${r.gid ? ' (' + await gname(r.gid) + ')' : ' (copying ' + await pname(r.leaderPid) + ')'}`, r.expiresTs ? new Date(r.expiresTs).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : '']);
+  for (const r of (await q(`SELECT data FROM doc_recurring WHERE data->>'pid' = $1`, [pid])).rows.map(x => x.data)) if (!r.paused) rows.push(['Recurring buy', `${money(r.amount)} of ${r.sym}`, iso(r.nextTs)]);
+  for (const r of (await q(`SELECT gid, data FROM club_submissions WHERE pid = $1 AND data->>'status' = 'pending' AND data->>'kind' = 'withdrawal'`, [pid])).rows) rows.push([r.data.exit ? 'Club exit payout' : 'Club withdrawal', `${money(r.data.amount)} from ${await gname(r.gid)} (${(r.data.approvals || []).length} of ${r.data.needed || 2} approvals)`, '']);
+  for (const r of (await q(`SELECT s.gid, s.data FROM club_submissions s JOIN doc_memberships m ON m.id = s.gid || '__' || $1 WHERE s.data->>'kind' = 'distribution' AND s.data->>'status' = 'pending'`, [pid])).rows) rows.push(['Club final payout', `${await gname(r.gid)} is closing; payout waiting for approval`, '']);
+  return rows;
+}
+async function copyActivity(pid, F, T){
+  const by = {};
+  for (const r of (await q(`SELECT data FROM doc_copy_requests WHERE data->>'memberPid' = $1`, [pid])).rows.map(x => x.data)){
+    if (!(r.createdTs > F && r.createdTs <= T)) continue;
+    const key = r.gid ? 'g:' + r.gid : 'i:' + r.leaderPid, x = by[key] = by[key] || { name: r.gid ? await gname(r.gid) : 'Copying ' + await pname(r.leaderPid), n: 0, ok: 0, no: 0, missed: 0, diffs: [] };
+    x.n++; if (['filled', 'queued'].includes(r.status)) x.ok++; else if (r.status === 'declined') x.no++; else if (r.status === 'expired') x.missed++;
+    if (r.status === 'filled' && r.fillPrice && r.leaderPrice) x.diffs.push((r.fillPrice / r.leaderPrice - 1) * (r.side === 'buy' ? 1 : -1));
+  }
+  return Object.values(by).map(x => [x.name, x.n, x.ok, x.no, x.missed, x.diffs.length ? x.diffs.reduce((a, b) => a + b, 0) / x.diffs.length : null]);
+}
 /* Who may see which statement. */
 async function allowed(viewer, kind, gid, pid){
   if (viewer.isAdmin) return true;
@@ -135,36 +195,57 @@ async function build(kind, { gid, pid, from, to, label }){
   if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) throw Object.assign(new Error('Pick a valid period.'), { userFacing: true });
   if (to > iso(Date.now())) to = iso(Date.now());
   let body, title, account, holder, note;
-  if (kind === 'personal'){ body = await accountStatement(pid, from, to, { inLabel: 'Transfers in', outLabel: 'Transfers out' }); title = 'Practice account statement'; account = await Acc.personal(pid); holder = await pname(pid); note = 'Practice account record from Pocket Investing. Simulated money; not a brokerage statement. Dividends are practice estimates.'; }
+  if (kind === 'personal'){
+    const prof = ((await q('SELECT data FROM doc_profiles WHERE id = $1', [pid])).rows[0] || {}).data || {};
+    body = await accountStatement(pid, from, to, { inLabel: 'Transfers in', outLabel: 'Transfers out', openedTs: prof.createdTs }); title = 'Practice account statement'; account = await Acc.personal(pid); holder = prof.name || pid; note = 'Practice account record from Pocket Investing. Simulated money; not a brokerage statement. Dividends are practice estimates. Gains are realized only when stocks are sold.';
+    const stakes = await clubStakes(pid, from, to), pooledV = stakes.filter(x => x[9]).reduce((a, x) => a + x[5], 0);
+    if (stakes.length){ body.summary.push(['Pooled club stakes (practice money on Pocket)', pooledV, '$'], ['Total on Pocket', body.end + pooledV, '$']);
+      body.tables.splice(1, 0, { title: 'Club stakes', note: 'Pooled club stakes are practice money held on Pocket and count toward Total on Pocket. Books-only clubs keep their money at their own brokerage, so those stakes are listed for reference only. Each club has its own member statement.', columns: ['Club', 'Stake number', 'Type', 'Units', 'Unit value', 'Value', 'Share', 'Added', 'Withdrawn'], types: ['s', 's', 's', 'n3', '$', '$', '%', '$', '$'], rows: stakes.map(x => x.slice(0, 9)) }); }
+    if (to >= iso(Date.now() - 2 * DAY)) body.tables.push({ title: 'Pending items', note: 'Things that will change your account soon.', columns: ['Item', 'Details', 'When'], types: ['s', 's', 's'], rows: await pendingItems(pid) });
+    if (from !== to){
+      body.tables.push({ title: 'Copy activity', note: 'Trades sent to you by groups and investors you copy. Price difference: how your fill compared with the original trade (positive means you paid more on a buy or got less on a sale).', columns: ['Source', 'Requests', 'Approved', 'Declined', 'Missed', 'Avg. price difference'], types: ['s', 'n3', 'n3', 'n3', 'n3', '%'], rows: await copyActivity(pid, dayStart(from), Math.min(dayEnd(to), Date.now())) });
+      body.tables.push({ title: 'Fees and charges', note: 'Subscriptions are free during the beta.', columns: ['Item', 'This period'], types: ['s', '$'], rows: [['Pro subscription', 0], ['Group Pro', 0], ['Trading commissions', 0]] }); }
+  }
   else if (kind === 'member'){ body = await memberStatement(gid, pid, from, to); title = 'Club member statement: ' + await gname(gid); account = await Acc.member(gid, pid); holder = await pname(pid); note = "A record of this member's stake in the club, kept in the club's books on Pocket Investing. Not a brokerage statement" + ((await pooledSet()).has(gid) ? '; this pooled club uses practice money during the beta.' : '; the club\'s money is held at its own brokerage.'); }
   else if (kind === 'club'){ body = await clubStatement(gid, from, to); title = 'Club statement: ' + await gname(gid); account = await Acc.club(gid); holder = await gname(gid); note = "The club's own records on Pocket Investing. Not a brokerage statement" + ((await pooledSet()).has(gid) ? '; this pooled club uses practice money during the beta.' : '; the brokerage holding the club\'s money issues the official statement.'); }
   else throw Object.assign(new Error('Unknown statement type.'), { userFacing: true });
-  return { kind, gid: gid || null, pid: pid || null, title, account, holder, period: { from, to, label: label || (from === to ? 'As of ' + to : from + ' to ' + to) }, generatedTs: Date.now(), note, summary: body.summary, tables: body.tables };
+  return { contact: CONTACT(), summaryCols: body.ytd ? ['This period', 'Year to date'] : null, kind, gid: gid || null, pid: pid || null, title, account, holder, period: { from, to, label: label || (from === to ? 'As of ' + to : from + ' to ' + to) }, generatedTs: Date.now(), note, summary: body.summary, tables: body.tables };
 }
 /* ---------- rendering ---------- */
 const money = v => v == null ? '' : (v < 0 ? '-' : '') + '$' + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const fmt = (v, t) => v == null || v === '' ? '' : t === '$' ? money(v) : t === '%' ? (v * 100).toFixed(2) + '%' : t === 'n3' ? Number(v).toLocaleString('en-US', { maximumFractionDigits: 3 }) : String(v);
+const fmt = (v, t) => v == null || v === '' ? '' : t === '$' ? money(Math.abs(v) < 0.005 ? 0 : v) : t === '%' ? (Math.abs(v) < 0.00005 ? 0 : v * 100).toFixed(2) + '%' : t === 'n3' ? Number(v).toLocaleString('en-US', { maximumFractionDigits: 3 }) : String(v);
 const pdfSafe = s => String(s).replace(/→/g, '->').replace(/[−–]/g, '-').replace(/•/g, '*');
 function csv(S){
   const c = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"', lines = [[S.title], ['Account', S.account], ['Holder', S.holder], ['Period', S.period.label], [S.note], [], ['Summary']].map(r => r.map(c).join(','));
-  S.summary.forEach(([k, v, t]) => lines.push([k, fmt(v, t)].map(c).join(',')));
-  S.tables.forEach(T => { lines.push('', c(T.title), T.columns.map(c).join(',')); T.rows.forEach(r => lines.push(r.map((v, i) => c(T.types[i] === 's' ? v : v == null ? '' : typeof v === 'number' ? (T.types[i] === '%' ? (v * 100).toFixed(4) : T.types[i] === 'n3' ? v.toFixed(4) : v.toFixed(2)) : v)).join(','))); });
+  if (S.summaryCols) lines.push(['', ...S.summaryCols].map(c).join(','));
+  S.summary.forEach(([k, v, t, y]) => lines.push([k, fmt(v, t)].concat(S.summaryCols ? [y === undefined ? '' : fmt(y, t)] : []).map(c).join(',')));
+  S.tables.forEach(T => { lines.push('', c(T.title)); if (T.note) lines.push(c(T.note)); lines.push(T.columns.map(c).join(',')); T.rows.forEach(r => lines.push(r.map((v, i) => c(T.types[i] === 's' ? v : v == null ? '' : typeof v === 'number' ? (T.types[i] === '%' ? (v * 100).toFixed(4) : T.types[i] === 'n3' ? v.toFixed(4) : v.toFixed(2)) : v)).join(','))); });
+  if (S.contact) lines.push('', c(S.contact));
   return lines.join('\n') + '\n';
 }
-function pdf(S, res){
+function pdf(S0, res, filename){
+  const list = Array.isArray(S0) ? S0 : [S0], S = list[0];
   const PDFDocument = require('pdfkit'); const doc = new PDFDocument({ size: 'LETTER', margins: { top: 54, bottom: 64, left: 54, right: 54 }, bufferPages: true, info: { Title: S.title, Author: 'Pocket Investing' } });
-  res.set('Content-Type', 'application/pdf'); res.set('Content-Disposition', `attachment; filename="statement-${S.account}-${S.period.from}-to-${S.period.to}.pdf"`); doc.pipe(res);
-  const W = doc.page.width - 108, ink = '#14213d', muted = '#5b6577';
-  doc.fillColor(ink).font('Helvetica-Bold').fontSize(18).text('Pocket Investing'); doc.moveDown(0.2).font('Helvetica-Bold').fontSize(13).text(pdfSafe(S.title));
+  res.set('Content-Type', 'application/pdf'); res.set('Content-Disposition', `attachment; filename="${filename || `statement-${S.account}-${S.period.from}-to-${S.period.to}.pdf`}"`); doc.pipe(res);
+  const footers = [], W = doc.page.width - 108, ink = '#14213d', muted = '#5b6577';
+  list.forEach((S, di) => { if (di) doc.addPage(); const startPage = doc.bufferedPageRange().count - 1;
+  const icon = require('path').join(__dirname, '..', 'public', 'icons', 'icon-192.png');
+  try { doc.image(icon, 54, 50, { width: 34 }); } catch (e){}
+  doc.fillColor(ink).font('Helvetica-Bold').fontSize(18).text('Pocket Investing', 96, 54); doc.font('Helvetica-Bold').fontSize(13).text(pdfSafe(S.title), 96, doc.y + 2); doc.x = 54; doc.y = Math.max(doc.y, 92);
   doc.moveDown(0.6).font('Helvetica').fontSize(10).fillColor('#18202e');
   [['Account number', S.account], ['Account holder', S.holder], ['Period', S.period.label], ['Prepared', new Date(S.generatedTs).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })]].forEach(([k, v]) => { doc.font('Helvetica-Bold').text(k + ': ', { continued: true }).font('Helvetica').text(pdfSafe(v)); });
   doc.moveDown(0.5).fontSize(8.5).fillColor(muted).text(pdfSafe(S.note), { width: W }); doc.moveDown(0.8);
-  const section = t => { if (doc.y > doc.page.height - 140) doc.addPage(); doc.moveDown(0.4).fillColor(ink).font('Helvetica-Bold').fontSize(11.5).text(pdfSafe(t)); doc.moveTo(54, doc.y + 2).lineTo(54 + W, doc.y + 2).strokeColor('#d5d9e0').lineWidth(0.7).stroke(); doc.moveDown(0.5); };
+  const section = t => { if (doc.y > doc.page.height - 140) doc.addPage(); doc.x = 54; doc.moveDown(0.4); doc.fillColor(ink).font('Helvetica-Bold').fontSize(11.5).text(pdfSafe(t), 54, doc.y, { width: W }); doc.moveTo(54, doc.y + 2).lineTo(54 + W, doc.y + 2).strokeColor('#d5d9e0').lineWidth(0.7).stroke(); doc.moveDown(0.5); };
   section('Summary'); doc.fontSize(10).fillColor('#18202e');
-  S.summary.forEach(([k, v, t]) => { const y = doc.y; doc.font('Helvetica').text(pdfSafe(k), 54, y, { width: W * 0.6 }); doc.font('Helvetica-Bold').text(pdfSafe(fmt(v, t)), 54 + W * 0.6, y, { width: W * 0.4, align: 'right' }); doc.moveDown(0.25); });
+  if (S.summaryCols){ const y = doc.y; doc.font('Helvetica-Bold').fontSize(8.5).fillColor(muted).text(S.summaryCols[0], 54 + W * 0.52, y, { width: W * 0.24, align: 'right' }).text(S.summaryCols[1], 54 + W * 0.76, y, { width: W * 0.24, align: 'right' }); doc.moveDown(0.3).fontSize(10).fillColor('#18202e'); }
+  S.summary.forEach(([k, v, t, yv]) => { const y = doc.y; doc.font('Helvetica').fontSize(10).text(pdfSafe(k), 54, y, { width: W * 0.52 });
+    if (S.summaryCols){ doc.font('Helvetica-Bold').text(pdfSafe(fmt(v, t)), 54 + W * 0.52, y, { width: W * 0.24, align: 'right' }); doc.font('Helvetica').text(yv === undefined ? '' : pdfSafe(fmt(yv, t)), 54 + W * 0.76, y, { width: W * 0.24, align: 'right' }); }
+    else doc.font('Helvetica-Bold').text(pdfSafe(fmt(v, t)), 54 + W * 0.6, y, { width: W * 0.4, align: 'right' });
+    doc.x = 54; doc.y = y + Math.max(15, doc.font('Helvetica').fontSize(10).heightOfString(pdfSafe(k), { width: W * 0.52 }) + 3); });
   S.tables.forEach(T => {
-    section(T.title); if (!T.rows.length){ doc.font('Helvetica').fontSize(9.5).fillColor(muted).text('None in this period.'); return; }
-    const n = T.columns.length, wts = T.columns.map((c, i) => T.types[i] === 's' && /Note|What|Member|Request|Type|Entry|By/.test(c) ? 2 : 1), tot = wts.reduce((a, b) => a + b, 0), cw = wts.map(x => W * x / tot);
+    section(T.title); if (T.note){ doc.font('Helvetica').fontSize(8).fillColor(muted).text(pdfSafe(T.note), 54, doc.y, { width: W }); doc.moveDown(0.3); }
+    if (!T.rows.length){ doc.font('Helvetica').fontSize(9.5).fillColor(muted).text('None in this period.', 54, doc.y); return; }
+    const n = T.columns.length, wts = T.columns.map((c, i) => /Stake number|Account/.test(c) ? 1.9 : /Withdrawn|Added/.test(c) ? 1.3 : T.types[i] === 's' && /Note|What|Member|Request|Type|Entry|By|Club|Source|Details/.test(c) ? 2 : 1), tot = wts.reduce((a, b) => a + b, 0), cw = wts.map(x => W * x / tot);
     const head = () => { let x = 54; const y = doc.y; doc.font('Helvetica-Bold').fontSize(8.5).fillColor(muted); T.columns.forEach((c, i) => { doc.text(pdfSafe(c), x, y, { width: cw[i] - 4, align: T.types[i] === 's' ? 'left' : 'right' }); x += cw[i]; }); doc.moveDown(0.3); doc.fillColor('#18202e'); };
     head();
     T.rows.forEach(r => { const cells = r.map((v, i) => pdfSafe(T.types[i] === 's' ? (v == null ? '' : v) : fmt(v, T.types[i])));
@@ -172,9 +253,11 @@ function pdf(S, res){
       if (doc.y + h > doc.page.height - 70){ doc.addPage(); head(); }
       let x = 54; const y = doc.y; cells.forEach((t, i) => { doc.font('Helvetica').fontSize(8.5).text(t, x, y, { width: cw[i] - 4, align: T.types[i] === 's' ? 'left' : 'right' }); x += cw[i]; }); doc.y = y + h; doc.x = 54; });
   });
+  if (S.contact){ if (doc.y > doc.page.height - 110) doc.addPage(); doc.moveDown(1); doc.font('Helvetica').fontSize(8.5).fillColor(muted).text(pdfSafe(S.contact), 54, doc.y, { width: W }); }
+  for (let i = startPage; i < doc.bufferedPageRange().count; i++) footers[i] = `${S.holder}  |  ${S.account}  |  ${S.period.label}`; });
   const range = doc.bufferedPageRange();
   for (let i = 0; i < range.count; i++){ doc.switchToPage(i); const bottom = doc.page.margins.bottom; doc.page.margins.bottom = 0;
-    doc.font('Helvetica').fontSize(8).fillColor(muted).text(pdfSafe(`${S.holder}  |  ${S.account}  |  ${S.period.label}  |  Page ${i + 1} of ${range.count}`), 54, doc.page.height - 40, { width: W, align: 'center' }); doc.page.margins.bottom = bottom; }
+    doc.font('Helvetica').fontSize(8).fillColor(muted).text(pdfSafe(`${footers[i] || ''}  |  Page ${i + 1} of ${range.count}`), 54, doc.page.height - 40, { width: W, align: 'center' }); doc.page.margins.bottom = bottom; }
   doc.end();
 }
 /* ---------- periods and automatic generation ---------- */
@@ -237,6 +320,28 @@ function mount(app, d){
   app.get('/api/statements/:id.pdf', wrap2(d, async (req, res) => { const S = await saved(req, res); if (S) pdf(S, res); }));
   app.get('/api/statements/:id.csv', wrap2(d, async (req, res) => { const S = await saved(req, res); if (S){ res.set('Content-Type', 'text/csv; charset=utf-8'); res.set('Content-Disposition', `attachment; filename="statement-${S.account}-${S.period.from}-to-${S.period.to}.csv"`); res.send(csv(S)); } }));
   app.get('/api/statements/:id', wrap2(d, async (req, res) => { const S = await saved(req, res); if (S) d.ok(res, { statement: S }); }));
+  /* Club tax packet: officers get the club worksheet, every member's K-1 worksheet and the detail; a member gets their own worksheet. */
+  const packet = async (req, res) => {
+    const V = await viewer(req, res); if (!V) return null; const gid = String(req.params.gid), year = String(req.query.year || new Date().getUTCFullYear() - 1);
+    if (!/^\d{4}$/.test(year)){ d.bad(res, 'Pick a tax year.'); return null; }
+    const officer = V.isAdmin || await allowed(V, 'club', gid, null), want = req.query.member ? String(req.query.member) : null;
+    if (!officer && !(await allowed(V, 'member', gid, V.pid))){ d.bad(res, "You don't have access to this club's tax packet.", 403); return null; }
+    const only = officer ? want : V.pid; return { docs: await require('./taxpack').build(q, gid, year, only), year, gid };
+  };
+  app.get('/api/club/:gid/tax-packet.pdf', wrap2(d, async (req, res) => { const P = await packet(req, res); if (!P) return; if (!P.docs.length) return d.bad(res, 'No members with club activity in that year.'); pdf(P.docs, res, `club-tax-packet-${P.year}.pdf`); }));
+  app.get('/api/club/:gid/tax-packet.csv', wrap2(d, async (req, res) => { const P = await packet(req, res); if (!P) return; res.set('Content-Type', 'text/csv; charset=utf-8'); res.set('Content-Disposition', `attachment; filename="club-tax-packet-${P.year}.csv"`); res.send(P.docs.map(csv).join('\n')); }));
+  app.get('/api/club/:gid/tax-packet', wrap2(d, async (req, res) => { const P = await packet(req, res); if (P) d.ok(res, { docs: P.docs }); }));
+  /* Real-money site: tell people when Alpaca posts new tax forms. */
+  if (d.realMoney){ const alpaca = require('./alpaca'); setInterval(async () => { try {
+    const seen = ((await q(`SELECT value FROM settings WHERE key = 'taxDocsSeen'`)).rows[0] || {}).value || {};
+    for (const a of (await q(`SELECT user_id, alpaca_id FROM broker_accounts WHERE status = 'ACTIVE'`)).rows){
+      const docs = ((await alpaca.listDocuments(a.alpaca_id).catch(() => [])) || []).filter(x => /tax|1099/i.test(String(x.type || x.name || '')));
+      const fresh = docs.filter(x => !(seen[a.user_id] || []).includes(x.id)); if (!fresh.length) continue;
+      if ((seen[a.user_id] || []).length) d.push(['u_' + a.user_id], { title: 'New tax documents', body: `${fresh.length} new tax document${fresh.length === 1 ? ' is' : 's are'} ready from Alpaca.`, url: '/#/statements', tag: 'tax' });
+      seen[a.user_id] = docs.map(x => x.id);
+    }
+    await q(`INSERT INTO settings (key, value) VALUES ('taxDocsSeen', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [JSON.stringify(seen)]);
+  } catch (e){ console.error('tax document alerts', e.message); } }, 12 * 3600000); }
   app.get('/api/admin/account/:num', wrap2(d, async (req, res) => {
     if (!(await d.needAdmin(req, res))) return; const num = String(req.params.num || '').trim().toUpperCase(); const f = await Acc.find(num);
     if (!f) return d.ok(res, { found: false, valid: Acc.valid(num) });
@@ -244,4 +349,4 @@ function mount(app, d){
   }));
 }
 const wrap2 = (d, fn) => d.wrap(fn);
-module.exports = { mount, build, generate, lastPeriods, events, stateAt, dietz };
+module.exports = { metrics, lotsAt, memberMetrics, pdfSafe, money, fmt, mount, build, generate, lastPeriods, events, stateAt, dietz };

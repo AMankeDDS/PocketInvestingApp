@@ -48,6 +48,7 @@ function mount(app, d){
     await q(`CREATE INDEX IF NOT EXISTS club_entries_gid ON club_entries (gid)`);
     await q(`CREATE TABLE IF NOT EXISTS club_submissions (id text PRIMARY KEY, gid text NOT NULL, pid text NOT NULL, data jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`);
     await q(`CREATE INDEX IF NOT EXISTS club_submissions_gid ON club_submissions (gid)`);
+    await q(`CREATE TABLE IF NOT EXISTS club_tax_docs (id text PRIMARY KEY, gid text NOT NULL, pid text, year int NOT NULL, kind text NOT NULL, file_id text NOT NULL, name text, uploaded_by text, created_at timestamptz NOT NULL DEFAULT now())`);
     await q(`CREATE TABLE IF NOT EXISTS club_log (id bigserial PRIMARY KEY, gid text NOT NULL, pid text, text text NOT NULL, ts timestamptz NOT NULL DEFAULT now())`);
     await q(`CREATE INDEX IF NOT EXISTS club_log_gid ON club_log (gid, id)`);
     await q(`CREATE TABLE IF NOT EXISTS club_files (id text PRIMARY KEY, gid text NOT NULL, pid text NOT NULL, name text, mime text NOT NULL, size int NOT NULL, bytes bytea NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`);
@@ -147,7 +148,8 @@ function mount(app, d){
     const f = (await q('SELECT id, gid, pid, name, mime, bytes FROM club_files WHERE id = $1 AND gid = $2', [req.params.fid, req.params.gid])).rows[0]; if (!f) return bad(res, 'File not found.', 404);
     const sub = (await q(`SELECT data FROM club_submissions WHERE gid = $1 AND data->>'fileId' = $2`, [f.gid, f.id])).rows[0];
     const pid = 'u_' + u.id, m = ((await q('SELECT data FROM doc_memberships WHERE id = $1', [f.gid + '__' + pid])).rows[0] || {}).data;
-    const allowed = d.isAdmin(u) || f.pid === pid || (m && EDIT.includes(m.role)) || (m && m.role !== 'observer' && sub && sub.data.kind === 'document');
+    const td = (await q('SELECT pid FROM club_tax_docs WHERE file_id = $1', [f.id])).rows[0];
+    const allowed = d.isAdmin(u) || f.pid === pid || (m && EDIT.includes(m.role)) || (m && m.role !== 'observer' && sub && sub.data.kind === 'document') || (td && td.pid === pid);
     if (!allowed) return bad(res, "You don't have access to this file.", 403);
     res.set('Content-Type', f.mime); res.set('Content-Disposition', 'inline; filename="' + String(f.name || 'file').replace(/[^\w. -]/g, '_') + '"'); res.set('Cache-Control', 'private, no-store'); res.set('X-Content-Type-Options', 'nosniff'); res.send(f.bytes);
   }));
@@ -255,6 +257,29 @@ function mount(app, d){
     const B = await book(A.gid); B.yearReviews = Object.assign({}, B.yearReviews, { [year]: { pid: A.pid, ts: Date.now(), note: String(req.body.note || '').slice(0, 500) } });
     await q('UPDATE club_books SET data = $2 WHERE gid = $1', [A.gid, JSON.stringify(B)]); await log(A.gid, A.pid, `Reviewed the ${year} books`); ok(res, await view(A));
   }));
+  /* Tax documents: the Treasurer, Owner or an Admin uploads each member's K-1 (seen only by that member and officers) and the club's own forms. */
+  app.post('/api/club/:gid/taxdoc', wrap(async (req, res) => {
+    const A = await access(req, res, true); if (!A) return;
+    const year = Number(req.body.year), kind = ['k1', 'club-1099', 'other'].includes(req.body.kind) ? req.body.kind : null, f = req.body.file || {};
+    if (!(year >= 2000 && year <= 2100) || !kind) return bad(res, 'Pick the tax year and document type.');
+    const target = kind === 'k1' ? String(req.body.pid || '') : null;
+    if (kind === 'k1' && !(await q(`SELECT 1 FROM club_entries WHERE gid = $1 AND data->>'pid' = $2 LIMIT 1`, [A.gid, target])).rows.length && !(await members(A.gid)).includes(target)) return bad(res, 'Pick a member of the club.');
+    if (f.type !== 'application/pdf') return bad(res, 'Upload the document as a PDF.');
+    const buf = Buffer.from(String(f.data || ''), 'base64'); if (!buf.length || buf.length > 5 * 1024 * 1024 || buf[0] !== 0x25 || buf[1] !== 0x50) return bad(res, "That file doesn't look like a PDF (up to 5 MB).");
+    const fid = crypto.randomBytes(10).toString('hex');
+    await q('INSERT INTO club_files (id, gid, pid, name, mime, size, bytes) VALUES ($1, $2, $3, $4, $5, $6, $7)', [fid, A.gid, A.pid, String(f.name || 'document.pdf').slice(0, 120), 'application/pdf', buf.length, buf]);
+    await q('INSERT INTO club_tax_docs (id, gid, pid, year, kind, file_id, name, uploaded_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [crypto.randomBytes(8).toString('hex'), A.gid, target, year, kind, fid, String(f.name || 'document.pdf').slice(0, 120), A.pid]);
+    await log(A.gid, A.pid, kind === 'k1' ? `Posted a ${year} K-1 for a member` : `Posted the club's ${year} ${kind === 'club-1099' ? '1099' : 'tax document'}`);
+    if (kind === 'k1') notify([target], { title: (await gname(A.gid)) + ': your ' + year + ' K-1 is ready', body: 'Download it under Statements, Tax documents.', url: '/#/statements', tag: 'tax' });
+    ok(res);
+  }));
+  app.get('/api/tax-docs', wrap(async (req, res) => {
+    const u = await needUser(req, res); if (!u) return; const pid = 'u_' + u.id;
+    const mine = (await q(`SELECT data FROM doc_memberships WHERE data->>'pid' = $1`, [pid])).rows.map(r => r.data), officerOf = new Set(mine.filter(m => EDIT.includes(m.role)).map(m => m.gid));
+    const rows = (await q(`SELECT id, gid, pid, year, kind, file_id, name, created_at FROM club_tax_docs WHERE pid = $1 OR gid = ANY($2) ORDER BY year DESC, created_at DESC`, [pid, [...officerOf]])).rows;
+    const out = []; for (const r of rows) out.push({ id: r.id, gid: r.gid, club: await gname(r.gid), pid: r.pid, year: r.year, kind: r.kind, name: r.name, url: `/api/club/${r.gid}/file/${r.file_id}`, mine: r.pid === pid });
+    ok(res, { docs: out });
+  }));
   app.get('/api/club-waiting', wrap(async (req, res) => {
     const u = await needUser(req, res); if (!u) return; const pid = 'u_' + u.id;
     const mine = (await q(`SELECT data FROM doc_memberships WHERE data->>'pid' = $1`, [pid])).rows.map(r => r.data).filter(m => m.role !== 'observer');
@@ -272,7 +297,13 @@ function mount(app, d){
   }));
   /* Early each month, remind the people who keep the books when last month isn't closed yet. */
   setInterval(async () => { try {
-    const now = new Date(); if (now.getUTCDate() < 3 || now.getUTCDate() > 10) return;
+    const now = new Date();
+    if (now.getUTCMonth() === 0 && now.getUTCDate() >= 3){ const ty = now.getUTCFullYear() - 1;
+      for (const r of (await q('SELECT gid, data FROM club_books')).rows){ const B = r.data; if (B.taxReminded === ty) continue;
+        const eds = (await q(`SELECT data FROM doc_memberships WHERE data->>'gid' = $1`, [r.gid])).rows.map(x => x.data).filter(m => EDIT.includes(m.role)).map(m => m.pid);
+        notify(eds, { title: (await gname(r.gid)) + ': ' + ty + ' tax packet ready', body: "Close December, then download the tax packet for your club's preparer from the Club books tab.", url: '/#/group/' + r.gid + '/club', tag: 'club-' + r.gid });
+        B.taxReminded = ty; await q('UPDATE club_books SET data = $2 WHERE gid = $1', [r.gid, JSON.stringify(B)]); } }
+    if (now.getUTCDate() < 3 || now.getUTCDate() > 10) return;
     const prev = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 15)).toISOString().slice(0, 7);
     for (const r of (await q('SELECT gid, data FROM club_books')).rows){
       const B = r.data; if (B.remindedFor === prev || (B.closes || []).some(c => c.month === prev)) continue;

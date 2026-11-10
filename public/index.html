@@ -856,8 +856,38 @@ function stView(S, links){
       <div class="small" style="margin-top:6px">Account <b class="num">${esc(S.account)}</b> · ${esc(S.holder)} · ${esc(S.period.label)}</div></div>
       <div style="display:flex;gap:8px"><a class="btn sm" href="${links.pdf}" download>Download PDF</a><a class="btn ghost sm" href="${links.csv}" download>CSV</a></div></div>
     <p class="hint" style="margin:10px 0 0">${esc(S.note)}</p>
-    <div class="kv" style="margin-top:14px">${S.summary.map(([k, v, t]) => `<div><span>${esc(k)}</span><b class="${t === '$' || t === '%' ? (v < 0 ? 'loss' : '') : ''}">${stFmt(v, t)}</b></div>`).join('')}</div></div>
-    ${S.tables.map(T => `<section class="block"><header><h2>${esc(T.title)}</h2></header>${T.rows.length ? `<div class="panel mtable"><table><thead><tr>${T.columns.map(x => `<th>${esc(x)}</th>`).join('')}</tr></thead><tbody>${T.rows.map(r => `<tr>${r.map((v, i) => `<td>${T.types[i] === 's' ? esc(v == null ? '' : String(v)) : stFmt(v, T.types[i])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>` : '<div class="panel empty">None in this period.</div>'}</section>`).join('')}`;
+    ${S.summaryCols ? `<div class="mtable" style="margin-top:14px"><table><thead><tr><th></th><th>${esc(S.summaryCols[0])}</th><th>${esc(S.summaryCols[1])}</th></tr></thead><tbody>${S.summary.map(([k, v, t, y]) => `<tr><td>${esc(k)}</td><td class="${v < 0 ? 'loss' : ''}"><b>${stFmt(v, t)}</b></td><td>${y === undefined ? '' : stFmt(y, t)}</td></tr>`).join('')}</tbody></table></div>`
+      : `<div class="kv" style="margin-top:14px">${S.summary.map(([k, v, t]) => `<div><span>${esc(k)}</span><b class="${t === '$' || t === '%' ? (v < 0 ? 'loss' : '') : ''}">${stFmt(v, t)}</b></div>`).join('')}</div>`}</div>
+    ${S.tables.map(T => `<section class="block"><header><h2>${esc(T.title)}</h2></header>${T.note ? `<p class="hint" style="margin-top:0">${esc(T.note)}</p>` : ''}${T.rows.length ? `<div class="panel mtable"><table><thead><tr>${T.columns.map(x => `<th>${esc(x)}</th>`).join('')}</tr></thead><tbody>${T.rows.map(r => `<tr>${r.map((v, i) => `<td>${T.types[i] === 's' ? esc(v == null ? '' : String(v)) : stFmt(v, T.types[i])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>` : '<div class="panel empty">None in this period.</div>'}</section>`).join('')}${S.contact ? `<p class="hint" style="margin-top:16px">${esc(S.contact)}</p>` : ''}`;
+}
+function taxSection(L){
+  const T = ui.taxDocs; if (!T){ ui.taxDocs = 'loading'; Store.http('GET', '/api/tax-docs').then(r => { ui.taxDocs = r.docs; render(); }, () => { ui.taxDocs = []; }); }
+  if (Store.site.realMoney && ui.taxReal == null){ ui.taxReal = 'loading'; Store.real.docs().then(r => { ui.taxReal = (r.documents || r || []).filter(d => /tax|1099/i.test(String(d.type || d.name || ''))); render(); }, () => { ui.taxReal = []; render(); }); }
+  const yrNow = new Date().getUTCFullYear(), yr = ui.taxYear || yrNow - 1, docs = Array.isArray(T) ? T : [];
+  const clubs = L.accounts.filter(a => a.kind === 'member'), officerOf = new Set(L.accounts.filter(a => a.kind === 'club').map(a => a.gid));
+  return `<section class="block"><header style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h2>Tax documents</h2><select class="input" id="tax-y" style="width:auto">${[yrNow, yrNow - 1, yrNow - 2].map(y => `<option ${y === yr ? 'selected' : ''}>${y}</option>`).join('')}</select></header>
+    <div class="list">
+      ${Store.site.realMoney ? (Array.isArray(ui.taxReal) && ui.taxReal.length ? ui.taxReal.map(d => `<a class="row" href="/api/real/documents/${encodeURIComponent(d.id)}" target="_blank" rel="noopener"><div class="grow"><b>${esc(d.name || d.type)}</b><div class="small muted">From Alpaca, your broker · ${esc(String(d.date || '').slice(0, 10))}</div></div><span class="small">PDF</span></a>`).join('') : '<div class="row"><div class="grow small muted">Your official 1099 tax forms come from Alpaca, typically by mid-February. You\'ll get a notification when they\'re ready.</div></div>') : ''}
+      <div class="row"><div class="grow"><b>Practice account year-end summary, ${yr}</b><div class="small muted">Practice accounts don't get tax forms. This summary of gains and dividends is for learning.</div></div><button class="btn sm ghost" data-act="taxsummary" data-k="${yr}">View</button></div>
+      ${clubs.map(a => `<div class="row" style="flex-wrap:wrap"><div class="grow" style="min-width:200px"><b>${esc(a.label.replace(': your stake', ''))}: your ${yr} K-1 worksheet</b><div class="small muted">For your tax preparer. Your club issues the actual K-1, usually by mid-March.</div></div><a class="btn sm ghost" href="/api/club/${a.gid}/tax-packet.pdf?year=${yr}" download>PDF</a>
+        ${officerOf.has(a.gid) ? `<a class="btn sm ghost" href="/api/club/${a.gid}/tax-packet.pdf?year=${yr}" download>Full club packet</a><a class="btn sm ghost" href="/api/club/${a.gid}/tax-packet.csv?year=${yr}" download>CSV</a><button class="btn sm ghost" data-act="taxup" data-gid="${a.gid}">Post a K-1 or tax form</button>` : ''}</div>`).join('')}
+      ${docs.filter(d => d.year === yr).map(d => `<a class="row" href="${d.url}" target="_blank" rel="noopener"><div class="grow"><b>${d.kind === 'k1' ? (d.mine ? 'Your K-1' : 'K-1 for ' + esc(Store.displayName(d.pid))) : d.kind === 'club-1099' ? 'Club 1099' : 'Club tax document'} · ${esc(d.club)}</b><div class="small muted">${esc(d.name || '')} · tax year ${d.year}</div></div><span class="small">PDF</span></a>`).join('')}
+    </div></section>`;
+}
+function taxUploadSheet(gid){
+  const yrNow = new Date().getUTCFullYear(), ms = Store.membersOf(gid).filter(m => m.role !== 'observer');
+  openModal(`<header><h2>Post a tax document</h2><button class="x" data-close aria-label="Close">×</button></header>
+    <p class="muted" style="margin-top:0">A K-1 is visible only to that member and the club's officers. Club forms are visible to officers.</p>
+    <div class="grid2"><div class="field"><label for="tu-k">Document</label><select class="input" id="tu-k"><option value="k1">K-1 for a member</option><option value="club-1099">Club 1099</option><option value="other">Other club tax document</option></select></div>
+    <div class="field"><label for="tu-y">Tax year</label><select class="input" id="tu-y">${[yrNow - 1, yrNow].map(y => `<option>${y}</option>`).join('')}</select></div></div>
+    <div class="field" id="tu-mf"><label for="tu-p">Member</label><select class="input" id="tu-p">${ms.map(m => `<option value="${m.pid}">${esc(Store.displayName(m.pid))}</option>`).join('')}</select></div>
+    <div class="field"><label for="tu-f">PDF file (up to 5 MB)</label><input class="input" id="tu-f" type="file" accept="application/pdf"></div>
+    <button class="btn" id="tu-go" style="width:100%">Post</button>`, sh => {
+    const k = sh.querySelector('#tu-k'); k.onchange = () => { sh.querySelector('#tu-mf').style.display = k.value === 'k1' ? '' : 'none'; };
+    sh.querySelector('#tu-go').onclick = async () => { const b = sh.querySelector('#tu-go'); b.disabled = true;
+      try { const file = await readFile64(sh.querySelector('#tu-f').files[0]); await Store.http('POST', `/api/club/${gid}/taxdoc`, { kind: k.value, year: Number(sh.querySelector('#tu-y').value), pid: k.value === 'k1' ? sh.querySelector('#tu-p').value : null, file });
+        ui.taxDocs = null; closeModal(); toast(k.value === 'k1' ? 'Posted. The member has been notified.' : 'Posted.'); render(); } catch(e){ errToast(e); b.disabled = false; } };
+  });
 }
 function vPocketStatements(){
   if (!Store.signedIn) return vProfile(null);
@@ -879,6 +909,7 @@ function vPocketStatements(){
         : `<div class="field"><label for="st-f">From</label><input class="input" id="st-f" type="date" value="${P.from}"></div><div class="field"><label for="st-t">To</label><input class="input" id="st-t" type="date" value="${P.to}"></div>`}</div>
       <button class="btn" data-act="stbuild">View statement</button></div>
     ${S ? stView(S.data, S.links) : ''}
+    ${taxSection(L)}
     <section class="block"><header><h2>Your statements</h2></header><div class="list">${L.statements.map(s => `<button class="row" style="width:100%;text-align:left;background:none;border:0;font:inherit;color:inherit;cursor:pointer" data-act="stopen" data-id="${s.id}"><div class="grow"><b>${esc(s.label)}</b><div class="small muted">${esc(accLabel(s))}</div></div><span class="small muted">${s.key[0] === 'M' ? 'Monthly' : s.key[0] === 'Q' ? 'Quarterly' : 'Yearly'}</span></button>`).join('') || '<div class="empty">None yet. The first monthly statement appears after this month ends.</div>'}</div></section>`;
 }
 /* ---------- club money controls (mirrors the server rules; the server always decides) ---------- */
@@ -1138,7 +1169,7 @@ function clubLedgerTables(gid, C, pooled){
       <div class="panel mtable"><table><thead><tr><th>Member</th><th>Start of year</th><th>Paid in</th><th>Withdrawn</th><th>End of year</th><th>Gain</th></tr></thead><tbody>${(C.years[yr] || []).map(r => `<tr><td>${nm(r.pid)}</td><td>${usd(r.startValue)}</td><td>${usd(r.paid)}</td><td>${usd(r.withdrawn)}</td><td>${usd(r.endValue)}</td><td class="${sgn(r.gain)}">${r.gain >= 0 ? '+' : '−'}${usd(Math.abs(r.gain))}</td></tr>`).join('')}</tbody></table></div>
       ${(() => { const rv = (C.book.yearReviews || {})[yr], me = Store.membership(gid); return rv ? `<p class="small" style="margin:10px 0 0"><span class="tag blue">Reviewed</span> by ${nm(rv.pid)} ${ago(rv.ts)} ago${rv.note ? ': ' + esc(rv.note) : ''}</p>`
         : me && !MONEY_OFFICERS.includes(me.role) && me.role !== 'observer' && Store.canWrite ? `<p style="margin:10px 0 0"><button class="btn ghost sm" data-act="cbyrrev" data-gid="${gid}" data-k="${yr}">Mark ${yr} reviewed</button> <span class="hint">A member who isn't a money officer checks the year's books.</span></p>` : '<p class="hint" style="margin-top:10px">Not yet reviewed. A member who isn\'t a money officer reviews each year.</p>'; })()}
-      <p style="margin:10px 0 0"><a class="btn ghost sm" href="/api/club/${gid}/tax.csv?year=${yr}" download>Year-end figures for your tax preparer (CSV)</a></p>
+      <p style="margin:10px 0 0;display:flex;gap:8px;flex-wrap:wrap">${C.canEdit || MONEY_OFFICERS.includes((Store.membership(gid) || {}).role) ? `<a class="btn ghost sm" href="/api/club/${gid}/tax-packet.pdf?year=${yr}" download>Tax packet for your preparer (PDF)</a><a class="btn ghost sm" href="/api/club/${gid}/tax-packet.csv?year=${yr}" download>Tax packet (CSV)</a>` : `<a class="btn ghost sm" href="/api/club/${gid}/tax-packet.pdf?year=${yr}" download>Your K-1 worksheet (PDF)</a>`}</p>
       <p class="hint">Most investment clubs are taxed as partnerships, which file a partnership return and give each member a Schedule K-1. Share these figures with whoever prepares the club's taxes; this summary isn't a tax form.</p></section>` : ''}
     <details style="margin-top:16px"><summary class="small">How unit values work</summary><p class="small muted">Each payment buys units at the latest unit value, so members who join later or pay different amounts are treated fairly. A valuation sets the club's total value; dividing by all units gives the new unit value. Your share is your units times the unit value.</p></details>`;
 }
@@ -2756,6 +2787,8 @@ async function act(el, ev){ /* eslint-disable-line */
     case 'copyonce': { const o = el.dataset.gid ? { gid: el.dataset.gid } : { pid: id }; if (!Store.isPro()) return upgradeSheet(() => copyOnceSheet(o)); return copyOnceSheet(o); }
     case 'cbsetup': return busy(async () => { const gid = el.dataset.gid; ui.club[gid] = await Store.http('POST', `/api/club/${gid}/setup`, { startDate: document.getElementById('cb-d').value, dues: document.getElementById('cb-u').value }); ui.club[gid].canEdit = true; toast('Club books started.'); render(); });
     case 'cbentry': return clubEntrySheet(el.dataset.gid, el.dataset.k);
+    case 'taxup': return taxUploadSheet(el.dataset.gid);
+    case 'taxsummary': return busy(async () => { const y = el.dataset.k, qy = `kind=personal&from=${y}-01-01&to=${y}-12-31&label=${encodeURIComponent('Year-end summary ' + y + ' (practice)')}`; const r = await Store.http('GET', '/api/statements/build?' + qy); ui.stShown = { data: r.statement, links: { pdf: '/api/statements/build.pdf?' + qy, csv: '/api/statements/build.csv?' + qy } }; render(); window.scrollTo(0, 0); });
     case 'stbuild': { const v = id2 => (document.getElementById(id2) || {}).value; ui.stAcc = +v('st-acc') || 0; const P = ui.stP; P.type = v('st-type') || P.type;
       if (v('st-m')) P.month = v('st-m'); if (v('st-q')) P.q = v('st-q'); if (v('st-y')) P.year = v('st-y'); if (v('st-d')) P.asof = v('st-d'); if (v('st-f') != null) P.from = v('st-f') || P.from; if (v('st-t') != null) P.to = v('st-t') || P.to;
       const per = stPeriod(), acc = ui.stList.accounts[ui.stAcc]; if (!per.from || !per.to) { toast('Pick the dates.'); return; }
@@ -2846,7 +2879,7 @@ async function act(el, ev){ /* eslint-disable-line */
   }
 }
 document.addEventListener('click', ev => { const el = ev.target.closest('[data-act]'); if (!el || el.tagName === 'SELECT') return; if (el.tagName === 'A') ev.preventDefault(); act(el, ev); });
-document.addEventListener('change', ev => { const el = ev.target; if (el.id === 'st-type' && ui.stP){ ui.stP.type = el.value; return render(); } if (el.id === 'st-acc'){ ui.stAcc = +el.value || 0; return; } if (el.dataset && el.dataset.act === 'setrisk'){ Store.setRisk(el.value).then(() => toast('Investing style updated.'), errToast); return; } if (el.dataset && el.dataset.act === 'role'){ Store.setRole(el.dataset.gid, el.dataset.pid, el.value).then(() => toast('Role updated.'), errToast); } });
+document.addEventListener('change', ev => { const el = ev.target; if (el.id === 'st-type' && ui.stP){ ui.stP.type = el.value; return render(); } if (el.id === 'st-acc'){ ui.stAcc = +el.value || 0; return; } if (el.id === 'tax-y'){ ui.taxYear = +el.value; return render(); } if (el.dataset && el.dataset.act === 'setrisk'){ Store.setRisk(el.value).then(() => toast('Investing style updated.'), errToast); return; } if (el.dataset && el.dataset.act === 'role'){ Store.setRole(el.dataset.gid, el.dataset.pid, el.value).then(() => toast('Role updated.'), errToast); } });
 document.addEventListener('input', ev => { const el = ev.target; if (el.dataset && el.dataset.draft) ui.drafts[el.dataset.draft] = el.value; });
 window.addEventListener('hashchange', () => { ui.feedLimit = 30; ui.stats = {}; if (route().name !== 'markets'){ ui.searchQ = ''; ui.search = null; } if (ui.lastRoute === 'feed' || ui.lastRoute === 'home') ui.lastSeenPost = Date.now(); ui.lastRoute = route().name; closeModal(); window.scrollTo(0, 0); if (route().name !== 'admin') ui.admin = null; if (route().name !== 'metrics') ui.usage = null; if (route().name !== 'settings') ui.pushState = null; if (route().name !== 'statements') ui.docs = null; if (route().name !== 'security') ui.sec = null; render(); if (route().name === 'notifications') setTimeout(() => Store.markSeen(), 1500); });
 
