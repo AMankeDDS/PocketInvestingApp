@@ -77,7 +77,7 @@ async function act(el, ev){ /* eslint-disable-line */
     case 'adm-spend': return busy(async () => { const m = document.getElementById('ms-m').value, amt = Number(document.getElementById('ms-a').value); await Store.http('POST', '/api/admin/metrics/adspend', { month: m, amount: amt }); ui.ametrics = null; toast('Ad spend saved.'); render(); });
     case 'adm-utm': { const s = (document.getElementById('mu-s').value || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, ''); if (!s){ toast('Name the source first, like instagram.'); return; }
       const link = location.origin + '/?utm_source=' + s + '&utm_medium=' + (document.getElementById('mu-p').checked ? 'paid' : 'referral') + '&utm_campaign=beta'; document.getElementById('mu-l').value = link; try { navigator.clipboard.writeText(link); toast('Link copied.'); } catch(e){} return; }
-    case 'adm-tab': ev.preventDefault(); ui.adminTab = el.dataset.k; ui.ametrics = null; ui.adocs = null; ui.areq = null; ui.alog = null; ui.areal = null; ui.amd = null; ui.amdCheck = null; return render();
+    case 'adm-tab': ev.preventDefault(); ui.adminTab = el.dataset.k; ui.ametrics = null; ui.adocs = null; ui.areq = null; ui.alog = null; ui.atest = null; ui.arepl = null; ui.areal = null; ui.amd = null; ui.amdCheck = null; return render();
     case 'adm-refresh': ui.admin = null; ui.ametrics = null; return render();
     case 'adm': return busy(async () => {
       const op = el.dataset.op;
@@ -89,6 +89,10 @@ async function act(el, ev){ /* eslint-disable-line */
     });
     case 'adm-newinv': return newInviteSheet();
     case 'adm-invtoggle': return busy(async () => { await Store.http('POST', '/api/admin/invite', { code: el.dataset.k, op: 'toggle' }); await loadAdmin(); });
+    case 'rcopy': return busy(async () => { const k = el.dataset.k; const r = await Store.real.decideCopy(el.dataset.id, k === 'decline' ? 'decline' : 'approve', k === 'half' ? 'half' : 'full'); ui.realReq = null; ui.real = null; toast(k === 'decline' ? 'Declined.' : 'Order placed in your brokerage account.'); render(); });
+    case 'actstop': return busy(async () => { await Store.http('POST', '/api/act-as/stop', {}); location.hash = '#/admin'; location.reload(); });
+    case 'adm-actas': return busy(async () => { await Store.http('POST', '/api/admin/act-as', { userId: el.dataset.id }); location.hash = '#/portfolio'; location.reload(); });
+    case 'adm-mktest': return busy(async () => { const r = await Store.http('POST', '/api/admin/test-accounts', { count: +$('#tt-n').value, deposit: +$('#tt-d').value }); ui.atest = null; toast(`Created ${r.made.length} test account${r.made.length === 1 ? '' : 's'}. Brokerage approval, bank and deposit finish in the background.`); render(); });
     case 'adm-ro': { const on = el.dataset.k === '1'; if (on && !confirm('Turn on read-only mode for everyone?')) return; return busy(async () => { await Store.http('POST', '/api/admin/maintenance', { on, message: on ? (document.getElementById('adm-ro-m') || {}).value : '' }); await Store.refreshMe(); toast(on ? 'Read-only mode is on.' : 'Read-only mode is off.'); render(); }); }
     case 'onboff': try { localStorage.setItem('pi_onb_off', Store.myPid); } catch(e){} return render();
     case 'adm-reqinvite': return busy(async () => { const r = ui.areq.find(x => String(x.id) === String(id)); const inv = await Store.http('POST', '/api/admin/invite', { label: ('Website: ' + (r.name || r.email)).slice(0, 60), maxUses: 1 });
@@ -109,7 +113,12 @@ async function act(el, ev){ /* eslint-disable-line */
     case 'signout': return busy(async () => { await Store.logout(); ui.seenReqs = null; toast('Signed out.'); location.hash = '#/home'; });
     case 'delpost': return busy(async () => { if (!confirm('Delete this post?')) return; await Store.deletePost(id); toast('Post deleted.'); });
     case 'delcomment': return busy(async () => { if (!confirm('Delete this comment?')) return; await Store.deleteComment(id); toast('Comment deleted.'); });
-    case 'trade': ev.preventDefault(); if (!Store.get('portfolios', Store.myPid)) return toast('Create your demo account first.'); return tradeSheet({ sym: el.dataset.sym, side: el.dataset.side, gid: el.dataset.gid });
+    case 'trade': ev.preventDefault();
+      if (Store.site.realMoney){ const R = ui.real;
+        if (R && R.account && R.account.status === 'ACTIVE' && R.balances) return rTradeSheet(el.dataset.sym || 'AAPL', el.dataset.side || 'buy');
+        if (R && !R.account){ toast('Open your brokerage account first.'); location.hash = '#/portfolio'; return; }
+        toast('Loading your brokerage account…'); location.hash = '#/portfolio'; if (!R) loadReal(); return; }
+      if (!Store.get('portfolios', Store.myPid)) return toast('Create your demo account first.'); return tradeSheet({ sym: el.dataset.sym, side: el.dataset.side, gid: el.dataset.gid });
     case 'cfrac': ui.copyFrac[id] = +el.dataset.k; return render();
     case 'cancelq': return busy(async () => { if (!confirm('Cancel this order before the open?')) return; await Store.cancelQueued(id); toast('Order cancelled. Nothing will fill at the open.'); });
     case 'approve': return busy(async () => { const r = await Store.approve(id, ui.copyFrac[id] || 1); toast(r.queued ? 'Approved. It fills at the next market open.' : r.trade ? (r.trade.frac < 0.995 && !r.trade.partial ? `Copied ${fracWord(r.trade.frac)}: ${r.trade.side === 'buy' ? 'bought' : 'sold'} ${shs(r.trade.shares)} ${r.trade.sym} at ${usd(r.trade.price)}.` : r.trade.partial ? `Partly copied: ${r.trade.side === 'buy' ? 'bought' : 'sold'} ${shs(r.trade.shares)} of ${shs(r.trade.requested)} ${r.trade.sym}. Not enough ${r.trade.side === 'buy' ? 'cash' : 'shares'} for the full amount.` : `Copied: ${r.trade.side === 'buy' ? 'bought' : 'sold'} ${shs(r.trade.shares)} ${r.trade.sym} at ${usd(r.trade.price)}.`) : 'Not enough cash or shares to copy this trade.'); });

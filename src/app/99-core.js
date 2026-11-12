@@ -107,7 +107,7 @@ const Store = (() => {
   }
   function connect(){
     try { ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws'); } catch(e){ return; }
-    ws.onmessage = e => { try { const m = JSON.parse(e.data); if (m.type === 'changes') applyChanges(m.changes); else if (m.type === 'notice'){ loadMe().then(emit, () => {}); } else if (m.type === 'resync'){ loadState().then(emit, () => {}); } else if (m.type === 'real') realListeners.forEach(fn => { try { fn(m); } catch(x){} });
+    ws.onmessage = e => { try { const m = JSON.parse(e.data); if (m.type === 'changes') applyChanges(m.changes); else if (m.type === 'real' && m.what === 'copyreq'){ ui.realReq = null; emit(); } else if (m.type === 'real' && m.what === 'paused'){ ui.real = null; emit(); } else if (m.type === 'notice'){ loadMe().then(emit, () => {}); } else if (m.type === 'resync'){ loadState().then(emit, () => {}); } else if (m.type === 'real') realListeners.forEach(fn => { try { fn(m); } catch(x){} });
       else if (m.type === 'market'){ (m.extras || []).forEach(x => Market.add(x.s, x.n, x.b)); if (m.bases) Market.setBases(m.bases); if (m.quotes) Market.setQuotes(m.quotes); if (m.extras || m.bases) emit(); }
       else if (m.type === 'news'){ newsCache.clear(); emit(); } } catch(err){} };
     ws.onclose = () => setTimeout(async () => { try { await loadState(); emit(); } catch(e){} connect(); }, 2000 + Math.random() * 2000);
@@ -314,12 +314,13 @@ const Store = (() => {
     canTradeFor, canPropose, canVote, canManage, ROLE_INFO_KEYS: ['owner','admin','lead','junior','analyst','risk','moderator','treasurer','asstTreasurer','member','observer'], isFollowing, isDemo, isPro, isCopying, copiersOf, performance, notifications, unreadCount, START_CASH,
     signup: (username, password, name, risk) => auth('/api/signup', { username, password, name, risk }),
     login: (username, password, code) => auth('/api/login', { username, password, code: code || undefined }),
-    get site(){ return me.site || { mode:'demo', realMoney:false, demoTools:true, instantDeposits:{ enabled:false } }; }, get twofa(){ return !!me.twofa; }, get adminAccount(){ return !!me.adminAccount; }, get adminNeeds2fa(){ return !!me.adminNeeds2fa; }, get maintenance(){ return me.maintenance || null; }, get accountNumber(){ return me.accountNumber || null; },
+    get site(){ return me.site || { mode:'demo', realMoney:false, demoTools:true, instantDeposits:{ enabled:false } }; }, get twofa(){ return !!me.twofa; }, get adminAccount(){ return !!me.adminAccount; }, get actingAs(){ return me.actingAs || null; }, get isTest(){ return !!me.isTest; }, get adminNeeds2fa(){ return !!me.adminNeeds2fa; }, get maintenance(){ return me.maintenance || null; }, get accountNumber(){ return me.accountNumber || null; },
     onReal: fn => (realListeners.add(fn), () => realListeners.delete(fn)),
     twofaSetup: () => http('POST', '/api/2fa/setup'),
     twofaEnable: async code => { await http('POST', '/api/2fa/enable', { code }); await loadMe(); emit(); },
     twofaDisable: async code => { await http('POST', '/api/2fa/disable', { code }); await loadMe(); emit(); },
     real: {
+      copyRequests: () => http('GET', '/api/real/copy-requests'), decideCopy: (id, decision, fraction) => http('POST', `/api/real/copy/${id}/decide`, { decision, fraction }),
       summary: () => http('GET', '/api/real/summary'), open: f => http('POST', '/api/real/account', f),
       bank: o => http('POST', '/api/real/bank', o), unbank: id => http('POST', '/api/real/bank/remove', { id }),
       transfer: (direction, amount, code) => http('POST', '/api/real/transfer', { direction, amount, code }),

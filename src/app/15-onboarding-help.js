@@ -21,7 +21,7 @@ function gettingStarted(){
   let off = ''; try { off = localStorage.getItem('pi_onb_off') || ''; } catch(e){}
   if (off === Store.myPid) return '';
   const p = Store.get('profiles', Store.myPid) || {}, me = Store.myPid;
-  const items = [['Add a short bio to your profile', !!(p.bio && p.bio.trim()), '#/u/' + me], ['Make a practice trade', Store.all('trades').some(t => t.pid === me), '#/markets'],
+  const items = [['Add a short bio to your profile', !!(p.bio && p.bio.trim()), '#/u/' + me], Store.site.realMoney ? ['Open your brokerage account and make a first trade', !!(ui.real && ui.real.orders && ui.real.orders.length), '#/portfolio'] : ['Make a practice trade', Store.all('trades').some(t => t.pid === me), '#/markets'],
     ['Follow an investor', Store.all('follows').some(f => f.from === me), '#/discover'], ['Join or start a group', Store.myGroups().length > 0, '#/groups'], ['Turn on two-step sign-in', Store.twofa, '#/u/' + me]];
   const done = items.filter(i => i[1]).length; if (done === items.length) return '';
   return `<section class="block"><header style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h2>Getting started</h2><span class="small muted">${done} of ${items.length} done · <button class="linkbtn small" data-act="onboff">Hide</button></span></header>

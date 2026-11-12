@@ -26,6 +26,7 @@ async function migrate(q){
 function mount(app, d){
   /* Sensitive money actions need a fresh code from the authenticator app, even when already signed in. */
   async function stepUp(req, res, userId){
+    if (config.alpaca.env === 'sandbox' && (await d.q('SELECT is_test FROM users WHERE id = $1', [userId])).rows.some(r => r.is_test)) return true; /* sandbox test accounts used through Act as */
     const row = (await d.q('SELECT totp_enabled, totp_secret FROM users WHERE id = $1', [userId])).rows[0];
     if (!row || !row.totp_enabled){ res.status(403).json({ error: 'Turn on two-step sign-in first.' }); return false; }
     const secret = totp.open(row.totp_secret, config.appSecret);
@@ -71,7 +72,7 @@ function mount(app, d){
   app.use('/api/admin/real', realOnly);
   async function needReal(req, res){
     const u = await needUser(req, res); if (!u) return null;
-    if (config.require2fa){ const r = (await q('SELECT totp_enabled FROM users WHERE id = $1', [u.id])).rows[0]; if (!r || !r.totp_enabled){ bad(res, 'Turn on two-step sign-in to use real money.', 403); return null; } }
+    if (config.require2fa && !(u.is_test && config.alpaca.env === 'sandbox')){ const r = (await q('SELECT totp_enabled FROM users WHERE id = $1', [u.id])).rows[0]; if (!r || !r.totp_enabled){ bad(res, 'Turn on two-step sign-in to use real money.', 403); return null; } }
     return u;
   }
   const acctOf = async userId => (await q('SELECT * FROM broker_accounts WHERE user_id = $1', [userId])).rows[0];
@@ -104,7 +105,7 @@ function mount(app, d){
   app.get('/api/real/summary', wrap(async (req, res) => {
     const u = await needUser(req, res); if (!u) return;
     const tf = (await q('SELECT totp_enabled FROM users WHERE id = $1', [u.id])).rows[0];
-    const base = { twofa: !!(tf && tf.totp_enabled), require2fa: config.require2fa, alpacaEnv: config.alpaca.env, paused: !!(await getSetting('realPaused', false)) };
+    const base = { twofa: !!(tf && tf.totp_enabled), require2fa: config.require2fa && !(u.is_test && config.alpaca.env === 'sandbox'), alpacaEnv: config.alpaca.env, paused: !!(await getSetting('realPaused', false)) };
     let a = await acctOf(u.id);
     if (!a) return ok(res, Object.assign(base, { account: null }));
     if (a.status !== 'ACTIVE' && Date.now() - new Date(a.updated_at).getTime() > 15000){
@@ -227,6 +228,7 @@ function mount(app, d){
       throw e;
     }
     const row = (await q('SELECT * FROM real_orders WHERE id = $1', [id])).rows[0];
+    if (row.status === 'filled' && d.onOrderUpdate) d.onOrderUpdate(row, 'filled', Number(row.filled_qty || 0), Number(row.filled_avg_price || 0)).catch(e => console.error('copy hook', e.message));
     ok(res, { order: orderView(row) });
   }));
   app.post('/api/real/cancel', wrap(async (req, res) => {
@@ -347,7 +349,7 @@ function mount(app, d){
     }
     ok(res, { fixed });
   }));
-  app.post('/api/admin/real/pause', wrap(async (req, res) => { if (!(await needAdmin(req, res))) return; await setSetting('realPaused', !!req.body.paused); ok(res); }));
+  app.post('/api/admin/real/pause', wrap(async (req, res) => { if (!(await needAdmin(req, res))) return; await setSetting('realPaused', !!req.body.paused); if (d.broadcastRaw) d.broadcastRaw({ type: 'real', what: 'paused' }); ok(res); }));
 }
 
 /* ---------- background sync: orders every 5s, accounts and transfers every 20s ---------- */
@@ -358,12 +360,14 @@ function startSync(d){
   setInterval(async () => {
     if (busy || !alpaca.configured()) return; busy = true;
     try {
+      if (d.testSetupTick && config.alpaca.env === 'sandbox') await d.testSetupTick().catch(e => console.error('test setup', e.message));
       const rows = (await q(`SELECT o.*, b.alpaca_id FROM real_orders o JOIN broker_accounts b ON b.user_id = o.user_id WHERE o.status = ANY($1) AND o.alpaca_order_id IS NOT NULL LIMIT 100`, [OPEN_ORDER])).rows;
       for (const o of rows){
         try {
           const r = await alpaca.getOrder(o.alpaca_id, o.alpaca_order_id);
           if (r.status !== o.status || String(r.filled_qty || 0) !== String(o.filled_qty || 0)){
             await q('UPDATE real_orders SET status = $1, filled_qty = $2, filled_avg_price = $3, updated_at = now() WHERE id = $4', [r.status, r.filled_qty || 0, r.filled_avg_price || null, o.id]);
+            if (d.onOrderUpdate) try { await d.onOrderUpdate(o, r.status, Number(r.filled_qty || 0), Number(r.filled_avg_price || 0)); } catch (e){ console.error('copy hook', e.message); }
             sendTo(o.user_id, { type: 'real', what: 'order', id: o.id, status: r.status, sym: o.sym, side: o.side, filledQty: Number(r.filled_qty || 0), filledPrice: r.filled_avg_price ? Number(r.filled_avg_price) : null });
           }
         } catch (e){}

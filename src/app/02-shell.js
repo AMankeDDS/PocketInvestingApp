@@ -72,6 +72,11 @@ function render(){
   const demoVals = route().name === 'demo' ? Object.fromEntries($$('#view select, #view input').map(e => [e.id, e.value])) : null;
   const ann = Store.settings.announcement; let annOff = ''; try { annOff = localStorage.getItem('pi_ann_off') || ''; } catch(e){}
   if (ann && ann.text && String(ann.ts) !== annOff && ui.tour == null) html = `<div class="banner ember" style="margin-bottom:16px"><div style="flex:1"><b>From the Pocket team</b><div class="small">${esc(ann.text)}</div></div><button class="btn sm ghost" data-act="annoff" data-k="${ann.ts}">Dismiss</button></div>` + html;
+  const site = Store.site, strip = site.demoSite ? `<div class="banner" style="margin-bottom:16px" role="note"><div style="flex:1"><b>Demo</b>: sample people and simulated prices. Nothing here is real.</div><a class="btn sm" href="https://www.pocketinvesting.com/#invite">Request an invite</a></div>`
+    : site.realMoney ? (site.alpacaEnv === 'sandbox' ? `<div class="site-strip" role="note"><b>Real money</b> · test environment: no real money moves</div>` : '')
+    : `<div class="site-strip" role="note"><b>Beta</b> · practice money${site.realPrices ? ', real market prices' : ''}</div>`;
+  html = strip + html;
+  const ac = Store.actingAs; if (ac) html = `<div class="banner ember" style="margin-bottom:16px" role="status"><div style="flex:1"><b>Acting as ${esc(Store.get('profiles', Store.myPid) ? Store.displayName(Store.myPid) : 'a test account')}</b> <span class="small">(test account)</span><div class="small">Everything you do here is real in the sandbox and recorded in the admin log under ${esc(ac.admin)}. Ends ${new Date(ac.until).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.</div></div><button class="btn sm" data-act="actstop">Return to your account</button></div>` + html;
   const mt = Store.maintenance; if (mt && mt.on) html = `<div class="banner ember" style="margin-bottom:16px" role="status"><div style="flex:1"><b>Pocket is read-only for a few minutes</b><div class="small">${esc(mt.message || "We're fixing an issue. Your account and money are safe; you can look around, and changes will work again shortly.")}</div></div></div>` + html;
   view.innerHTML = html;
   try { ichRestore(); } catch(e){}

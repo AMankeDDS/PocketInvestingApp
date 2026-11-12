@@ -88,7 +88,7 @@ function vProfile(pid){
       <div style="display:flex;gap:18px;flex-wrap:wrap" class="small"><span><b class="num">${followers}</b> followers</span><span><b class="num">${following}</b> following</span><span><b class="num">${Store.copiersOf(pid).length}</b> copying</span><span class="num ${sgn(ret)}"><b>${pct(ret)}</b> all time</span></div></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">${self ? (Store.canWrite ? `<button class="btn ghost sm" data-act="bio">Edit bio</button>` : '') : (Store.canWrite && Store.get('profiles', Store.myPid) ? `<button class="btn sm ${f ? 'ghost' : ''}" data-act="${f ? 'unfollow' : 'follow'}" data-id="${pid}">${f ? 'Following' : 'Follow'}</button>
       <button class="btn sm ${Store.isCopying(pid) ? 'ghost' : 'ember'}" data-act="${Store.isCopying(pid) ? 'uncopy' : 'copy'}" data-id="${pid}">${Store.isCopying(pid) ? 'Stop copying' : 'Copy trades'}</button>
-      <button class="btn sm ghost" data-act="copyonce" data-id="${pid}">Copy their portfolio</button>` : '')}</div></div>
+      <button class="btn sm ghost" data-act="copyonce" data-id="${pid}" ${Store.site.realMoney ? 'hidden' : ''}>Copy their portfolio</button>` : '')}</div></div>
   ${!self && Store.isCopying(pid) ? `<div class="banner ember" style="margin-top:16px">You copy ${esc(Store.displayName(pid))}. Each of their trades sends you an approval request sized to your capital.</div>` : ''}
   ${trackRecord('investor', pid)}
   ${self ? securityActivity() : ''}

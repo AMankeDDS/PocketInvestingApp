@@ -34,6 +34,8 @@ async function migrate(){
   await pool.query(`CREATE INDEX IF NOT EXISTS doc_copy_requests_member ON doc_copy_requests ((data->>'memberPid'))`);
   await pool.query(`CREATE INDEX IF NOT EXISTS doc_trades_pid ON doc_trades ((data->>'pid'))`);
   await pool.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS last_used_at timestamptz`);
+  await pool.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS acting_admin text`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_test boolean NOT NULL DEFAULT false`);
   await pool.query(`CREATE TABLE IF NOT EXISTS security_events (id bigserial PRIMARY KEY, user_id text NOT NULL, kind text NOT NULL, detail text, ip text, ua text, ts timestamptz NOT NULL DEFAULT now())`);
   await pool.query(`CREATE INDEX IF NOT EXISTS security_events_user ON security_events (user_id, id)`);
   await pool.query(`CREATE TABLE IF NOT EXISTS admin_log (id bigserial PRIMARY KEY, user_id text, action text NOT NULL, detail text, status int, ts timestamptz NOT NULL DEFAULT now())`);

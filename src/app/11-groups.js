@@ -89,7 +89,7 @@ function vGroup(gid, tab){
       ${role === 'observer' && !Store.isPro() && Store.canWrite ? `<button class="btn" data-act="join" data-id="${gid}">Become a full member</button>` : ''}
       ${role && Store.canTradeFor(role) && Store.canWrite && !g.pooled ? `<button class="btn ember" data-act="trade" data-gid="${gid}">Trade for the group</button>` : ''}
       ${role === 'junior' && Store.canWrite ? `<button class="btn ember" data-act="suggest" data-id="${gid}">Suggest a trade</button>` : ''}
-      ${role && role !== 'observer' && g.leadPid !== Store.myPid && Store.canWrite && !g.pooled ? `<button class="btn ghost sm" data-act="copyonce" data-gid="${gid}">Catch up: copy current holdings</button>` : ''}
+      ${role && role !== 'observer' && g.leadPid !== Store.myPid && Store.canWrite && !g.pooled ? `<button class="btn ghost sm" data-act="copyonce" data-gid="${gid}" ${Store.site.realMoney ? 'hidden' : ''}>Catch up: copy current holdings</button>` : ''}
       ${role && Store.canWrite ? `<button class="btn ghost sm" data-act="invite" data-id="${gid}">Invite friends</button>` : ''}
       ${hasMe && Store.canWrite && role !== 'owner' ? `<button class="linkbtn small muted" data-act="report" data-id="${gid}">Report this group</button>` : ''}
       ${Store.canEdit && Store.canWrite ? `<button class="btn ghost sm" data-act="feature" data-id="${gid}" data-k="${g.featured ? '0' : '1'}">${g.featured ? 'Remove from Featured' : 'Feature in Discover'}</button>` : ''}</div></div>`;

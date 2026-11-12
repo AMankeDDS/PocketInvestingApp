@@ -54,6 +54,16 @@ app.use((req, res, next) => {
     await q('INSERT INTO admin_log (user_id, action, detail, status) VALUES ($1, $2, $3, $4)', [u.id, p.replace('/api/', ''), JSON.stringify(b).slice(0, 500), res.statusCode]); } catch (e){} });
   next();
 });
+/* Acting as a test account: security settings are off-limits and every change is logged under the admin. */
+app.use(async (req, res, next) => {
+  if (req.method !== 'POST' || !req.path.startsWith('/api/') || req.path === '/api/act-as/stop') return next();
+  let u = null; try { u = await currentUser(req); } catch (e){}
+  if (!u || !u.acting_admin) return next();
+  if (/^\/api\/(change-password|2fa\/|logout|admin\/)/.test(req.path)) return res.status(403).json({ error: "That isn't available while acting as a test account." });
+  res.on('finish', () => { const b = Object.fromEntries(Object.entries(req.body || {}).filter(([k]) => !/password|code|secret|file|data|token/i.test(k)).map(([k, v]) => [k, typeof v === 'string' ? v.slice(0, 80) : v]));
+    q('INSERT INTO admin_log (user_id, action, detail, status) VALUES ($1, $2, $3, $4)', [u.acting_admin, 'as ' + u.username + ': ' + req.path.replace('/api/', ''), JSON.stringify(b).slice(0, 500), res.statusCode]).catch(() => {}); });
+  next();
+});
 /* Read-only mode: blocks changes while an issue is fixed (admins can still act). */
 app.use(async (req, res, next) => {
   if (req.method !== 'POST' || !/^\/api\/(action|real|club|statements)\//.test(req.path)) return next();
@@ -80,7 +90,7 @@ const wrap = fn => (req, res) => fn(req, res).catch(e => { if (e.userFacing) ret
 function readCookie(req){ const m = (req.headers.cookie || '').match(new RegExp('(?:^|; )' + COOKIE + '=([a-f0-9]{64})')); return m && m[1]; }
 async function currentUser(req){
   const token = readCookie(req); if (!token) return null;
-  const r = await q('SELECT s.last_used_at, u.id, u.username, u.display_name, u.is_admin, u.last_seen_at, u.totp_enabled FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = $1 AND s.expires_at > now() AND NOT u.disabled', [token]);
+  const r = await q('SELECT s.last_used_at, s.acting_admin, s.expires_at AS session_expires, u.is_test, u.id, u.username, u.display_name, u.is_admin, u.last_seen_at, u.totp_enabled FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = $1 AND s.expires_at > now() AND NOT u.disabled', [token]);
   const u = r.rows[0]; if (!u) return null;
   if (config.sessionIdleMin > 0){
     const used = u.last_used_at ? new Date(u.last_used_at).getTime() : Date.now();
@@ -152,6 +162,7 @@ const validPassword = p => typeof p === 'string' && p.length >= 8 && p.length <=
 
 /* ---------- accounts ---------- */
 app.post('/api/signup', authLimit, wrap(async (req, res) => {
+  if (config.demoSite && !ENV_ADMINS.includes(String(req.body.username || '').trim().toLowerCase())) return bad(res, "The demo doesn't create accounts. Request an invite to the beta at pocketinvesting.com.");
   const username = clean(req.body.username).toLowerCase(), password = req.body.password, name = clean(req.body.name).slice(0, 40), code = clean(req.body.invite).toUpperCase();
   if (!/^[a-z0-9_.]{3,24}$/.test(username)) return bad(res, 'Usernames are 3 to 24 letters, numbers, dots or underscores.');
   if (!validPassword(password)) return bad(res, 'Use a password of at least 8 characters.');
@@ -216,6 +227,7 @@ app.get('/api/me', wrap(async (req, res) => {
   const u = await currentUser(req); const c = ctxFor(u);
   const tf = u ? (await q('SELECT totp_enabled FROM users WHERE id = $1', [u.id])).rows[0] : null;
   res.json({ signedIn: !!u, pid: c.pid, username: u && u.username, name: u && u.display_name, isAdmin: c.isAdmin, inviteOnly: (await setting('inviteOnly', true)) !== false, pushKey: push.publicKey,
+    actingAs: u && u.acting_admin ? { admin: ((await q('SELECT display_name FROM users WHERE id = $1', [u.acting_admin])).rows[0] || {}).display_name || 'Admin', until: new Date(u.session_expires).getTime() } : null, isTest: !!(u && u.is_test),
     twofa: !!(tf && tf.totp_enabled), adminAccount: isAdminAccount(u), adminNeeds2fa: isAdminAccount(u) && !isAdmin(u), maintenance: await setting('maintenance', null), site: config.publicInfo(), accountNumber: u ? await require('./accounts').personal('u_' + u.id).catch(() => null) : null });
 }));
 app.post('/api/reset-password', authLimit, wrap(async (req, res) => {
@@ -266,6 +278,53 @@ function noteError(){
     q(`SELECT id FROM users WHERE is_admin OR lower(username) = ANY($1)`, [ENV_ADMINS]).then(r => push.send(db.pool, r.rows.map(x => 'u_' + x.id), { title: 'Pocket Investing: errors spiking', body: errorTimes.length + ' errors in the last 10 minutes. Check Beta admin, Errors.', url: '/#/admin', tag: 'errors' })).catch(() => {}); }
 }
 app.get('/api/security-events', wrap(async (req, res) => { const u = await needUser(req, res); if (!u) return; ok(res, { events: (await q('SELECT kind, detail, ts FROM security_events WHERE user_id = $1 ORDER BY id DESC LIMIT 15', [u.id])).rows }); }));
+/* ---------- test accounts and "Act as" (sandbox only) ---------- */
+const sandboxOnly = res => { if (!config.realMoney || config.alpaca.env !== 'sandbox'){ bad(res, 'Test accounts are only available on the real-money site while it uses the sandbox.', 403); return false; } return true; };
+const cookieVal = (req, name) => { const m = (req.headers.cookie || '').match(new RegExp('(?:^|; )' + name + '=([a-f0-9]{64})')); return m && m[1]; };
+const setCookie = (req, res, name, val, maxAge) => { const secure = req.secure || req.headers['x-forwarded-proto'] === 'https'; res.append('Set-Cookie', `${name}=${val}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure ? '; Secure' : ''}`); };
+app.post('/api/admin/test-accounts', wrap(async (req, res) => {
+  const a = await needAdmin(req, res); if (!a || !sandboxOnly(res)) return;
+  const count = Math.max(1, Math.min(10, Math.floor(Number(req.body.count) || 1))), deposit = Math.max(0, Math.min(50000, Number(req.body.deposit) || 0));
+  let n = Number((await q('SELECT count(*)::int AS n FROM users WHERE is_test')).rows[0].n), made = [];
+  for (let i = 0; i < count; i++){
+    n++; const id = db.newId(), username = 'test' + n + '_' + crypto.randomBytes(2).toString('hex'), name = 'Test User ' + n;
+    const { changes } = await db.withTx(async tx => {
+      await tx.query('INSERT INTO users (id, username, display_name, pass_hash, terms_accepted_at, terms_version, signup_source, signup_detail, is_test) VALUES ($1, $2, $3, $4, now(), $5, $6, $7, true)', [id, username, name, await bcrypt.hash(crypto.randomBytes(16).toString('hex'), 10), TERMS_VERSION, 'test', 'made by ' + a.username]);
+      await createAccount(tx, id, name, 'balanced');
+    });
+    broadcast(changes);
+    const ssn = String(100000000 + Math.floor(Math.random() * 600000000)), now = new Date().toISOString();
+    const r = await require('./alpaca').createAccount({ contact: { email_address: `test+${id.slice(0, 10)}@pocketinvesting.com`, phone_number: '+12035550' + String(100 + n).slice(-3), street_address: ['1 Test Street'], city: 'Southington', state: 'CT', postal_code: '06489', country: 'USA' },
+      identity: { given_name: 'Test', family_name: 'User' + n, date_of_birth: '1990-01-15', tax_id: `${ssn.slice(0, 3)}-${ssn.slice(3, 5)}-${ssn.slice(5)}`, tax_id_type: 'USA_SSN', country_of_citizenship: 'USA', country_of_birth: 'USA', country_of_tax_residence: 'USA', funding_source: ['employment_income'] },
+      disclosures: { is_control_person: false, is_affiliated_exchange_or_finra: false, is_politically_exposed: false, immediate_family_exposed: false, employment_status: 'employed', employer_name: 'Pocket Investing', employment_position: 'Tester' },
+      agreements: [{ agreement: 'customer_agreement', signed_at: now, ip_address: '127.0.0.1' }, { agreement: 'account_agreement', signed_at: now, ip_address: '127.0.0.1' }], enabled_assets: ['us_equity'] });
+    await q('INSERT INTO broker_accounts (user_id, alpaca_id, account_number, status, active_since) VALUES ($1, $2, $3, $4, $5)', [id, r.id, r.account_number || null, r.status || 'SUBMITTED', r.status === 'ACTIVE' ? new Date() : null]);
+    await q('INSERT INTO test_setup (user_id, deposit) VALUES ($1, $2)', [id, deposit]);
+    made.push({ id, username, name });
+  }
+  ok(res, { made });
+}));
+app.get('/api/admin/test-accounts', wrap(async (req, res) => {
+  if (!(await needAdmin(req, res))) return;
+  ok(res, { sandbox: config.realMoney && config.alpaca.env === 'sandbox', accounts: (await q(`SELECT u.id, u.username, u.display_name, u.created_at, b.status, b.account_number, t.step, t.deposit, t.note FROM users u LEFT JOIN broker_accounts b ON b.user_id = u.id LEFT JOIN test_setup t ON t.user_id = u.id WHERE u.is_test ORDER BY u.created_at`)).rows });
+}));
+app.post('/api/admin/act-as', wrap(async (req, res) => {
+  const a = await needAdmin(req, res); if (!a || !sandboxOnly(res)) return;
+  const t = (await q('SELECT id, is_test FROM users WHERE id = $1', [String(req.body.userId || '')])).rows[0];
+  if (!t || !t.is_test) return bad(res, 'You can only act as test accounts.', 403);
+  const token = crypto.randomBytes(32).toString('hex');
+  await q(`INSERT INTO sessions (token, user_id, expires_at, acting_admin) VALUES ($1, $2, now() + interval '30 minutes', $3)`, [token, t.id, a.id]);
+  setCookie(req, res, 'pi_return', readCookie(req), 3600); setCookie(req, res, COOKIE, token, 1800);
+  await q('INSERT INTO admin_log (user_id, action, detail, status) VALUES ($1, $2, $3, 200)', [a.id, 'act-as', JSON.stringify({ test: t.id })]);
+  ok(res);
+}));
+app.post('/api/act-as/stop', wrap(async (req, res) => {
+  const tok = readCookie(req), s = tok && (await q('SELECT acting_admin FROM sessions WHERE token = $1', [tok])).rows[0];
+  if (tok && s && s.acting_admin) await q('DELETE FROM sessions WHERE token = $1', [tok]);
+  const back = cookieVal(req, 'pi_return'), ok2 = back && s && (await q('SELECT 1 FROM sessions WHERE token = $1 AND user_id = $2 AND expires_at > now()', [back, s.acting_admin])).rows.length;
+  if (ok2) setCookie(req, res, COOKIE, back, 30 * 86400); else clearCookie(res);
+  res.append('Set-Cookie', 'pi_return=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0'); ok(res, { back: !!ok2 });
+}));
 app.get('/api/invite/:code', wrap(async (req, res) => {
   const code = String(req.params.code || '').toUpperCase().slice(0, 16);
   const r = (await q(`SELECT id, data FROM doc_groups WHERE upper(data->>'inviteCode') = $1`, [code])).rows[0];
@@ -391,9 +450,10 @@ app.get('/api/admin/usage', wrap(async (req, res) => {
 }));
 
 app.get('/healthz', (req, res) => res.json({ ok: true, mode: config.mode }));
-const realDeps = { securityEvent: (...a) => securityEvent(...a), q, wrap, ok, bad, needUser, needAdmin, sendTo, newId: db.newId, getSetting: setting, setSetting,
+const realDeps = { broadcastRaw: (...a) => broadcastRaw(...a), securityEvent: (...a) => securityEvent(...a), q, wrap, ok, bad, needUser, needAdmin, sendTo, newId: db.newId, getSetting: setting, setSetting,
   isPro: async pid => { const r = await q('SELECT data FROM doc_profiles WHERE id = $1', [pid]); const p = r.rows[0] && r.rows[0].data; return !!p && (p.kind === 'demo' || p.plan === 'pro'); } };
 real.mount(app, realDeps);
+realDeps.push = push; realDeps.pool = db.pool; require('./realcopy').mount(app, realDeps);
 marketdata.mount(app, { q, wrap, ok, bad, needUser, needAdmin, getSetting: setting, setSetting, broadcastMsg: obj => broadcastRaw(obj), push, pool: db.pool });
 metrics.mount(app, { q, wrap, ok, bad, needAdmin, getSetting: setting, setSetting });
 stats.mount(app, { q, wrap, ok, bad, currentUser, isAdmin });
@@ -428,7 +488,8 @@ app.get('*', (req, res) => res.sendFile(path.join(pub, 'index.html')));
 /* ---------- boot ---------- */
 (async () => {
   await db.migrate();
-  await real.migrate(q);
+  await real.migrate(q); await require('./realcopy').migrate(q);
+  if (!config.demoTools) await q(`INSERT INTO settings (key, value) VALUES ('clock', '"live"') ON CONFLICT (key) DO UPDATE SET value = '"live"'`).catch(() => {}); /* without demo tools, the market follows real hours */
   await marketdata.migrate(q);
   await marketdata.loadExtras();
   await push.init(db.pool);
@@ -437,7 +498,7 @@ app.get('*', (req, res) => res.sendFile(path.join(pub, 'index.html')));
   if (config.sampleData){ const fixed = await require('./seed').repairSampleTrades(db.withTx).catch(e => { console.error('sample trade repair', e.message); return 0; }); if (fixed) console.log('Repaired sample trade history for ' + fixed + ' sample investors.'); }
   if (config.mode === 'live' && !config.appSecret) console.warn('WARNING: set APP_SECRET on the live site to encrypt two-step sign-in secrets.');
   if (config.realMoney && !require('./alpaca').configured()) console.warn('WARNING: ALPACA_KEY and ALPACA_SECRET are not set. Real-money features will show as unavailable.');
-  real.startSync({ q, sendTo });
+  real.startSync({ q, sendTo, onOrderUpdate: (...a) => realDeps.onOrderUpdate ? realDeps.onOrderUpdate(...a) : null, testSetupTick: () => require('./realcopy').testSetupTick(q) });
   marketdata.start().catch(e => console.error('market data', e.message));
   if (config.sampleData){
     const sample = require('./sample');

@@ -229,3 +229,6 @@ textarea.input{resize:vertical; min-height:84px}
   background:color-mix(in srgb, var(--ember) 13%, var(--surface)); border:1px solid color-mix(in srgb, var(--ember) 45%, transparent)}
 .why-not::before{content:'i'; flex:0 0 18px; height:18px; border-radius:50%; display:inline-grid; place-items:center; font:700 12px/1 Georgia, serif; color:#fff; background:var(--ember); margin-top:1px}
 .why-under{margin:8px 0 0}
+
+.site-strip{font-size:13px; color:var(--muted); margin:-4px 0 14px; padding:6px 12px; border:1px solid var(--line); border-radius:999px; display:inline-block}
+.site-strip b{color:var(--ink)}

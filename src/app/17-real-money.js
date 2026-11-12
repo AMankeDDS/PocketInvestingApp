@@ -1,6 +1,6 @@
 /* Real-money accounts on the broker (opening, transfers, orders, documents). */
 
-function loadReal(){ if (ui.realLoading) return; ui.realLoading = true; Store.real.summary().then(r => { ui.real = r; }, e => { ui.real = { error: e.userFacing ? e.message : "Couldn't load your account." }; }).finally(() => { ui.realLoading = false; render(); }); }
+function loadReal(){ if (ui.realLoading) return; ui.realLoading = true; Store.real.summary().then(r => { ui.real = r; ui.realTs = Date.now(); }, e => { ui.real = { error: e.userFacing ? e.message : "Couldn't load your account." }; }).finally(() => { ui.realLoading = false; render(); }); }
 
 function brokerLine(){ return `<p class="hint" style="margin-top:22px">Brokerage services are provided by Alpaca Securities LLC, member FINRA/SIPC. ${ui.real && ui.real.alpacaEnv === 'sandbox' ? '<b>Test environment: no real money moves.</b> ' : ''}Investing involves risk, including loss of principal. <span class="muted">[Final wording to be confirmed with Alpaca and counsel.]</span></p>`; }
 
@@ -18,7 +18,7 @@ function vReal(){
   const B = R.balances, dayCh = B.lastEquity ? B.equity / B.lastEquity - 1 : 0, bank = (R.banks || [])[0];
   const openOrders = R.orders.filter(o => ROPEN.includes(o.status));
   const inst = R.instant || {};
-  return env + `${R.paused ? '<div class="banner ember" style="margin-bottom:14px">Real-money trading is paused right now. Deposits and withdrawals still work.</div>' : ''}
+  return env + realCopySection() + `${R.paused ? '<div class="banner ember" style="margin-bottom:14px">Real-money trading is paused right now. Deposits and withdrawals still work.</div>' : ''}
   <div class="panel hero" style="border-color:color-mix(in srgb, var(--blue) 40%, var(--line))"><div style="display:flex;justify-content:space-between;align-items:center"><span class="muted">Real account value</span><span class="tag blue">Real money</span></div>
     <div class="value num">${usd(B.equity)}</div>
     <div class="num"><span class="${sgn(dayCh)}">${pct(dayCh)}</span> <span class="muted">today</span></div>
@@ -161,4 +161,17 @@ function rBankSheet(){
     sh.querySelector('#bk-a').value = '123456789';
     go.onclick = async () => { go.disabled = true; try { await Store.real.bank({ code: askCode('Enter the 6-digit code from your authenticator app to confirm this bank account.'), owner: sh.querySelector('#bk-o').value, routing: sh.querySelector('#bk-r').value, account: sh.querySelector('#bk-a').value, type: sh.querySelector('#bk-t').value, nickname: 'Checking' }); closeModal(); toast('Bank linked.'); loadReal(); } catch(e){ go.disabled = false; errToast(e); } };
   });
+}
+
+/* Real-money copy requests: nothing is placed until the member approves. */
+function realCopySection(){
+  if (ui.realReq == null){ ui.realReq = 'loading'; Store.real.copyRequests().then(r => { ui.realReq = r.requests; render(); }, () => { ui.realReq = []; }); }
+  const L = Array.isArray(ui.realReq) ? ui.realReq : [], pend = L.filter(r => r.status === 'pending'), recent = L.filter(r => r.status !== 'pending').slice(0, 5);
+  const S = { placed: 'Order placed', filled: 'Filled', declined: 'Declined', expired: 'Expired', failed: "Couldn't place" };
+  if (!pend.length && !recent.length) return '';
+  return `${pend.length ? `<section class="block"><header><h2>Waiting for your approval</h2><span class="tag ember">Real money</span></header>${pend.map(r => `<article class="post" style="border-color:var(--ember)">
+      <div class="meta"><div class="grow"><b>${esc(r.leader)} ${r.side === 'buy' ? 'bought' : 'sold'} ${esc(r.sym)}</b> <span class="small muted">at ${usd(r.leaderPrice)}${r.gid ? ' for ' + esc((Store.get('groups', r.gid) || {}).name || 'your group') : ''}</span></div><span class="tag ember">${timeLeft(r.expiresTs)}</span></div>
+      <p style="margin:8px 0">Approve to ${r.side} <b>${shs(r.suggested)}</b> shares of ${esc(r.sym)} in your brokerage account (about ${usd(r.suggested * Market.price(r.sym))}), sized to your account. Nothing happens unless you approve.</p>
+      <div class="acts"><button class="btn ember" data-act="rcopy" data-id="${r.id}" data-k="full">Approve</button><button class="btn ghost" data-act="rcopy" data-id="${r.id}" data-k="half">Half size</button><button class="btn ghost" data-act="rcopy" data-id="${r.id}" data-k="decline">Decline</button></div></article>`).join('')}</section>` : ''}
+    ${recent.length ? `<section class="block"><header><h2>Recent copies</h2></header><div class="list">${recent.map(r => `<div class="row"><div class="grow"><b>${r.side === 'buy' ? 'Buy' : 'Sell'} ${esc(r.sym)}</b> <span class="small muted">copying ${esc(r.leader)}</span>${r.reason ? `<div class="small muted">${esc(r.reason)}</div>` : ''}</div><span class="small">${S[r.status] || r.status}${r.fillPrice ? ' at ' + usd(r.fillPrice) : ''}</span></div>`).join('')}</div></section>` : ''}`;
 }

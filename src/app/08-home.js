@@ -15,6 +15,7 @@ function waitingOnYou(){ const W = clubWaiting(); if (!W.length) return ''; retu
 function vHome(){ return vPracticeHome('home'); }
 /* Portfolio: on the real-money site it switches between the practice and real accounts. */
 function vPortfolio(){
+  if (Store.site.realMoney && Store.signedIn){ ui.homeTab = 'real'; if (ui.real && !ui.realLoading && Date.now() - (ui.realTs || 0) > 15000){ ui.real = null; ui.realReq = null; } return vReal(); }
   if (Store.site.realMoney && Store.signedIn && Store.get('portfolios', Store.myPid)){
     const tabs = `<div class="seg" style="margin-bottom:16px"><button class="${ui.homeTab !== 'real' ? 'on' : ''}" data-act="hometab" data-k="practice">Practice</button><button class="${ui.homeTab === 'real' ? 'on' : ''}" data-act="hometab" data-k="real">Real money</button></div>`;
     return tabs + (ui.homeTab === 'real' ? vReal() : vPracticeHome('portfolio'));
@@ -77,7 +78,7 @@ ${sec('Holdings', `<div class="list">${hold.length ? hold.map(h => { const px = 
   <p class="hint" style="margin-top:22px">${DISCLOSE}</p>`;
   }
   /* The Home tab: what's happening, with approvals and votes first. */
-  const pfLine = `<a class="panel" href="#/portfolio" style="display:flex;align-items:center;gap:12px;padding:16px 18px;margin-bottom:18px;color:var(--text)"><div class="grow"><div class="small muted">${Store.site.realMoney ? 'Practice portfolio' : 'Your portfolio'}</div><div style="font-size:24px;font-weight:700" class="num" data-pv="${me}">${usd(v)}</div></div><div style="text-align:right"><div class="num ${sgn(d)}">${pct(d)} today</div><div class="small muted">View portfolio ›</div></div></a>`;
+  const pfLine = Store.site.realMoney ? `<a class="panel" href="#/portfolio" style="display:flex;align-items:center;gap:12px;padding:16px 18px;margin-bottom:18px;color:var(--text)"><div class="grow"><div class="small muted">Your brokerage account</div><div style="font-size:22px;font-weight:700" class="num">${ui.real && ui.real.balances ? usd(ui.real.balances.equity) : 'Real money'}</div></div><div class="small muted">View ›</div></a>` : `<a class="panel" href="#/portfolio" style="display:flex;align-items:center;gap:12px;padding:16px 18px;margin-bottom:18px;color:var(--text)"><div class="grow"><div class="small muted">${Store.site.realMoney ? 'Practice portfolio' : 'Your portfolio'}</div><div style="font-size:24px;font-weight:700" class="num" data-pv="${me}">${usd(v)}</div></div><div style="text-align:right"><div class="num ${sgn(d)}">${pct(d)} today</div><div class="small muted">View portfolio ›</div></div></a>`;
   return `${sec('Waiting on you', waiting)}${pfLine}${gettingStarted()}${showInstallTip()}${starterCard(prof, groups)}
   ${sec('Your groups', latest ? `<div class="list">${latest}</div>` : '', '<button class="linkbtn small" data-act="gofeedgroups">See all</button>')}
   ${waitingOnYou()}

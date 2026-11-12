@@ -33,7 +33,7 @@ function vAdmin(){
   if (!Store.canEdit) return `<div class="empty">The beta admin is available to demo admins.</div>`;
   if (!ui.admin){ loadAdmin(); return '<div class="loading">Loading beta admin…</div>'; }
   const A = ui.admin, tab = ui.adminTab;
-  const T = [['metrics','Metrics'],['requests','Invite requests'],['clubdocs','Club documents'],['adminlog','Admin log'],['testers','Testers ' + A.users.length],['invites','Invites'],['feedback','Feedback ' + A.feedback.filter(f => f.status === 'open').length],['errors','Errors ' + A.errors.length]].concat(Store.site.realMoney ? [['real','Real money']] : []).concat([['market','Market data'], ['settings','Settings']]);
+  const T = [['metrics','Metrics'],['testacct','Test accounts'],['replication','Replication'],['requests','Invite requests'],['clubdocs','Club documents'],['adminlog','Admin log'],['testers','Testers ' + A.users.length],['invites','Invites'],['feedback','Feedback ' + A.feedback.filter(f => f.status === 'open').length],['errors','Errors ' + A.errors.length]].concat(Store.site.realMoney ? [['real','Real money']] : []).concat([['market','Market data'], ['settings','Settings']]);
   const when = t => t ? ago(new Date(t).getTime()) + ' ago' : 'never';
   let body = '';
   if (tab === 'testers') body = `<div class="list">${A.users.map(u => `<div class="row" style="flex-wrap:wrap"><div class="grow" style="min-width:200px"><b>${esc(u.display_name)}</b> <span class="muted small">@${esc(u.username)}</span> ${u.env_admin || u.is_admin ? '<span class="tag blue">Admin</span>' : ''} ${u.disabled ? '<span class="tag">Turned off</span>' : ''}
@@ -50,6 +50,8 @@ function vAdmin(){
   else if (tab === 'clubdocs') body = adminClubDocs();
   else if (tab === 'requests') body = adminRequests();
   else if (tab === 'adminlog') body = adminLogView();
+  else if (tab === 'testacct') body = adminTestAccounts();
+  else if (tab === 'replication') body = adminReplication();
   else body = `<section class="panel" style="padding:18px 20px"><h2>Invite only</h2><p class="muted small">When on, new accounts need an invite code. Admins listed in ADMIN_USERNAMES can always sign up.</p><div class="seg"><button class="${A.inviteOnly ? 'on' : ''}" data-act="adm-io" data-k="1">On</button><button class="${A.inviteOnly ? '' : 'on'}" data-act="adm-io" data-k="0">Off</button></div></section>
     <section class="panel" style="padding:18px 20px;margin-top:16px"><h2>Announcement</h2><p class="muted small">Shown at the top of every screen until each tester dismisses it.</p><textarea class="input" id="adm-ann" maxlength="300" placeholder="e.g. New version: please test buy-at-open today">${esc((A.announcement || {}).text || '')}</textarea><div style="display:flex;gap:10px;margin-top:10px"><button class="btn" data-act="adm-ann">Post</button>${A.announcement ? '<button class="btn ghost" data-act="adm-annclear">Remove</button>' : ''}</div></section>
     <section class="panel" style="padding:18px 20px;margin-top:16px"><h2>Read-only mode</h2><p class="muted small">Blocks trades, transfers, approvals and other changes for everyone except admins, with a banner explaining why. Use it while fixing an issue.</p>
@@ -187,4 +189,27 @@ function adminMarket(){
     ${N && N.error ? `<div class="banner ember" style="margin-top:14px"><div><b>Last news error${N.error.status != null ? ' (HTTP ' + N.error.status + ')' : ''}:</b> ${esc(N.error.message)}</div></div>` : ''}
     ${A && A.error ? `<div class="banner ember" style="margin-top:14px"><div><b>Stock list error${A.error.status != null ? ' (HTTP ' + A.error.status + ')' : ''}:</b> ${esc(A.error.message)}</div></div>` : ''}
     <section class="block"><header><h2>Recent Alpaca errors</h2></header><div class="list">${(X.log || []).map(l => `<div class="row"><div class="grow small"><b>${esc(l.method)} ${esc(l.path)}</b> <span class="muted">${l.status}</span><div class="muted" style="word-break:break-word">${esc(l.message || '')}</div></div><span class="small muted">${ago(new Date(l.created_at).getTime())}</span></div>`).join('') || '<div class="empty">No errors from Alpaca.</div>'}</div></section>`;
+}
+
+function adminTestAccounts(){
+  const X = ui.atest; if (!X){ ui.atest = 'loading'; Store.http('GET', '/api/admin/test-accounts').then(r => { ui.atest = r; render(); }, e => { ui.atest = { error: e.message }; render(); }); }
+  if (!X || X === 'loading') return '<div class="loading" style="min-height:20vh">Loading…</div>'; if (X.error) return `<div class="panel empty">${esc(X.error)}</div>`;
+  if (!X.sandbox) return `<div class="panel" style="padding:18px 20px"><h2>Test accounts</h2><div class="why-not why-under">Test accounts are only available on the real-money site while it uses the broker's sandbox, so nothing here can touch real customers or real money.</div></div>`;
+  const STEP = { account: 'Waiting for brokerage approval', bank: 'Linking test bank and depositing', done: 'Ready' };
+  return `<section class="panel" style="padding:18px 20px"><h2>Create test accounts</h2><p class="muted small">Each gets a sandbox brokerage account with test identity details, a test bank, and an optional starting deposit. Use "Act as" to trade, deposit, withdraw, post and join groups as them, and to check that copying works.</p>
+      <div class="grid2"><div class="field"><label for="tt-n">How many</label><input class="input" id="tt-n" type="number" min="1" max="10" value="3"></div><div class="field"><label for="tt-d">Starting deposit each ($)</label><input class="input" id="tt-d" type="number" min="0" max="50000" value="10000"></div></div>
+      <button class="btn" data-act="adm-mktest">Create test accounts</button></section>
+    <section class="block"><header><h2>Test accounts (${X.accounts.length})</h2><button class="linkbtn small" data-act="adm-tab" data-k="testacct">Refresh</button></header><div class="list">${X.accounts.map(a => `<div class="row" style="flex-wrap:wrap"><div class="grow" style="min-width:200px"><b>${esc(a.display_name)}</b> <span class="small muted">@${esc(a.username)}</span>
+        <div class="small">${esc(a.status || 'No brokerage account')} · ${esc(STEP[a.step] || '')}${a.deposit > 0 ? ' · $' + Number(a.deposit).toLocaleString() + ' deposit' : ''}${a.note ? ` · <span class="loss">${esc(a.note)}</span>` : ''}</div></div>
+        <button class="btn sm" data-act="adm-actas" data-id="${a.id}">Act as</button></div>`).join('') || '<div class="empty">No test accounts yet.</div>'}</div></section>
+    <p class="hint">"Act as" lasts 30 minutes, works only for test accounts and only in the sandbox, and every action is recorded in the admin log under your name.</p>`;
+}
+function adminReplication(){
+  const X = ui.arepl; if (!X){ ui.arepl = 'loading'; Store.http('GET', '/api/admin/replication').then(r => { ui.arepl = r.trades; render(); }, e => { ui.arepl = { error: e.message }; render(); }); }
+  if (!X || X === 'loading') return '<div class="loading" style="min-height:20vh">Loading…</div>'; if (X.error) return `<div class="panel empty">${esc(X.error)}</div>`;
+  const S = { pending: 'Waiting', placed: 'Order placed', filled: 'Filled', declined: 'Declined', expired: 'Expired', failed: 'Failed', skipped: 'Skipped' };
+  return `<p class="muted small" style="margin-top:0">Each real-money trade by someone with followers, and what happened for every follower: request, decision, order and fill. Slippage compares each fill with the leader's price.</p>
+    ${X.map(t => { const n = t.followers.length, f = t.followers.filter(x => x.status === 'filled').length, bad = t.followers.filter(x => ['failed'].includes(x.status)).length;
+      return `<section class="block"><header style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><h2>${esc(t.leader)} ${t.side === 'buy' ? 'bought' : 'sold'} ${shs(t.qty)} ${esc(t.sym)} at ${usd(t.price)}</h2><span class="small muted">${ago(t.ts)} ago · ${f} of ${n} filled${bad ? ` · <span class="loss">${bad} failed</span>` : ''}</span></header>
+        <div class="panel mtable"><table><thead><tr><th>Follower</th><th>Status</th><th>Suggested</th><th>Filled</th><th>Fill price</th><th>Slippage</th><th>Note</th></tr></thead><tbody>${t.followers.map(x => `<tr><td>${esc(x.follower)}${x.gid ? ' <span class="small muted">(group)</span>' : ''}</td><td class="${x.status === 'failed' ? 'loss' : ''}">${S[x.status] || x.status}</td><td>${x.suggested ? shs(x.suggested) : ''}</td><td>${x.filledQty != null ? shs(x.filledQty) : ''}</td><td>${x.fillPrice ? usd(x.fillPrice) : ''}</td><td>${x.slip != null ? (x.slip * 100).toFixed(2) + '%' : ''}</td><td style="white-space:normal">${esc(x.reason || '')}</td></tr>`).join('')}</tbody></table></div></section>`; }).join('') || '<div class="panel empty">No copied real-money trades yet. Have a test account trade while others copy it.</div>'}`;
 }

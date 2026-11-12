@@ -164,3 +164,15 @@ The app's code lives in `src/` and is built into `public/`:
 - `npm run build` stitches these into one version-stamped script and stylesheet (`public/js/app.<stamp>.js`, `public/css/app.<stamp>.css`) and writes `public/index.html`. Stamped files are cached for a year; a new build gets a new stamp, so phones never run stale code.
 
 Edit files in `src/`, never `public/index.html` or the built files, then run `npm run build`. The built files are included in the deploy, so Railway serves them as they are.
+
+## The three sites
+
+One codebase runs all three; Railway settings decide which is which.
+
+| Site | Domain | Settings |
+|---|---|---|
+| Demo (public, sample people, simulated prices, no sign-ups) | demo.pocketinvesting.com | `DEMO_SITE=true`, its own `DATABASE_URL`, `APP_SECRET`, `ADMIN_USERNAMES` |
+| Beta (practice money, real market prices) | app.pocketinvesting.com (also serves pocketinvesting.com and www) | `REAL_PRICES=true`, `DEMO_TOOLS=false`, plus the Alpaca sandbox keys (`ALPACA_KEY`, `ALPACA_SECRET`) for prices |
+| Real money (brokerage account only; sandbox for now) | my.pocketinvesting.com | `SITE_MODE=live` and the Alpaca settings as before |
+
+Test accounts and "Act as" (Beta admin) work only on the real-money site while `ALPACA_ENV` is sandbox, and only for accounts created as test accounts.
