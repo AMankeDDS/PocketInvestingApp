@@ -184,7 +184,7 @@ app.post('/api/signup', authLimit, wrap(async (req, res) => {
     useCode = code;
   }
   const id = db.newId(); const hash = await bcrypt.hash(password, 10);
-  const risk = ['conservative','balanced','growth'].includes(req.body.risk) ? req.body.risk : 'balanced';
+  const risk = ['conservative','balanced','growth','dividends'].includes(req.body.risk) ? req.body.risk : 'balanced';
   const { changes } = await db.withTx(async tx => {
     await tx.query('INSERT INTO users (id, username, display_name, pass_hash, invite_code, terms_accepted_at, terms_version, signup_source, signup_detail) VALUES ($1, $2, $3, $4, $5, now(), $6, $7, $8)', [id, username, name, hash, useCode, TERMS_VERSION, source, sourceDetail]);
     if (useCode) await tx.query('UPDATE invite_codes SET uses = uses + 1 WHERE code = $1', [useCode]);

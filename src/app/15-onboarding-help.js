@@ -66,9 +66,9 @@ function starterCard(prof, groups){
   const watch = prof.watchlist || [];
   if (off || !Store.canWrite || (following.length && groups.length && watch.length)) return '';
   const style = prof.riskProfile || 'balanced';
-  const tagFor = { conservative:['Dividends','Index','Long-term'], balanced:['Index','Value','Long-term'], growth:['Growth','Tech'] }[style];
+  const tagFor = { conservative:['Index','Long-term','Value'], balanced:['Index','Value','Long-term'], growth:['Growth','Tech'], dividends:['Dividends','Income','Long-term'] }[style];
   const people = Store.all('profiles').filter(p => p.id !== me && !following.includes(p.id)).map(p => ({ p, f: Store.all('follows').filter(x => x.to === p.id).length + ((p.tags || []).some(t => tagFor.includes(t)) ? 3 : 0) })).sort((a, b) => b.f - a.f).slice(0, 3).map(x => x.p);
-  const g = groups.length ? null : Store.all('groups').filter(x => !Store.rulesOf(x).hidden && x.riskLevel === style && Store.rulesOf(x).joinMode === 'open').sort((a, b) => (b.featured ? 1 : 0) - (a.featured ? 1 : 0))[0];
+  const g = groups.length ? null : Store.all('groups').filter(x => !Store.rulesOf(x).hidden && (x.riskLevel === style || (style === 'dividends' && divHeavy(x.leadPid))) && Store.rulesOf(x).joinMode === 'open').sort((a, b) => (b.featured ? 1 : 0) - (a.featured ? 1 : 0))[0];
   const syms = STYLE_WATCH[style].filter(sym => !watch.includes(sym));
   return `<section class="panel" style="padding:18px 20px;margin-bottom:18px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h2>Picks for you</h2><button class="linkbtn small" data-act="starteroff">Hide</button></div>
     <p class="muted small" style="margin:4px 0 12px">A few picks to fill your feed, based on your ${esc(RISK[style][0].toLowerCase())} style.</p>

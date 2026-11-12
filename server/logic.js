@@ -225,7 +225,7 @@ async function vote(tx, prid, pid, v){
 
 /* ---------- action table: name -> (tx, ctx, args) ---------- */
 const A = {};
-A.setRisk = async (tx, ctx, a) => { await needProfile(tx, ctx); if (!['conservative','balanced','growth'].includes(a.risk)) throw fail('Pick a style.'); await tx.update('profiles', ctx.pid, { riskProfile: a.risk }); };
+A.setRisk = async (tx, ctx, a) => { await needProfile(tx, ctx); if (!['conservative','balanced','growth','dividends'].includes(a.risk)) throw fail('Pick a style.'); await tx.update('profiles', ctx.pid, { riskProfile: a.risk }); };
 A.markSeen = async (tx, ctx) => { await needProfile(tx, ctx); await tx.update('profiles', ctx.pid, { notifSeenTs: Date.now() }); };
 A.updateBio = async (tx, ctx, a) => { await needProfile(tx, ctx); await tx.update('profiles', ctx.pid, { bio: str(a.bio, 200) }); };
 A.resetMe = async (tx, ctx) => {
@@ -273,7 +273,7 @@ A.createGroup = async (tx, ctx, a) => {
   const name = str(a.name, 60).trim(); if (!name) throw fail('Give the group a name.');
   const id = tx.newId();
   await tx.set('groups', id, { name, description: str(a.description, 300), strategy: str(a.strategy, 120), membership: a.membership === 'invite' ? 'invite' : 'open',
-    ownerPid: ctx.pid, leadPid: ctx.pid, groupPro: true, groupProSince: Date.now(), createdTs: Date.now(), riskLevel: ['conservative','balanced','growth'].includes(a.riskLevel) ? a.riskLevel : null,
+    ownerPid: ctx.pid, leadPid: ctx.pid, groupPro: true, groupProSince: Date.now(), createdTs: Date.now(), riskLevel: ['conservative','balanced','growth','dividends'].includes(a.riskLevel) ? a.riskLevel : null,
     inviteCode: tx.newId().slice(0, 8).toUpperCase(), category: ['growth','dividends','value','beginners','index','consumer'].includes(a.category) ? a.category : null, goals: str(a.goals, 300),
     template: TEMPLATES[a.template] ? a.template : 'custom', pooled: a.template === 'pool',
     rules: Object.assign({}, DEFAULT_RULES, TEMPLATES[a.template] || {}, ['open','request','invite'].includes(a.membership) ? { joinMode: a.membership } : {}) });

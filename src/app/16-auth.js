@@ -4,6 +4,7 @@ function signupSource(){ try { return JSON.parse(localStorage.getItem('pi_src') 
 
 function authSheet(mode){
   if (Store.site.demoSite && mode === 'signup') mode = 'signin';
+  if (mode === 'adminsignup') mode = 'signup'; /* the demo's admin-only sign-up; the server allows only ADMIN_USERNAMES */
   const signup = mode === 'signup', reset = mode === 'reset';
   const inviteFromLink = (() => { try { return sessionStorage.getItem('pi_invite_code') || ''; } catch(e){ return ''; } })();
   openModal(`<header><h2>${signup ? 'Create your account' : reset ? 'Reset your password' : 'Sign in'}</h2><button class="x" data-close aria-label="Close">×</button></header>
@@ -19,7 +20,7 @@ function authSheet(mode){
     ${!signup && !reset ? '<div class="field" id="a-2fa-f" style="display:none"><label for="a-2fa">6-digit code from your authenticator app</label><input class="input num" id="a-2fa" inputmode="numeric" autocomplete="one-time-code" maxlength="6"></div>' : ''}
     <div class="hint" id="a-err" style="color:var(--loss);min-height:1.2em;margin-bottom:8px"></div>
     <button class="btn" id="a-go" style="width:100%">${signup ? 'Create account' : reset ? 'Set new password' : 'Sign in'}</button>
-    <p class="small" style="text-align:center;margin-top:12px">${signup ? 'Already have an account? <button class="linkbtn" data-sw="login">Sign in</button>' : reset ? '<button class="linkbtn" data-sw="login">Back to sign in</button>' : (Store.site.demoSite ? 'The demo doesn\'t create accounts. <a href="https://www.pocketinvesting.com/#invite">Request an invite</a> to the beta.<br>' : 'New here? <button class="linkbtn" data-sw="signup">Create an account</button><br>') + '<button class="linkbtn" data-sw="reset">Forgot your password?</button>'}</p>`, sh => {
+    <p class="small" style="text-align:center;margin-top:12px">${signup ? 'Already have an account? <button class="linkbtn" data-sw="login">Sign in</button>' : reset ? '<button class="linkbtn" data-sw="login">Back to sign in</button>' : (Store.site.demoSite ? 'The demo doesn\'t create accounts. <a href="https://www.pocketinvesting.com/#invite">Request an invite</a> to the beta.<br><button class="linkbtn small" data-sw="adminsignup">Pocket team sign-up</button><br>' : 'New here? <button class="linkbtn" data-sw="signup">Create an account</button><br>') + '<button class="linkbtn" data-sw="reset">Forgot your password?</button>'}</p>`, sh => {
     const v = id => (sh.querySelector('#' + id) || {}).value || '';
     const go = async () => {
       const b = sh.querySelector('#a-go'); b.disabled = true; sh.querySelector('#a-err').textContent = '';

@@ -47,7 +47,8 @@ const Market = (() => {
     const out = []; for (let i = points - 1; i >= 0; i--) out.push(price(sym, now - spanMs * i / (points - 1))); return out;
   }
   const isReal = s => !!liveQuote(s);
-  return { addHist, LIST, MAP, ETFS_UI: ['SPY','QQQ','SCHD'], price, dayChange, series, hash, add, setBases, setQuotes, isReal };
+  const hasHist = (s, ms) => !!(HIST[s] && HIST[s].length && HIST[s][0].t <= ms + 3600000);
+  return { hasHist, addHist, LIST, MAP, ETFS_UI: ['SPY','QQQ','SCHD'], price, dayChange, series, hash, add, setBases, setQuotes, isReal };
 })();
 
 
@@ -404,7 +405,7 @@ const SECTOR_COLOR = { 'Technology':'#2f6fe4', 'Communication':'#7a4fd6', 'Consu
 
 const CATS = [['growth','Growth'],['dividends','Dividends'],['value','Value'],['beginners','Beginners'],['index','Index'],['consumer','Consumer brands']];
 
-const STYLE_WATCH = { conservative:['SCHD','KO','JNJ'], balanced:['SPY','V','COST'], growth:['NVDA','MSFT','AMZN'] };
+const STYLE_WATCH = { conservative:['SPY','JNJ','KO'], balanced:['SPY','V','COST'], growth:['NVDA','MSFT','AMZN'], dividends:['SCHD','KO','XOM','JNJ'] };
 
 const MIN_TREND_MEMBERS = 3, SMALL_CAPS = new Set();
 
@@ -429,7 +430,7 @@ const DISCLOSE = "Copying a trade doesn't guarantee the same price or result. In
 
 const fracWord = f => f >= 0.995 ? 'all' : Math.abs(f - 0.5) < 0.02 ? 'half' : Math.abs(f - 0.25) < 0.02 ? 'a quarter' : Math.abs(f - 0.75) < 0.02 ? 'three-quarters' : Math.round(f * 100) + '%';
 
-const RISK = { conservative:['Steady income','Dividends and stability first'], balanced:['Balanced','A mix of growth and income'], growth:['Growth','Higher growth, bigger swings'] };
+const RISK = { conservative:['Conservative','Stability first, lower risk'], balanced:['Balanced','A mix of growth and income'], growth:['Growth','Higher growth, bigger swings'], dividends:['Dividends','Income from dividend-paying stocks and funds'] };
 
 
 /* ---------- small pieces ---------- */
@@ -471,6 +472,8 @@ document.addEventListener('pointercancel', ichEnd);
 document.addEventListener('pointerout', e => { if (!ichState.el && e.target.closest && e.target.closest('.ich') && !(e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('.ich') === e.target.closest('.ich'))) ichPaint(e.target.closest('.ich'), null); });
 
 /* ---------- practice dividends (estimates; real-money accounts get actual dividends) ---------- */
+/* A portfolio counts as dividend-focused when at least half of its stock value pays 1.5% a year or more. */
+function divHeavy(pid){ const pf = Store.get('portfolios', pid); if (!pf) return false; let all = 0, inc = 0; for (const [s, p] of Object.entries(pf.positions || {})){ const v = p.shares * Market.price(s); all += v; if ((DIV_YIELDS[s] || 0) >= 0.015) inc += v; } return all > 0 && inc / all >= 0.5; }
 const DIV_YIELDS = { AAPL: 0.0045, MSFT: 0.0075, NVDA: 0.0003, GOOGL: 0.0045, META: 0.0035, JPM: 0.022, V: 0.007, KO: 0.029, COST: 0.005, DIS: 0.009, XOM: 0.035, JNJ: 0.031, SPY: 0.012, QQQ: 0.006, SCHD: 0.036, O: 0.055 };
 
 const myDividends = (pid = Store.myPid, days = 365) => Store.all('dividends').filter(x => x.pid === pid && x.ts > Date.now() - days * 86400000);

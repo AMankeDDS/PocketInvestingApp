@@ -151,12 +151,17 @@ async function loadCiks(){
   cikMap = {}; for (const v of Object.values(j || {})) if (v && v.ticker) cikMap[String(v.ticker).toUpperCase()] = { cik: v.cik_str, title: v.title };
   cikAt = Date.now(); return cikMap;
 }
-const ITEMS = { '2.02': 'reports quarterly results', '5.02': 'announces a leadership change', '1.01': 'enters a material agreement', '1.02': 'ends a material agreement', '2.01': 'completes an acquisition or sale',
-  '2.05': 'announces restructuring costs', '3.01': 'receives an exchange listing notice', '5.03': 'amends its bylaws', '5.07': 'reports shareholder vote results', '7.01': 'shares an investor update', '8.01': 'announces a company update' };
-const FORMS = { '10-Q': 'files its quarterly report', '10-K': 'files its annual report', '20-F': 'files its annual report', '6-K': 'files a company update' };
+/* Plain-language names for SEC filing types and Form 8-K items. */
+const ITEMS = { '1.01': 'new material agreement', '1.02': 'material agreement ended', '1.03': 'bankruptcy or receivership', '1.05': 'cybersecurity incident',
+  '2.01': 'acquisition or sale completed', '2.02': 'quarterly results', '2.03': 'new debt or financing', '2.04': 'debt obligation triggered', '2.05': 'restructuring costs', '2.06': 'asset write-down',
+  '3.01': 'exchange listing notice', '3.02': 'unregistered share sale', '3.03': 'change to shareholder rights', '4.01': 'auditor change', '4.02': 'past financial statements no longer reliable',
+  '5.01': 'change in control', '5.02': 'officer or director change', '5.03': 'bylaws or fiscal year change', '5.07': 'shareholder vote results', '7.01': 'investor update', '8.01': 'other company news' };
+const FORMS = { '10-Q': 'quarterly report', '10-K': 'annual report', '20-F': 'annual report', '6-K': 'company update' };
 function filingHeadline(name, form, items){
-  if (form === '8-K'){ const first = String(items || '').split(',').map(x => x.trim()).find(x => ITEMS[x] && x !== '9.01'); return `${name} ${first ? ITEMS[first] : 'files a current report'} (Form 8-K)`; }
-  return `${name} ${FORMS[form] || 'files with the SEC'} (Form ${form})`;
+  if (form === '8-K'){ const its = String(items || '').split(',').map(x => x.trim()).filter(x => ITEMS[x]);
+    if (!its.length) return `${name}: current report (Form 8-K)`;
+    return `${name}: ${its.slice(0, 2).map(x => ITEMS[x]).join('; ')} (Form 8-K, item${its.length > 1 ? 's' : ''} ${its.slice(0, 2).join(', ')})`; }
+  return `${name}: ${FORMS[form] || 'SEC filing'} (Form ${form})`;
 }
 const secActive = () => config.sec.mode === 'on' || (config.sec.mode === 'auto' && config.marketData && status.news && status.news.error && [401, 403].includes(status.news.error.status) && !status.news.received);
 /* Earnings calendar: estimated from each company's own past earnings releases on SEC EDGAR
@@ -217,7 +222,7 @@ async function pullFilings(force){
       const acc = R.accessionNumber[i], url = `${config.sec.wwwUrl}/Archives/edgar/data/${Number(map[sym].cik)}/${String(acc).replace(/-/g, '')}/${R.primaryDocument[i] || ''}`;
       const ins = await deps.q(`INSERT INTO news (id, ts, headline, summary, url, source, symbols) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (id) DO NOTHING RETURNING id`,
         ['sec-' + acc, new Date(ts).toISOString(), filingHeadline(name, form, R.items && R.items[i]), `Form ${form} filed with the SEC on ${R.filingDate[i]}.`, url, 'SEC filing', [sym]]);
-      if (ins.rows.length) added++;
+      if (ins.rows.length) added++; else await deps.q('UPDATE news SET headline = $2 WHERE id = $1 AND headline IS DISTINCT FROM $2', ['sec-' + acc, filingHeadline(name, form, R.items && R.items[i])]);
     }
     await new Promise(r => setTimeout(r, 150)); /* stay well under the SEC's 10 requests a second */
   }
