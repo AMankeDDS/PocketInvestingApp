@@ -6,7 +6,7 @@ function route(){ const h = (location.hash || '#/home').slice(2).split('/'); ret
 /* ---------- nav ---------- */
 function renderNav(){
   const r = route().name; const n = Store.myPending().length;
-  const items = [['home','Home','home'],['feed','Feed','feed'],['groups','Groups','groups'],['inbox','Approvals','inbox'],['u','Profile','me']];
+  const items = [['home','Home','home'],['feed','Feed','feed'],['portfolio','Portfolio','portfolio'],['groups','Groups','groups'],['u','Profile','me']], railItems = items.slice(0, 4).concat([['inbox','Approvals','inbox']], items.slice(4));
   const href = k => k === 'u' ? '#/u/' + (Store.myPid || '') : '#/' + k;
   const on = k => (k === r || (k === 'groups' && r === 'group') || (k === 'home' && r === 'stock')) ? 'on' : '';
   const s = Clock.session(); const un = Store.get('profiles', Store.myPid) ? Store.unreadCount() : 0;
@@ -14,11 +14,11 @@ function renderNav(){
   const fbIcon = Store.signedIn ? `<button class="btn ghost sm fb-top" data-act="feedback" aria-label="Send feedback" title="Send feedback"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>` : '';
   const sess = `<span class="session"><span class="dot ${s.open ? 'on' : ''}"></span>${esc(s.label)}${s.demo ? '<span class="sess-x"> (demo clock)</span>' : ''}</span>`;
   $('#rail').innerHTML = `<div class="brand"><span class="mark">P</span>Pocket Investing</div>` +
-    items.map(([k, l, i]) => `<a class="nav ${on(k)}" href="${href(k)}">${ICON[i]}<span>${l}</span>${k === 'inbox' && n ? `<span class="badge">${n}</span>` : ''}</a>`).join('') +
+    railItems.map(([k, l, i]) => `<a class="nav ${on(k)}" href="${href(k)}">${ICON[i]}<span>${l}</span>${['inbox', 'home', 'portfolio'].includes(k) && n ? `<span class="badge">${n}</span>` : ''}</a>`).join('') +
     `<a class="nav ${r === 'notifications' ? 'on' : ''}" href="#/notifications">${ICON.bell}<span>Notifications</span>${un ? `<span class="badge">${un}</span>` : ''}</a>` +
     (!Store.signedIn && Store.ready ? `<button class="btn" data-act="signin" style="margin:10px 12px">Sign in</button>` : '') +
     (Store.adminNeeds2fa && !Store.canEdit ? `<a class="nav ${r === 'admin' ? 'on' : ''}" href="#/admin">${ICON.me}<span>Beta admin</span></a>` : '') + (Store.canEdit ? `${Store.site.demoTools ? `<a class="nav ${r === 'demo' ? 'on' : ''}" href="#/demo">${ICON.demo}<span>Demo controls</span></a>` : ''}<a class="nav ${r === 'metrics' ? 'on' : ''}" href="#/metrics">${ICON.metrics}<span>Pilot metrics</span></a><a class="nav ${r === 'admin' ? 'on' : ''}" href="#/admin">${ICON.me}<span>Beta admin</span></a>` : '') + sess;
-  $('#bottomnav').innerHTML = items.map(([k, l, i]) => `<a class="${on(k)}" href="${href(k)}">${ICON[i]}<span>${l}</span>${k === 'inbox' && n ? `<span class="badge">${n}</span>` : ''}</a>`).join('');
+  $('#bottomnav').innerHTML = items.map(([k, l, i]) => `<a class="${on(k)}" href="${href(k)}">${ICON[i]}<span>${l}</span>${['inbox', 'home', 'portfolio'].includes(k) && n ? `<span class="badge">${n}</span>` : ''}</a>`).join('');
   $('#topbar').innerHTML = `<div class="brand"><span class="mark">P</span>Pocket</div><div style="display:flex;gap:8px;align-items:center">${sess}${fbIcon}${!Store.signedIn && Store.ready ? '<button class="btn sm" data-act="signin">Sign in</button>' : ''}${Store.get('profiles', Store.myPid) ? bell : ''}${Store.canEdit ? `<a href="#/demo" class="btn ghost sm" aria-label="Demo controls">${ICON.demo.replace('<svg','<svg width="18" height="18"')}</a>` : ''}</div>`;
 }
 
@@ -56,6 +56,7 @@ function render(){
     case 'security': html = vSecurity(); break;
     case 'statements': html = vPocketStatements(); break;
     case 'help': html = vHelp(); break;
+    case 'portfolio': html = vPortfolio(); break;
     case 'documents': html = vStatements(); break;
     case 'join': html = Store.signedIn ? vHome() : vOnboard(); break;
     case 'terms': html = vLegal('terms'); break;

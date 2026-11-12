@@ -12,15 +12,17 @@ function comingUp(){
 
 function waitingOnYou(){ const W = clubWaiting(); if (!W.length) return ''; return `<section class="block"><header><h2>Waiting on you</h2></header><div class="list">${W.map(w => `<a class="row" href="#/group/${w.gid}/club"><div class="grow"><b>${esc(w.name)}</b><div class="small muted">Club money to approve or sign off</div></div><span class="tag ember">${w.count}</span></a>`).join('')}</div></section>`; }
 
-function vHome(){
+function vHome(){ return vPracticeHome('home'); }
+/* Portfolio: on the real-money site it switches between the practice and real accounts. */
+function vPortfolio(){
   if (Store.site.realMoney && Store.signedIn && Store.get('portfolios', Store.myPid)){
     const tabs = `<div class="seg" style="margin-bottom:16px"><button class="${ui.homeTab !== 'real' ? 'on' : ''}" data-act="hometab" data-k="practice">Practice</button><button class="${ui.homeTab === 'real' ? 'on' : ''}" data-act="hometab" data-k="real">Real money</button></div>`;
-    return tabs + (ui.homeTab === 'real' ? vReal() : vPracticeHome());
+    return tabs + (ui.homeTab === 'real' ? vReal() : vPracticeHome('portfolio'));
   }
-  return vPracticeHome();
+  return vPracticeHome('portfolio');
 }
 
-function vPracticeHome(){
+function vPracticeHome(which = 'home'){
   const me = Store.myPid, pf = Store.get('portfolios', me);
   if (!pf) return vReadOnlyHome();
   const prof = Store.get('profiles', me) || {};
@@ -58,18 +60,33 @@ function vPracticeHome(){
   const tr = trending().slice(0, 3);
   const watch = (prof.watchlist || []).filter(s => Market.MAP[s]).slice(0, 5);
   const exp = explainerCard();
-  return `${gettingStarted()}${showInstallTip()}${starterCard(prof, groups)}${hero}
-  ${sec('Waiting on you', waiting)}
+  /* The Portfolio tab: approvals first, then the money. */
+  if (which === 'portfolio'){
+    const approvals = pend.length ? `${pend.slice(0, 2).map(approvalCard).join('')}${pend.length > 2 ? `<div class="list" style="margin-top:12px"><a class="row" href="#/inbox"><div class="grow"><b>${pend.length - 2} more approval request${pend.length - 2 === 1 ? '' : 's'}</b></div><span class="small">Open</span></a></div>` : ''}` : '';
+    const cash = pf.cash || 0, etf = hold.filter(h => (Market.ETFS_UI || Market.ETFS || []).includes(h.s)).reduce((a, h) => a + h.val, 0), stk = hold.reduce((a, h) => a + h.val, 0) - etf;
+    const alloc = v > 0 ? [['Stocks', stk, 'var(--blue)'], ['ETFs', etf, 'var(--ember)'], ['Cash', cash, 'var(--line)']].filter(x => x[1] > 0.005) : [];
+    const dv = typeof myDividends === 'function' ? myDividends() : [], dvTotal = dv.reduce((a, x) => a + (x.amount || 0), 0);
+    return `${sec('Waiting for your approval', approvals)}
+  ${hero}
+${sec('Holdings', `<div class="list">${hold.length ? hold.map(h => { const px = Market.price(h.s), g = h.cost ? h.val / h.cost - 1 : 0; return `<a class="row" href="#/stock/${h.s}">${logo(h.s)}<div class="grow"><div class="sym">${h.s}</div><div class="small muted">${shs(h.shares)} shares</div></div>${mini(h.s)}<div class="r" style="min-width:86px"><div class="num" data-hv="${h.s}" data-sh="${h.shares}">${usd(h.shares * px)}</div><div class="small num ${sgn(g)}">${pct(g)}</div></div></a>`; }).join('') : `<div class="empty">No holdings yet. <button class="linkbtn" data-act="trade">Place your first trade</button> or join a group to copy its Lead Trader.</div>`}</div>`, `<span class="muted small num">Cash ${usd(pf.cash)}</span>`)}
+  ${alloc.length ? sec('Allocation', `<div class="panel" style="padding:16px 18px"><div style="display:flex;height:12px;border-radius:6px;overflow:hidden;background:var(--line)" role="img" aria-label="${alloc.map(a => a[0] + ' ' + Math.round(a[1] / v * 100) + '%').join(', ')}">${alloc.map(a => `<i style="width:${a[1] / v * 100}%;background:${a[2]}"></i>`).join('')}</div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:10px" class="small">${alloc.map(a => `<span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${a[2]};margin-right:6px"></span>${a[0]} ${(a[1] / v * 100).toFixed(1)}% (${usd(a[1])})</span>`).join('')}</div></div>`) : ''}
+  ${recurringList()}
+  ${dvTotal > 0 ? sec('Dividends', `<div class="list"><div class="row"><div class="grow"><b>${usd(dvTotal)}</b> received in the past year</div><span class="tag">Practice estimates</span></div></div>`) : ''}
+  ${sec('Account', `<div class="list">${Store.accountNumber ? `<div class="row"><div class="grow"><b>Account number</b><div class="small muted">${esc(Store.accountNumber)}</div></div></div>` : ''}<a class="row" href="#/statements"><div class="grow"><b>Statements and tax documents</b><div class="small muted">Monthly statements, year-end summaries</div></div><span class="muted">›</span></a></div>`)}
+  <p class="hint" style="margin-top:22px">${DISCLOSE}</p>`;
+  }
+  /* The Home tab: what's happening, with approvals and votes first. */
+  const pfLine = `<a class="panel" href="#/portfolio" style="display:flex;align-items:center;gap:12px;padding:16px 18px;margin-bottom:18px;color:var(--text)"><div class="grow"><div class="small muted">${Store.site.realMoney ? 'Practice portfolio' : 'Your portfolio'}</div><div style="font-size:24px;font-weight:700" class="num" data-pv="${me}">${usd(v)}</div></div><div style="text-align:right"><div class="num ${sgn(d)}">${pct(d)} today</div><div class="small muted">View portfolio ›</div></div></a>`;
+  return `${sec('Waiting on you', waiting)}${pfLine}${gettingStarted()}${showInstallTip()}${starterCard(prof, groups)}
   ${sec('Your groups', latest ? `<div class="list">${latest}</div>` : '', '<button class="linkbtn small" data-act="gofeedgroups">See all</button>')}
   ${waitingOnYou()}
   ${comingUp()}
-  ${recurringList()}
   ${marketBrief()}
   ${(() => { const mineSyms = [...new Set(hold.map(h => h.s).concat(prof.watchlist || []))]; return mineSyms.length ? newsSection('News for your stocks', mineSyms, 3) : ''; })()}
   ${sec('Trending on Pocket', tr.length ? `<div class="list">${tr.map(trendRow).join('')}</div>` : '', '<span class="muted small">Member activity this week</span>')}
   ${sec('Your watchlist', watch.length ? `<div class="list">${watch.map(sym => stockRow(sym)).join('')}</div>` : '')}
   ${exp}
-  ${sec('Holdings', `<div class="list">${hold.length ? hold.map(h => { const px = Market.price(h.s), g = h.cost ? h.val / h.cost - 1 : 0; return `<a class="row" href="#/stock/${h.s}">${logo(h.s)}<div class="grow"><div class="sym">${h.s}</div><div class="small muted">${shs(h.shares)} shares</div></div>${mini(h.s)}<div class="r" style="min-width:86px"><div class="num" data-hv="${h.s}" data-sh="${h.shares}">${usd(h.shares * px)}</div><div class="small num ${sgn(g)}">${pct(g)}</div></div></a>`; }).join('') : `<div class="empty">No holdings yet. <button class="linkbtn" data-act="trade">Place your first trade</button> or join a group to copy its Lead Trader.</div>`}</div>`, `<span class="muted small num">Cash ${usd(pf.cash)}</span>`)}
   ${!Store.isPro() ? `<div class="banner" style="margin-top:16px"><div style="flex:1"><b>Upgrade to Pro</b><div class="small">Join groups as a full member, copy investors, and see how you track your group. $9.99 a month.</div></div><button class="btn sm" data-act="upgrade">See Pro</button></div>` : ''}
   ${groups.length ? `<a class="panel" href="#/digest" style="display:flex;gap:14px;align-items:center;padding:16px 18px;margin-top:26px;color:var(--text)"><span class="avatar" style="background:var(--ember);color:#1b1206;border-radius:12px">7d</span><div class="grow"><b>Your weekly digest</b><div class="small muted">Group trades, your copy rate, open votes and how you track your groups</div></div><span class="small">Open</span></a>` : ''}
   ${sec('Markets', `<div class="list">${marketRows(3)}</div>`, '<a class="small" href="#/markets">All stocks</a>')}

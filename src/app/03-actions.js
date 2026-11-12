@@ -40,7 +40,7 @@ async function act(el, ev){ /* eslint-disable-line */
       if (st === 2 && !(f.funding || []).length) return err('Choose at least one source of money.');
       ui.openStep = st + 1; return render(); }
     case 'ofsubmit': return busy(async () => { const f = readOpenForm(); if (!f.agree){ $('#o-err').textContent = 'Please accept the agreements to continue.'; return; }
-      const r = await Store.real.open(f); ui.openForm = null; ui.openStep = 0; ui.real = null; ui.homeTab = 'real'; toast('Application submitted: ' + r.label + '.'); location.hash = '#/home'; });
+      const r = await Store.real.open(f); ui.openForm = null; ui.openStep = 0; ui.real = null; ui.homeTab = 'real'; toast('Application submitted: ' + r.label + '.'); location.hash = '#/portfolio'; });
     case 'tfsetup': return busy(async () => { ui.sec = await Store.twofaSetup(); render(); });
     case 'tfenable': return busy(async () => { await Store.twofaEnable($('#tf-code').value); ui.sec = null; ui.real = null; toast('Two-step sign-in is on.'); render(); });
     case 'tfoff': return busy(async () => { await Store.twofaDisable($('#tf-off').value); toast('Two-step sign-in is off.'); render(); });

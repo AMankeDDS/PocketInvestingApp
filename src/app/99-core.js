@@ -375,6 +375,7 @@ const nameLink = pid => `<a href="#/u/${esc(pid)}" style="color:inherit;font-wei
 const linkify = t => esc(t).replace(/\$([A-Z]{1,5})\b/g, (m, s) => Market.MAP[s] ? `<a href="#/stock/${s}">$${s}</a>` : m);
 
 const ICON = {
+  portfolio: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12A9 9 0 1 1 12 3v9z"/><path d="M21 12a9 9 0 0 0-9-9v9z" fill="currentColor" opacity=".18"/></svg>',
   home:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z"/></svg>',
   feed:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5h14v10H9l-4 4z"/></svg>',
   groups:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="3.2"/><circle cx="17" cy="10" r="2.6"/><path d="M3.5 19c.6-3 2.9-4.6 5.5-4.6s4.9 1.6 5.5 4.6M14.5 15.2c.8-.5 1.6-.7 2.5-.7 2 0 3.6 1.3 4 3.8"/></svg>',
@@ -604,7 +605,7 @@ Store.onReal(m => {
   else if (m.what === 'order' && ['canceled','rejected','expired'].includes(m.status)) toast(`Your ${m.sym} order was ${m.status}.`, { ms: 7000 });
   else if (m.what === 'transfer') toast(`${m.direction === 'INCOMING' ? 'Deposit' : 'Withdrawal'} of ${usd(m.amount)}: ${(TSTATUS[m.status] || m.status).toLowerCase()}.`, { ms: 7000 });
   else if (m.what === 'account') toast(m.status === 'ACTIVE' ? 'Your brokerage account is approved and active.' : 'Your brokerage account status changed.', { ms: 7000 });
-  if (route().name === 'home' && ui.homeTab === 'real') loadReal(); else ui.real = null;
+  if (route().name === 'portfolio' && ui.homeTab === 'real') loadReal(); else ui.real = null;
 });
 
 
