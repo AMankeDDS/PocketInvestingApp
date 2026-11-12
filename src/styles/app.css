@@ -223,3 +223,9 @@ textarea.input{resize:vertical; min-height:84px}
 .kv span{display:block; font-size:13px; color:var(--muted)}
 .kv b{font-family:var(--f-num); font-size:18px}
 .loading{min-height:60vh; display:grid; place-items:center; color:var(--muted)}
+
+/* Why a button can't be used: shown right above it */
+.why-not{display:flex; gap:8px; align-items:flex-start; margin:-4px 0 14px; padding:10px 12px; border-radius:10px; font-size:14px; line-height:1.45; color:var(--text);
+  background:color-mix(in srgb, var(--ember) 13%, var(--surface)); border:1px solid color-mix(in srgb, var(--ember) 45%, transparent)}
+.why-not::before{content:'i'; flex:0 0 18px; height:18px; border-radius:50%; display:inline-grid; place-items:center; font:700 12px/1 Georgia, serif; color:#fff; background:var(--ember); margin-top:1px}
+.why-under{margin:8px 0 0}

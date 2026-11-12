@@ -1,5 +1,13 @@
 /* Small shared helpers: formatting, time, avatars and rows. */
 
+/* When a button can't be used, say why right above it: a highlighted note with what to do next,
+   linked to the button for screen readers. With no reason, the note returns to a normal hint. */
+function whyNot(note, btn, reason, hint){
+  if (!note) return;
+  if (reason){ note.className = 'why-not'; note.textContent = reason; note.style.color = ''; }
+  else { note.className = 'hint'; note.textContent = hint || ''; }
+  if (btn){ btn.disabled = !!reason; if (reason){ btn.setAttribute('aria-describedby', note.id); btn.title = reason; } else { btn.removeAttribute('aria-describedby'); btn.removeAttribute('title'); } }
+}
 function ago(ts){ const s = Math.max(0, (Date.now() - ts) / 1000); if (s < 60) return 'now'; if (s < 3600) return Math.floor(s / 60) + 'm'; if (s < 86400) return Math.floor(s / 3600) + 'h'; return Math.floor(s / 86400) + 'd'; }
 
 function left(ms){ if (ms <= 0) return '0:00'; const m = Math.floor(ms / 60000), s = Math.floor(ms % 60000 / 1000); if (m >= 60) return Math.floor(m / 60) + 'h ' + (m % 60) + 'm'; return m + ':' + String(s).padStart(2, '0'); }

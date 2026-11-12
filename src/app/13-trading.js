@@ -77,7 +77,7 @@ function tradeSheet({ sym = 'AAPL', side = 'buy', gid = null } = {}){
           <input class="input" id="t-q" data-nofocus placeholder="Search another stock, e.g. Apple or MSFT" autocomplete="off" value="${esc(st.q)}" style="margin-top:8px"><div id="t-res" class="list" style="display:none;margin-top:6px"></div></div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px"><div class="seg" id="t-side"><button data-k="buy" class="${st.side === 'buy' ? 'on' : ''}">Buy</button><button data-k="sell" class="${st.side === 'sell' ? 'on' : ''}">Sell</button></div>
           <div class="seg" id="t-by"><button data-k="dollars" class="${st.by === 'dollars' ? 'on' : ''}">Dollars</button><button data-k="shares" class="${st.by === 'shares' ? 'on' : ''}">Shares</button></div></div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px" id="t-chips">${chips().map(([k, l]) => `<button class="btn sm ${st.chip === k ? '' : 'ghost'}" data-k="${k}" ${st.side === 'sell' && !held() ? 'disabled' : ''}>${l}</button>`).join('')}</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px" id="t-chips">${chips().map(([k, l]) => `<button class="btn sm ${st.chip === k ? '' : 'ghost'}" data-k="${k}" ${st.side === 'sell' && !held() ? `disabled title="You don't own any ${st.sym} to sell"` : ''}>${l}</button>`).join('')}</div>
         <div class="field"><label for="t-amt" id="t-amt-l">${st.by === 'dollars' ? 'Amount in dollars' : 'Number of shares'}</label><input class="input num" id="t-amt" type="number" min="0" step="any" inputmode="decimal" value="${esc(st.amt)}"><span class="hint" id="t-have"></span></div>
         <div class="est"><span id="t-est-l"></span><b class="num" id="t-est">—</b></div>
         <div class="hint" id="t-after" style="margin:-6px 0 14px"></div>
@@ -93,11 +93,14 @@ function tradeSheet({ sym = 'AAPL', side = 'buy', gid = null } = {}){
       q('t-est-l').textContent = st.by === 'dollars' ? 'Estimated shares' : 'Estimated ' + (st.side === 'buy' ? 'cost' : 'proceeds');
       q('t-est').textContent = st.by === 'dollars' ? shs(c.shares) + ' @ ' + usd(c.px) : usd(c.dollars);
       q('t-have').textContent = st.side === 'buy' ? 'Cash available: ' + usd(cash) : (h ? 'You own ' + shs(h) + ' shares (' + usd(h * c.px) + ')' : "You don't own any " + st.sym + '.');
-      let after = '', ok = c.shares > 0;
-      if (st.side === 'buy'){ const left = cash - c.dollars; after = left < -0.01 ? "That's more than your available cash." : 'Cash left after this order: ' + usd(Math.max(0, left)); if (left < -0.01) ok = false; }
+      let after = '', ok = c.shares > 0, why = '';
+      if (!(parseFloat(st.amt) > 0)) why = 'Enter an amount to continue.';
+      else if (!(c.shares > 0)) why = 'That amount buys less than 0.001 of a share. Enter a larger amount.';
+      if (st.side === 'buy'){ const left = cash - c.dollars; after = 'Cash left after this order: ' + usd(Math.max(0, left)); if (left < -0.01){ ok = false; why = why || (cash < 0.01 ? "You don't have any practice cash left. Sell something first to free up cash." : `That's more than your ${usd(cash)} of cash. Lower the amount, or tap Max to use all of it.`); } }
       else { const keep = Math.max(0, Math.round((h - c.shares) * 1000) / 1000); if (c.shares > h + 0.0005){ after = "That's more shares than you own."; ok = false; } else after = keep > 0 ? "You'll keep " + shs(keep) + ' shares (' + usd(keep * c.px) + ')' : "You'll sell your whole position."; if (!h) ok = false; }
-      q('t-after').textContent = after; q('t-after').style.color = ok || !(parseFloat(st.amt) > 0) ? '' : 'var(--loss)';
-      q('t-rev').disabled = !ok;
+      if (st.side === 'sell' && !h) why = `You don't own any ${st.sym}, so there's nothing to sell. Switch to Buy, or pick a stock you own.`;
+      else if (st.side === 'sell' && c.shares > h + 0.0005) why = `You own ${shs(h)} shares of ${st.sym}. Lower the amount, or tap Max to sell all of them.`;
+      whyNot(q('t-after'), q('t-rev'), ok && !why ? '' : (why || after), after);
       $$('#t-chips button', root).forEach(b => b.className = 'btn sm ' + (st.chip === b.dataset.k ? '' : 'ghost'));
     }
     function wireEdit(){

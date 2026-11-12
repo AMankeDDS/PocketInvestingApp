@@ -19,7 +19,7 @@ function upgradeSheet(then){
       ${[['Join groups as a full member','Vote on proposals and copy the Lead Trader'],['Copy individual investors','Each of their trades asks for your approval'],['Performance vs your group','See how your copies track the Lead Trader and the S&P 500'],['Advanced analytics','Coming with the native app']].map(([a, b]) => `<div class="row"><div class="grow"><b>${a}</b><div class="small muted">${b}</div></div></div>`).join('')}
     </div>
     <div class="est"><span>$9.99 a month, or $99 a year</span><b class="num">Free plan stays free</b></div>
-    ${ui.tour == null && Store.canWrite ? wouldPayHTML() : ''}<button class="btn" id="u-go" style="width:100%" ${ui.tour != null || !Store.canWrite ? 'disabled' : ''}>Start Pro</button>
+    ${ui.tour == null && Store.canWrite ? wouldPayHTML() : ''}${ui.tour != null || !Store.canWrite ? `<div class="why-not" id="u-why">${ui.tour != null ? "Starting Pro is turned off during the tour, so nothing changes in the demo." : "You're viewing the app as another member. Switch back to your own account to start Pro."}</div>` : ''}<button class="btn" id="u-go" style="width:100%" ${ui.tour != null || !Store.canWrite ? 'disabled aria-describedby="u-why"' : ''}>Start Pro</button>
     <p class="hint" style="text-align:center;margin-top:10px">Simulated subscription for this demo. Nothing is charged.</p>`, sh => {
     const wp = wireWouldPay(sh);
     sh.querySelector('#u-go').onclick = async () => { try { await Store.upgradePro(wp()); closeModal(); toast("You're on Pro."); if (then) await then(); } catch(e){ errToast(e); } };

@@ -90,9 +90,13 @@ function rTradeSheet(sym, side){
       const a = parseFloat(st.amt) || 0, p = px(), shares = st.by === 'dollars' ? a / p : a, dollars = st.by === 'dollars' ? a : a * p;
       q('r-est').textContent = st.by === 'dollars' ? '≈ ' + shs(Math.floor(shares * 1000) / 1000) + ' shares at ' + usd(p) : '≈ ' + usd(dollars);
       let ok = a > 0, after = '';
-      if (st.side === 'buy'){ const left = R.balances.buyingPower - dollars; after = left < -0.01 ? "That's more than your buying power." : 'Buying power left: ' + usd(Math.max(0, left)); if (left < -0.01) ok = false; if (st.by === 'dollars' && a > 0 && a < 1){ ok = false; after = 'The minimum order is $1.'; } }
-      else { const h = held(); if (!h){ ok = false; after = "You don't own any " + st.sym + '.'; } else if (shares > h + 1e-6){ ok = false; after = "That's more shares than you own."; } else after = "You'll keep " + shs(Math.max(0, h - shares)) + ' shares.'; }
-      q('r-after').textContent = after; q('r-rev').disabled = !ok;
+      const bp = R.balances.buyingPower || 0, pendIn = (R.transfers || []).filter(t => t.direction === 'INCOMING' && ['QUEUED', 'SENT_TO_CLEARING', 'APPROVAL_PENDING', 'PENDING', 'SUBMITTED'].includes(t.status)).reduce((s, t) => s + Number(t.amount || 0), 0);
+      let why = a > 0 ? '' : 'Enter an amount to continue.';
+      if (st.side === 'buy'){ const left = bp - dollars; after = 'Buying power left: ' + usd(Math.max(0, left));
+        if (left < -0.01){ ok = false; why = why || (bp < 0.01 ? (pendIn > 0 ? `Your ${usd(pendIn)} deposit is still on its way, so you don't have buying power yet. You can trade as soon as it arrives, usually within 1 to 3 business days.` : "You don't have any buying power yet. Add money to your account to start trading.")
+          : `That's more than your ${usd(bp)} of buying power. Lower the amount, or tap Max to use all of it.` + (pendIn > 0 ? ` Your ${usd(pendIn)} deposit is still on its way and will add to it.` : '')); } if (st.by === 'dollars' && a > 0 && a < 1){ ok = false; after = 'The minimum order is $1.'; } }
+      else { const h = held(); if (!h){ ok = false; why = `You don't own any ${st.sym} in your real account, so there's nothing to sell. Switch to Buy, or pick a stock you own.`; } else if (shares > h + 1e-6){ ok = false; why = why || `You own ${shs(h)} shares of ${st.sym}. Lower the amount, or tap Max to sell all of them.`; } else after = "You'll keep " + shs(Math.max(0, h - shares)) + ' shares.'; }
+      whyNot(q('r-after'), q('r-rev'), ok && !why ? '' : (why || after), after);
     }
     function draw(){
       root.innerHTML = `<header><h2>Real-money order</h2><button class="x" data-close aria-label="Close">×</button></header>
