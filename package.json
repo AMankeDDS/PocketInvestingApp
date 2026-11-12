@@ -4,7 +4,8 @@
   "description": "Pocket Investing investor demo: social and group investing with approval-based copying (simulated money).",
   "main": "server/index.js",
   "scripts": {
-    "start": "node server/index.js"
+    "start": "node server/index.js",
+    "build": "node build.js"
   },
   "license": "UNLICENSED",
   "dependencies": {
@@ -21,5 +22,8 @@
   "private": true,
   "engines": {
     "node": ">=18"
+  },
+  "devDependencies": {
+    "esbuild": "0.24.2"
   }
 }

@@ -422,7 +422,7 @@ app.post('/api/waitlist', wrap(async (req, res) => {
 }));
 app.get('/api/admin/waitlist', wrap(async (req, res) => { if (!(await needAdmin(req, res))) return; ok(res, { requests: (await q('SELECT id, email, name, how, club_size, note, source, created_at, invited_code, invited_at FROM waitlist ORDER BY created_at DESC LIMIT 500')).rows }); }));
 app.post('/api/admin/waitlist/invited', wrap(async (req, res) => { if (!(await needAdmin(req, res))) return; await q('UPDATE waitlist SET invited_code = $2, invited_at = now() WHERE id = $1', [Number(req.body.id), clean(req.body.code).slice(0, 20)]); ok(res); }));
-app.use(express.static(pub, { setHeaders(res, p){ if (/\.(html|webmanifest)$|sw\.js$/.test(p)) res.set('Cache-Control', 'no-cache'); } }));
+app.use(express.static(pub, { setHeaders(res, p){ if (/\.(html|webmanifest)$|sw\.js$/.test(p)) res.set('Cache-Control', 'no-cache'); else if (/[\\/](js|css)[\\/]app\.[0-9a-f]{10}\.(js|css)$/.test(p)) res.set('Cache-Control', 'public, max-age=31536000, immutable'); } }));
 app.get('*', (req, res) => res.sendFile(path.join(pub, 'index.html')));
 
 /* ---------- boot ---------- */

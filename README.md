@@ -154,3 +154,13 @@ Then open http://localhost:3000.
 ## Moving toward the real product
 
 The real Pocket Investing app is a native build with a broker partner. This demo's rules in `server/logic.js` are a good reference for that build: approval windows, buy-at-open, proportional copy sizing, partial fills, roles, voting and executing a passed proposal.
+
+## Project layout and build
+
+The app's code lives in `src/` and is built into `public/`:
+
+- `src/app/` holds the app split by area, one file each: helpers, shell (routing and rendering), actions (the click handler), notifications, account, charts, markets, home, feed, profile, groups, club, trading, statements, onboarding and help, auth, real money, admin and demo. `99-core.js` holds the startup code (app state, the Store, constants and event wiring) and loads last.
+- `src/styles/app.css` holds the styles, and `src/index.template.html` the page.
+- `npm run build` stitches these into one version-stamped script and stylesheet (`public/js/app.<stamp>.js`, `public/css/app.<stamp>.css`) and writes `public/index.html`. Stamped files are cached for a year; a new build gets a new stamp, so phones never run stale code.
+
+Edit files in `src/`, never `public/index.html` or the built files, then run `npm run build`. The built files are included in the deploy, so Railway serves them as they are.
