@@ -28,6 +28,38 @@ const SESSION_DAYS = 30;
 const TERMS_VERSION = 'draft-2026-10';
 
 const app = express();
+const CSP = ["default-src 'self'", "script-src 'self' 'unsafe-inline'", "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com", "font-src 'self' https://fonts.gstatic.com data:",
+  "img-src 'self' data: blob: https:", "connect-src 'self' ws: wss:", "frame-ancestors 'none'", "base-uri 'self'", "form-action 'self'", "object-src 'none'", "worker-src 'self'", "manifest-src 'self'"].join('; ');
+app.use((req, res, next) => {
+  res.set({ 'Content-Security-Policy': CSP, 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()', 'Cross-Origin-Opener-Policy': 'same-origin' });
+  if (process.env.NODE_ENV === 'production') res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  next();
+});
+/* Changes must come from Pocket's own pages: a request carrying another site's Origin is refused. */
+const ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || '').split(',').map(x => x.trim()).filter(Boolean);
+app.use('/api', (req, res, next) => {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+  const o = req.headers.origin; if (!o) return next();
+  let h = null; try { h = new URL(o).host; } catch (e){}
+  if (h && (h === req.headers.host || ALLOWED_ORIGINS.includes(o))) return next();
+  res.status(403).json({ error: 'Request blocked: it came from another website.' });
+});
+/* Admin activity log: every admin change is recorded. */
+app.use((req, res, next) => {
+  const p = req.path, isAdminCall = req.method === 'POST' && (p.startsWith('/api/admin/') || /^\/api\/action\/(demo|setClock|admin)/.test(p) || /^\/api\/admin/.test(p));
+  if (!isAdminCall) return next();
+  res.on('finish', async () => { try { const u = await currentUser(req); if (!u || !isAdmin(u)) return;
+    const b = Object.fromEntries(Object.entries(req.body || {}).filter(([k]) => !/password|code|secret|file|data|token/i.test(k)).map(([k, v]) => [k, typeof v === 'string' ? v.slice(0, 80) : v]));
+    await q('INSERT INTO admin_log (user_id, action, detail, status) VALUES ($1, $2, $3, $4)', [u.id, p.replace('/api/', ''), JSON.stringify(b).slice(0, 500), res.statusCode]); } catch (e){} });
+  next();
+});
+/* Read-only mode: blocks changes while an issue is fixed (admins can still act). */
+app.use(async (req, res, next) => {
+  if (req.method !== 'POST' || !/^\/api\/(action|real|club|statements)\//.test(req.path)) return next();
+  try { const m = await setting('maintenance', null); if (!m || !m.on) return next(); const u = await currentUser(req); if (isAdmin(u)) return next();
+    return res.status(503).json({ error: m.message || 'Pocket is read-only for a few minutes while we fix an issue. Your account is safe; try again soon.' }); } catch (e){ next(); }
+});
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
 app.use(require('compression')());
@@ -42,19 +74,26 @@ const q = (sql, p) => db.pool.query(sql, p);
 const clean = s => String(s || '').trim();
 const ok = (res, body = {}) => res.json(Object.assign({ ok: true }, body));
 const bad = (res, msg, code = 400) => res.status(code).json({ error: msg });
-const wrap = fn => (req, res) => fn(req, res).catch(e => { if (e.userFacing) return bad(res, e.message); console.error(e); bad(res, 'Something went wrong. Try again.', 500); });
+const wrap = fn => (req, res) => fn(req, res).catch(e => { if (e.userFacing) return bad(res, e.message); console.error(e); try { noteError(); } catch (x){} bad(res, 'Something went wrong. Try again.', 500); });
 
 /* ---------- sessions ---------- */
 function readCookie(req){ const m = (req.headers.cookie || '').match(new RegExp('(?:^|; )' + COOKIE + '=([a-f0-9]{64})')); return m && m[1]; }
 async function currentUser(req){
   const token = readCookie(req); if (!token) return null;
-  const r = await q('SELECT u.id, u.username, u.display_name, u.is_admin, u.last_seen_at, u.totp_enabled FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = $1 AND s.expires_at > now() AND NOT u.disabled', [token]);
+  const r = await q('SELECT s.last_used_at, u.id, u.username, u.display_name, u.is_admin, u.last_seen_at, u.totp_enabled FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = $1 AND s.expires_at > now() AND NOT u.disabled', [token]);
   const u = r.rows[0]; if (!u) return null;
+  if (config.sessionIdleMin > 0){
+    const used = u.last_used_at ? new Date(u.last_used_at).getTime() : Date.now();
+    if (Date.now() - used > config.sessionIdleMin * 60000){ q('DELETE FROM sessions WHERE token = $1', [token]).catch(() => {}); return null; }
+    if (!u.last_used_at || Date.now() - used > 60000) q('UPDATE sessions SET last_used_at = now() WHERE token = $1', [token]).catch(() => {});
+  }
   if (!u.last_seen_at || Date.now() - new Date(u.last_seen_at).getTime() > 300000) q('UPDATE users SET last_seen_at = now() WHERE id = $1', [u.id]).catch(() => {});
   return u;
 }
-const isAdmin = u => !!u && (u.is_admin || ENV_ADMINS.includes(u.username));
-function ctxFor(u){ return u ? { userId: u.id, pid: 'u_' + u.id, username: u.username, isAdmin: isAdmin(u), twoStep: !!u.totp_enabled } : { pid: null, isAdmin: false }; }
+const isAdminAccount = u => !!u && (u.is_admin || ENV_ADMINS.includes(u.username));
+/* Admin powers need two-step sign-in (unless ADMIN_REQUIRE_2FA is turned off for testing). */
+const isAdmin = u => isAdminAccount(u) && (!config.adminRequire2fa || !!u.totp_enabled);
+function ctxFor(u){ return u ? { userId: u.id, pid: 'u_' + u.id, username: u.username, isAdmin: isAdmin(u), adminPending: isAdminAccount(u) && !isAdmin(u), twoStep: !!u.totp_enabled } : { pid: null, isAdmin: false }; }
 async function startSession(req, res, userId){
   const token = crypto.randomBytes(32).toString('hex');
   await q(`INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, now() + interval '${SESSION_DAYS} days')`, [token, userId]);
@@ -63,7 +102,7 @@ async function startSession(req, res, userId){
 }
 const clearCookie = res => res.set('Set-Cookie', `${COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
 const needUser = async (req, res) => { const u = await currentUser(req); if (!u){ bad(res, 'Sign in to do that.', 401); return null; } return u; };
-const needAdmin = async (req, res) => { const u = await currentUser(req); if (!isAdmin(u)){ bad(res, 'Only demo admins can do that.', 403); return null; } return u; };
+const needAdmin = async (req, res) => { const u = await currentUser(req); if (!isAdmin(u)){ bad(res, isAdminAccount(u) ? 'Turn on two-step sign-in in your Profile to use admin tools.' : 'Only demo admins can do that.', 403); return null; } return u; };
 const logEvent = (userId, name, props) => q('INSERT INTO events (user_id, name, props) VALUES ($1, $2, $3)', [userId || null, String(name).slice(0, 60), props ? JSON.stringify(props) : null]).catch(() => {});
 
 /* ---------- live updates ---------- */
@@ -143,25 +182,41 @@ app.post('/api/signup', authLimit, wrap(async (req, res) => {
   broadcast(changes); logEvent(id, 'signup', { source });
   await startSession(req, res, id); ok(res);
 }));
+/* Security activity: recorded for the account holder to review, with a push alert for sign-ins and changes. */
+async function securityEvent(req, userId, kind, detail, alert){
+  const ip = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim().slice(0, 60), ua = String(req.headers['user-agent'] || '').slice(0, 200);
+  await q('INSERT INTO security_events (user_id, kind, detail, ip, ua) VALUES ($1, $2, $3, $4, $5)', [userId, kind, detail || null, ip, ua]).catch(() => {});
+  if (alert) push.send(db.pool, ['u_' + userId], { title: 'Pocket Investing security', body: alert, url: '/#/u/u_' + userId, tag: 'security' }).catch(() => {});
+}
+const deviceName = ua => { ua = String(ua || ''); const b = /Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : /Firefox\//.test(ua) ? 'Firefox' : 'a browser'; const o = /iPhone|iPad/.test(ua) ? 'iPhone or iPad' : /Android/.test(ua) ? 'Android' : /Mac OS/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : 'a device'; return b + ' on ' + o; };
+const failedLogins = new Map();
 app.post('/api/login', authLimit, wrap(async (req, res) => {
   const username = clean(req.body.username).toLowerCase();
+  const recent = (failedLogins.get(username) || []).filter(t => Date.now() - t < 15 * 60000);
+  if (recent.length >= 10) return bad(res, 'Too many wrong passwords for this account. Try again in 15 minutes.', 429);
   const u = (await q('SELECT id, pass_hash, display_name, disabled, totp_enabled, totp_secret FROM users WHERE username = $1', [username])).rows[0];
-  if (!u || !(await bcrypt.compare(String(req.body.password || ''), u.pass_hash))) return bad(res, "That username and password don't match.");
+  if (!u || !(await bcrypt.compare(String(req.body.password || ''), u.pass_hash))){
+    recent.push(Date.now()); failedLogins.set(username, recent);
+    if (u && recent.length === 10) securityEvent(req, u.id, 'lockout', 'Sign-in paused after 10 wrong passwords', 'Someone entered the wrong password for your account 10 times. Sign-in is paused for 15 minutes.');
+    return bad(res, "That username and password don't match."); }
   if (u.disabled) return bad(res, 'This account has been turned off. Contact the Pocket Investing team.');
   if (u.totp_enabled){
     if (!req.body.code) return res.status(400).json({ error: 'Enter the 6-digit code from your authenticator app.', need2fa: true });
     const secret = totp.open(u.totp_secret, config.appSecret);
-    if (!secret || !totp.verify(secret, req.body.code)) return res.status(400).json({ error: "That code didn't match. Try the newest code.", need2fa: true });
+    if (!secret || !totp.verify(secret, req.body.code)){ recent.push(Date.now()); failedLogins.set(username, recent); return res.status(400).json({ error: "That code didn't match. Try the newest code.", need2fa: true }); }
   }
+  failedLogins.delete(username);
   if (!(await q('SELECT 1 FROM doc_profiles WHERE id = $1', ['u_' + u.id])).rows.length){ const { changes } = await db.withTx(tx => createAccount(tx, u.id, u.display_name)); broadcast(changes); }
-  await startSession(req, res, u.id); logEvent(u.id, 'login'); ok(res);
+  await startSession(req, res, u.id); logEvent(u.id, 'login');
+  securityEvent(req, u.id, 'sign-in', deviceName(req.headers['user-agent']), 'New sign-in on ' + deviceName(req.headers['user-agent']) + '. If this wasn\'t you, change your password now.');
+  ok(res);
 }));
 app.post('/api/logout', wrap(async (req, res) => { const t = readCookie(req); if (t) await q('DELETE FROM sessions WHERE token = $1', [t]); clearCookie(res); ok(res); }));
 app.get('/api/me', wrap(async (req, res) => {
   const u = await currentUser(req); const c = ctxFor(u);
   const tf = u ? (await q('SELECT totp_enabled FROM users WHERE id = $1', [u.id])).rows[0] : null;
   res.json({ signedIn: !!u, pid: c.pid, username: u && u.username, name: u && u.display_name, isAdmin: c.isAdmin, inviteOnly: (await setting('inviteOnly', true)) !== false, pushKey: push.publicKey,
-    twofa: !!(tf && tf.totp_enabled), site: config.publicInfo(), accountNumber: u ? await require('./accounts').personal('u_' + u.id).catch(() => null) : null });
+    twofa: !!(tf && tf.totp_enabled), adminAccount: isAdminAccount(u), adminNeeds2fa: isAdminAccount(u) && !isAdmin(u), maintenance: await setting('maintenance', null), site: config.publicInfo(), accountNumber: u ? await require('./accounts').personal('u_' + u.id).catch(() => null) : null });
 }));
 app.post('/api/reset-password', authLimit, wrap(async (req, res) => {
   const username = clean(req.body.username).toLowerCase(), code = clean(req.body.code).toUpperCase();
@@ -173,6 +228,7 @@ app.post('/api/reset-password', authLimit, wrap(async (req, res) => {
   await q('UPDATE users SET pass_hash = $1 WHERE id = $2', [await bcrypt.hash(req.body.password, 10), u.id]);
   await q('UPDATE password_resets SET used = true WHERE token_hash = $1', [hashCode]);
   await q('DELETE FROM sessions WHERE user_id = $1', [u.id]);
+  securityEvent(req, u.id, 'password', 'Password reset with a code', 'Your password was reset and other devices were signed out.');
   await startSession(req, res, u.id); ok(res);
 }));
 app.post('/api/change-password', authLimit, wrap(async (req, res) => {
@@ -182,6 +238,7 @@ app.post('/api/change-password', authLimit, wrap(async (req, res) => {
   if (!validPassword(req.body.password)) return bad(res, 'Use a new password of at least 8 characters.');
   await q('UPDATE users SET pass_hash = $1 WHERE id = $2', [await bcrypt.hash(req.body.password, 10), u.id]);
   await q('DELETE FROM sessions WHERE user_id = $1 AND token <> $2', [u.id, readCookie(req)]);
+  securityEvent(req, u.id, 'password', 'Password changed; other sessions signed out', 'Your password was changed and other devices were signed out.');
   ok(res);
 }));
 app.post('/api/delete-account', authLimit, wrap(async (req, res) => {
@@ -197,6 +254,18 @@ app.get('/api/state', wrap(async (req, res) => { res.set('Cache-Control', 'no-st
   { const u = await currentUser(req), C = snap.collections || {};
     const ctx = vis.makeCtx({ pid: u ? 'u_' + u.id : null, isAdmin: isAdmin(u) }, C.memberships || [], C.groups || [], config.sampleData);
     snap.collections = await vis.filterCollections(ctx, C, lookupDoc); } snap.market = { extras: marketdata.extras(), bases: marketdata.bases(), quotes: config.realPrices ? Market.QUOTES : {} }; res.json(snap); }));
+app.get('/api/admin/log', wrap(async (req, res) => { if (!(await needAdmin(req, res))) return; ok(res, { log: (await q(`SELECT l.action, l.detail, l.status, l.ts, u.username FROM admin_log l LEFT JOIN users u ON u.id = l.user_id ORDER BY l.id DESC LIMIT 200`)).rows }); }));
+/* Site notice (a banner for everyone) and read-only mode (blocks changes while an issue is fixed). */
+app.post('/api/admin/maintenance', wrap(async (req, res) => { if (!(await needAdmin(req, res))) return;
+  await setSetting('maintenance', req.body.on ? { on: true, message: clean(req.body.message).slice(0, 300) || null, ts: Date.now() } : null); broadcastRaw({ type: 'notice' }); ok(res); }));
+/* Error spikes alert the admins (at most once an hour). */
+const errorTimes = []; let lastErrorAlert = 0;
+function noteError(){
+  const now = Date.now(); errorTimes.push(now); while (errorTimes.length && now - errorTimes[0] > 10 * 60000) errorTimes.shift();
+  if (errorTimes.length >= 10 && now - lastErrorAlert > 3600000){ lastErrorAlert = now;
+    q(`SELECT id FROM users WHERE is_admin OR lower(username) = ANY($1)`, [ENV_ADMINS]).then(r => push.send(db.pool, r.rows.map(x => 'u_' + x.id), { title: 'Pocket Investing: errors spiking', body: errorTimes.length + ' errors in the last 10 minutes. Check Beta admin, Errors.', url: '/#/admin', tag: 'errors' })).catch(() => {}); }
+}
+app.get('/api/security-events', wrap(async (req, res) => { const u = await needUser(req, res); if (!u) return; ok(res, { events: (await q('SELECT kind, detail, ts FROM security_events WHERE user_id = $1 ORDER BY id DESC LIMIT 15', [u.id])).rows }); }));
 app.get('/api/invite/:code', wrap(async (req, res) => {
   const code = String(req.params.code || '').toUpperCase().slice(0, 16);
   const r = (await q(`SELECT id, data FROM doc_groups WHERE upper(data->>'inviteCode') = $1`, [code])).rows[0];
@@ -237,6 +306,7 @@ app.post('/api/feedback', lightLimit, wrap(async (req, res) => {
 }));
 app.post('/api/client-error', lightLimit, wrap(async (req, res) => {
   const u = await currentUser(req);
+  try { noteError(); } catch (x){}
   await q('INSERT INTO client_errors (user_id, message, stack, url, ua) VALUES ($1, $2, $3, $4, $5)', [u && u.id, clean(req.body.message).slice(0, 500), clean(req.body.stack).slice(0, 4000), clean(req.body.url).slice(0, 300), clean(req.headers['user-agent']).slice(0, 300)]);
   await q('DELETE FROM client_errors WHERE id < (SELECT max(id) - 1000 FROM client_errors)');
   ok(res);
@@ -321,7 +391,7 @@ app.get('/api/admin/usage', wrap(async (req, res) => {
 }));
 
 app.get('/healthz', (req, res) => res.json({ ok: true, mode: config.mode }));
-const realDeps = { q, wrap, ok, bad, needUser, needAdmin, sendTo, newId: db.newId, getSetting: setting, setSetting,
+const realDeps = { securityEvent: (...a) => securityEvent(...a), q, wrap, ok, bad, needUser, needAdmin, sendTo, newId: db.newId, getSetting: setting, setSetting,
   isPro: async pid => { const r = await q('SELECT data FROM doc_profiles WHERE id = $1', [pid]); const p = r.rows[0] && r.rows[0].data; return !!p && (p.kind === 'demo' || p.plan === 'pro'); } };
 real.mount(app, realDeps);
 marketdata.mount(app, { q, wrap, ok, bad, needUser, needAdmin, getSetting: setting, setSetting, broadcastMsg: obj => broadcastRaw(obj), push, pool: db.pool });

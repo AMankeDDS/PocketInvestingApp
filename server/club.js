@@ -151,7 +151,10 @@ function mount(app, d){
     const td = (await q('SELECT pid FROM club_tax_docs WHERE file_id = $1', [f.id])).rows[0];
     const allowed = d.isAdmin(u) || f.pid === pid || (m && EDIT.includes(m.role)) || (m && m.role !== 'observer' && sub && sub.data.kind === 'document') || (td && td.pid === pid);
     if (!allowed) return bad(res, "You don't have access to this file.", 403);
-    res.set('Content-Type', f.mime); res.set('Content-Disposition', 'inline; filename="' + String(f.name || 'file').replace(/[^\w. -]/g, '_') + '"'); res.set('Cache-Control', 'private, no-store'); res.set('X-Content-Type-Options', 'nosniff'); res.send(f.bytes);
+    /* Uploaded files open with no scripts allowed; PDFs download instead of opening inside the app. */
+    const fname = String(f.name || 'file').replace(/[^\w. -]/g, '_');
+    res.set('Content-Type', f.mime); res.set('Content-Disposition', (f.mime === 'application/pdf' ? 'attachment' : 'inline') + '; filename="' + fname + '"');
+    res.set('Content-Security-Policy', "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox"); res.set('Cache-Control', 'private, no-store'); res.set('X-Content-Type-Options', 'nosniff'); res.send(f.bytes);
   }));
   /* The Pocket team reviews club documents (Beta admin). */
   app.get('/api/admin/club-docs', wrap(async (req, res) => {

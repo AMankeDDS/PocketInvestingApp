@@ -46,7 +46,7 @@ async function isPro(tx, pid){ const p = await tx.get('profiles', pid); return !
 async function isDemo(tx, pid){ const p = await tx.get('profiles', pid); return !!p && p.kind === 'demo'; }
 async function roleIn(tx, gid, pid){ const m = await tx.get('memberships', gid + '__' + pid); return m && m.role; }
 async function needProfile(tx, ctx){ if (!ctx.pid) throw fail('Sign in first.'); const p = await tx.get('profiles', ctx.pid); if (!p) throw fail('Your account has no profile yet.'); return p; }
-const needAdmin = ctx => { if (!ctx.isAdmin) throw fail('Only demo admins can do that.'); };
+const needAdmin = ctx => { if (!ctx.isAdmin) throw fail(ctx.adminPending ? 'Turn on two-step sign-in in your Profile to use admin tools.' : 'Only demo admins can do that.'); };
 
 /* ---------- trading ---------- */
 async function executeTrade(tx, pid, s, sd, shares, opt = {}){

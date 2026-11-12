@@ -346,7 +346,7 @@ const Store = (() => {
   }
   function connect(){
     try { ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws'); } catch(e){ return; }
-    ws.onmessage = e => { try { const m = JSON.parse(e.data); if (m.type === 'changes') applyChanges(m.changes); else if (m.type === 'resync'){ loadState().then(emit, () => {}); } else if (m.type === 'real') realListeners.forEach(fn => { try { fn(m); } catch(x){} });
+    ws.onmessage = e => { try { const m = JSON.parse(e.data); if (m.type === 'changes') applyChanges(m.changes); else if (m.type === 'notice'){ loadMe().then(emit, () => {}); } else if (m.type === 'resync'){ loadState().then(emit, () => {}); } else if (m.type === 'real') realListeners.forEach(fn => { try { fn(m); } catch(x){} });
       else if (m.type === 'market'){ (m.extras || []).forEach(x => Market.add(x.s, x.n, x.b)); if (m.bases) Market.setBases(m.bases); if (m.quotes) Market.setQuotes(m.quotes); if (m.extras || m.bases) emit(); }
       else if (m.type === 'news'){ newsCache.clear(); emit(); } } catch(err){} };
     ws.onclose = () => setTimeout(async () => { try { await loadState(); emit(); } catch(e){} connect(); }, 2000 + Math.random() * 2000);
@@ -549,11 +549,11 @@ const Store = (() => {
     addSampleData: () => api('demoAddSampleData'),
     toggleWatch: sym => api('toggleWatch', { sym }), setTags: tags => api('setTags', { tags }), setPinned: (gid, text) => api('setPinned', { gid, text }),
     featureGroup: (gid, featured) => api('featureGroup', { gid, featured }), setSampleActivity: o => api('setSampleActivity', o),
-    inject, all, get, displayName, portfolioValue, membersOf, membership, myGroups, tally, requestState, myPending, ROLE_LABEL,
+    refreshMe: async () => { await loadMe(); emit(); }, inject, all, get, displayName, portfolioValue, membersOf, membership, myGroups, tally, requestState, myPending, ROLE_LABEL,
     canTradeFor, canPropose, canVote, canManage, ROLE_INFO_KEYS: ['owner','admin','lead','junior','analyst','risk','moderator','treasurer','asstTreasurer','member','observer'], isFollowing, isDemo, isPro, isCopying, copiersOf, performance, notifications, unreadCount, START_CASH,
     signup: (username, password, name, risk) => auth('/api/signup', { username, password, name, risk }),
     login: (username, password, code) => auth('/api/login', { username, password, code: code || undefined }),
-    get site(){ return me.site || { mode:'demo', realMoney:false, demoTools:true, instantDeposits:{ enabled:false } }; }, get twofa(){ return !!me.twofa; }, get accountNumber(){ return me.accountNumber || null; },
+    get site(){ return me.site || { mode:'demo', realMoney:false, demoTools:true, instantDeposits:{ enabled:false } }; }, get twofa(){ return !!me.twofa; }, get adminAccount(){ return !!me.adminAccount; }, get adminNeeds2fa(){ return !!me.adminNeeds2fa; }, get maintenance(){ return me.maintenance || null; }, get accountNumber(){ return me.accountNumber || null; },
     onReal: fn => (realListeners.add(fn), () => realListeners.delete(fn)),
     twofaSetup: () => http('POST', '/api/2fa/setup'),
     twofaEnable: async code => { await http('POST', '/api/2fa/enable', { code }); await loadMe(); emit(); },
@@ -561,7 +561,7 @@ const Store = (() => {
     real: {
       summary: () => http('GET', '/api/real/summary'), open: f => http('POST', '/api/real/account', f),
       bank: o => http('POST', '/api/real/bank', o), unbank: id => http('POST', '/api/real/bank/remove', { id }),
-      transfer: (direction, amount) => http('POST', '/api/real/transfer', { direction, amount }),
+      transfer: (direction, amount, code) => http('POST', '/api/real/transfer', { direction, amount, code }),
       order: o => http('POST', '/api/real/order', o), cancel: id => http('POST', '/api/real/cancel', { id }),
       docs: () => http('GET', '/api/real/documents'), quotes: syms => http('GET', '/api/real/quotes?symbols=' + encodeURIComponent(syms.join(',')))
     },
@@ -705,7 +705,7 @@ function renderNav(){
     items.map(([k, l, i]) => `<a class="nav ${on(k)}" href="${href(k)}">${ICON[i]}<span>${l}</span>${k === 'inbox' && n ? `<span class="badge">${n}</span>` : ''}</a>`).join('') +
     `<a class="nav ${r === 'notifications' ? 'on' : ''}" href="#/notifications">${ICON.bell}<span>Notifications</span>${un ? `<span class="badge">${un}</span>` : ''}</a>` +
     (!Store.signedIn && Store.ready ? `<button class="btn" data-act="signin" style="margin:10px 12px">Sign in</button>` : '') +
-    (Store.canEdit ? `${Store.site.demoTools ? `<a class="nav ${r === 'demo' ? 'on' : ''}" href="#/demo">${ICON.demo}<span>Demo controls</span></a>` : ''}<a class="nav ${r === 'metrics' ? 'on' : ''}" href="#/metrics">${ICON.metrics}<span>Pilot metrics</span></a><a class="nav ${r === 'admin' ? 'on' : ''}" href="#/admin">${ICON.me}<span>Beta admin</span></a>` : '') + sess;
+    (Store.adminNeeds2fa && !Store.canEdit ? `<a class="nav ${r === 'admin' ? 'on' : ''}" href="#/admin">${ICON.me}<span>Beta admin</span></a>` : '') + (Store.canEdit ? `${Store.site.demoTools ? `<a class="nav ${r === 'demo' ? 'on' : ''}" href="#/demo">${ICON.demo}<span>Demo controls</span></a>` : ''}<a class="nav ${r === 'metrics' ? 'on' : ''}" href="#/metrics">${ICON.metrics}<span>Pilot metrics</span></a><a class="nav ${r === 'admin' ? 'on' : ''}" href="#/admin">${ICON.me}<span>Beta admin</span></a>` : '') + sess;
   $('#bottomnav').innerHTML = items.map(([k, l, i]) => `<a class="${on(k)}" href="${href(k)}">${ICON[i]}<span>${l}</span>${k === 'inbox' && n ? `<span class="badge">${n}</span>` : ''}</a>`).join('');
   $('#topbar').innerHTML = `<div class="brand"><span class="mark">P</span>Pocket</div><div style="display:flex;gap:8px;align-items:center">${sess}${!Store.signedIn && Store.ready ? '<button class="btn sm" data-act="signin">Sign in</button>' : ''}${Store.get('profiles', Store.myPid) ? bell : ''}${Store.canEdit ? `<a href="#/demo" class="btn ghost sm" aria-label="Demo controls">${ICON.demo.replace('<svg','<svg width="18" height="18"')}</a>` : ''}</div>`;
 }
@@ -838,6 +838,41 @@ function recurringSheet(sym){
     <button class="btn" id="rc-go" style="width:100%">${cur ? 'Update schedule' : 'Start investing'}</button><p class="hint" style="text-align:center;margin-top:10px">The first buy happens at the next market open. Pause or stop anytime from Home.</p>`, sh => {
     sh.querySelector('#rc-go').onclick = async () => { try { await Store.setRecurring({ sym, amount: Number(sh.querySelector('#rc-a').value), freq: sh.querySelector('#rc-f').value }); closeModal(); toast('Recurring investment set.'); } catch(e){ errToast(e); } };
   });
+}
+const askCode = msg => { const v = prompt(msg); return v ? v.trim() : ''; };
+/* ---------- help ---------- */
+function vHelp(){
+  const Q = [
+    ['Is this real money?', Store.site.realMoney ? 'Your practice account uses simulated money. Your real-money account is held at our brokerage partner, and every real trade and transfer is shown separately.' : 'No. The beta uses practice money, so you can try everything with nothing at risk.'],
+    ['Will anyone trade in my account?', "No. When someone you copy or your group's Lead Trader trades, you get a request sized to your account. Nothing happens until you approve it."],
+    ['How do groups work?', 'Groups have roles, proposals and votes. Join one from Groups, or start your own from a template. Members approve each copied trade; a pooled club trades its shared account only by member vote.'],
+    ['What are club books and statements?', 'Clubs can track dues, withdrawals and valuations with unit values, run meetings, and send members monthly statements. Find them on the Club books tab of a group, and your statements in Profile, Statements.'],
+    ['How do I protect my account?', 'Turn on two-step sign-in in your Profile. It adds a code from an authenticator app when you sign in, and it is required for club officers and real-money withdrawals.'],
+    ['I found a problem or have an idea', 'Use the Feedback button on any screen. It sends your note straight to the Pocket team, with the page you were on.']
+  ];
+  return `<div class="pagehead"><div><h1>Help</h1><p class="muted">Quick answers about the beta.</p></div></div>
+    <div class="list">${Q.map(([q, a]) => `<details class="row" style="display:block"><summary style="cursor:pointer;font-weight:600">${esc(q)}</summary><p class="muted" style="margin:8px 0 0">${esc(a)}</p></details>`).join('')}</div>
+    <p class="hint" style="margin-top:16px">Still stuck? Email <a href="mailto:admin@pocketinvesting.com">admin@pocketinvesting.com</a>. See also the <a href="#/terms">Terms of use</a> and <a href="#/privacy">Privacy policy</a>.</p>`;
+}
+/* ---------- getting started checklist (beta testers) ---------- */
+function gettingStarted(){
+  if (!Store.signedIn || !Store.canWrite) return '';
+  let off = ''; try { off = localStorage.getItem('pi_onb_off') || ''; } catch(e){}
+  if (off === Store.myPid) return '';
+  const p = Store.get('profiles', Store.myPid) || {}, me = Store.myPid;
+  const items = [['Add a short bio to your profile', !!(p.bio && p.bio.trim()), '#/u/' + me], ['Make a practice trade', Store.all('trades').some(t => t.pid === me), '#/markets'],
+    ['Follow an investor', Store.all('follows').some(f => f.from === me), '#/discover'], ['Join or start a group', Store.myGroups().length > 0, '#/groups'], ['Turn on two-step sign-in', Store.twofa, '#/u/' + me]];
+  const done = items.filter(i => i[1]).length; if (done === items.length) return '';
+  return `<section class="block"><header style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h2>Getting started</h2><span class="small muted">${done} of ${items.length} done · <button class="linkbtn small" data-act="onboff">Hide</button></span></header>
+    <div class="list">${items.map(([t, ok, href]) => `<a class="row" href="${href}"><span aria-hidden="true" style="width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;${ok ? 'background:var(--gain);color:#fff' : 'border:1.5px solid var(--line)'}">${ok ? '✓' : ''}</span><div class="grow" style="${ok ? 'color:var(--muted);text-decoration:line-through' : ''}">${t}</div></a>`).join('')}</div>
+    <p class="hint">Questions? See <a href="#/help">Help</a>.</p></section>`;
+}
+function securityActivity(){
+  if (!ui.secEv){ ui.secEv = 'loading'; Store.http('GET', '/api/security-events').then(r => { ui.secEv = r.events; render(); }, () => { ui.secEv = []; }); }
+  const E = Array.isArray(ui.secEv) ? ui.secEv : []; if (!E.length) return '';
+  const W = { 'sign-in': 'Signed in', password: 'Password', 'two-step': 'Two-step sign-in', lockout: 'Sign-in paused' };
+  return `<section class="block"><header><h2>Recent security activity</h2></header><div class="list">${E.slice(0, 8).map(e => `<div class="row"><div class="grow"><b>${esc(W[e.kind] || e.kind)}</b> <span class="small muted">${esc(e.detail || '')}</span></div><span class="small muted">${ago(new Date(e.ts).getTime())} ago</span></div>`).join('')}</div>
+    <p class="hint">Don't recognize something? Change your password, which signs out every other device.</p></section>`;
 }
 /* ---------- statements ---------- */
 function stPeriod(){
@@ -1323,6 +1358,7 @@ function vPracticeHome(){
   return `${showInstallTip()}${starterCard(prof, groups)}${hero}
   ${sec('Waiting on you', waiting)}
   ${sec('Your groups', latest ? `<div class="list">${latest}</div>` : '', '<button class="linkbtn small" data-act="gofeedgroups">See all</button>')}
+  ${gettingStarted()}
   ${waitingOnYou()}
   ${comingUp()}
   ${recurringList()}
@@ -1529,7 +1565,7 @@ function rTransferSheet(dir){
     ${!out ? (inst.enabled ? (inst.eligible ? `<div class="banner" style="margin-bottom:12px;font-size:14px">Pro: up to ${usd(inst.perDeposit, 0)} of this deposit is available to invest right away. The rest is available when the transfer clears.</div>` : `<p class="hint">Instant deposits: ${esc(inst.reason || 'not available')}.</p>`) : '<p class="hint">Deposits usually take 1 to 3 business days to clear. Instant deposits for Pro members are coming soon.</p>') : '<p class="hint">Withdrawals usually arrive in 1 to 3 business days.</p>'}
     <button class="btn" id="tr-go" style="width:100%">${out ? 'Withdraw' : 'Deposit'}</button>`, sh => {
     sh.querySelector('#tr-go').onclick = async () => { const b = sh.querySelector('#tr-go'); b.disabled = true;
-      try { const r = await Store.real.transfer(dir, Number(sh.querySelector('#tr-a').value)); closeModal(); toast(out ? 'Withdrawal requested.' : (r.instant ? `Deposit started. ${usd(r.instant)} is available to invest now.` : 'Deposit started. It usually clears in 1 to 3 business days.')); loadReal(); }
+      try { const r = await Store.real.transfer(dir, Number(sh.querySelector('#tr-a').value), out ? askCode('Enter the 6-digit code from your authenticator app to confirm this withdrawal.') : undefined); closeModal(); toast(out ? 'Withdrawal requested.' : (r.instant ? `Deposit started. ${usd(r.instant)} is available to invest now.` : 'Deposit started. It usually clears in 1 to 3 business days.')); loadReal(); }
       catch(e){ b.disabled = false; errToast(e); } };
   });
 }
@@ -1544,7 +1580,7 @@ function rBankSheet(){
     : `<p class="muted" style="margin-top:0">You'll sign in to your bank through Plaid, a secure service used by most finance apps. Pocket never sees your bank password.</p><button class="btn" disabled style="width:100%">Connect with Plaid (coming next)</button>`}`, sh => {
     const go = sh.querySelector('#bk-go'); if (!go) return;
     sh.querySelector('#bk-a').value = '123456789';
-    go.onclick = async () => { go.disabled = true; try { await Store.real.bank({ owner: sh.querySelector('#bk-o').value, routing: sh.querySelector('#bk-r').value, account: sh.querySelector('#bk-a').value, type: sh.querySelector('#bk-t').value, nickname: 'Checking' }); closeModal(); toast('Bank linked.'); loadReal(); } catch(e){ go.disabled = false; errToast(e); } };
+    go.onclick = async () => { go.disabled = true; try { await Store.real.bank({ code: askCode('Enter the 6-digit code from your authenticator app to confirm this bank account.'), owner: sh.querySelector('#bk-o').value, routing: sh.querySelector('#bk-r').value, account: sh.querySelector('#bk-a').value, type: sh.querySelector('#bk-t').value, nickname: 'Checking' }); closeModal(); toast('Bank linked.'); loadReal(); } catch(e){ go.disabled = false; errToast(e); } };
   });
 }
 function marketRows(limit){
@@ -1856,8 +1892,10 @@ function vProfile(pid){
       <button class="btn sm ghost" data-act="copyonce" data-id="${pid}">Copy their portfolio</button>` : '')}</div></div>
   ${!self && Store.isCopying(pid) ? `<div class="banner ember" style="margin-top:16px">You copy ${esc(Store.displayName(pid))}. Each of their trades sends you an approval request sized to your capital.</div>` : ''}
   ${trackRecord('investor', pid)}
+  ${self ? securityActivity() : ''}
   ${self ? `<section class="block"><header><h2>Account</h2></header><div class="list">
     ${Store.accountNumber ? `<div class="row"><div class="grow"><b>Account number</b><div class="small muted">Your practice account</div></div><b class="num">${esc(Store.accountNumber)}</b></div>` : ''}
+    <a class="row" href="#/help"><div class="grow"><b>Help</b><div class="small muted">Quick answers about the beta</div></div><span class="muted">›</span></a>
     <a class="row" href="#/statements"><div class="grow"><b>Statements</b><div class="small muted">Monthly, quarterly and yearly statements, or create one for any period</div></div><span class="muted">›</span></a>
     <div class="row"><div class="grow"><b>Plan</b><div class="small muted">${Store.isPro() ? 'Pro, $9.99 a month (simulated)' : 'Free: browse, trade, and observe groups'}</div></div>${Store.canWrite ? (Store.isPro() ? `<button class="btn sm ghost" data-act="cancelpro">Cancel Pro</button>` : `<button class="btn sm" data-act="upgrade">Upgrade to Pro</button>`) : ''}</div>
     <div class="row"><div class="grow"><b>Investing style</b><div class="small muted">Used to suggest groups</div></div>${Store.canWrite ? `<select class="input" style="width:auto;padding:7px 10px;font-size:14px" data-act="setrisk" aria-label="Investing style">${Object.entries(RISK).map(([k, [a]]) => `<option value="${k}" ${p.riskProfile === k ? 'selected' : ''}>${a}</option>`).join('')}</select>` : ''}</div>
@@ -2085,10 +2123,11 @@ async function pushOn(){
 }
 async function pushOff(){ const reg = await navigator.serviceWorker.ready; const sub = await reg.pushManager.getSubscription(); if (sub){ await Store.http('POST', '/api/push/unsubscribe', { endpoint: sub.endpoint }).catch(() => {}); await sub.unsubscribe(); } }
 function vAdmin(){
+  if (!Store.canEdit && Store.adminNeeds2fa) return `<div class="panel" style="padding:22px;max-width:560px"><h1>Turn on two-step sign-in</h1><p class="muted">Admin tools can see everyone's data, so they need two-step sign-in. Turn it on in your Profile, then come back.</p><a class="btn" href="#/u/${Store.myPid}">Go to Profile</a></div>`;
   if (!Store.canEdit) return `<div class="empty">The beta admin is available to demo admins.</div>`;
   if (!ui.admin){ loadAdmin(); return '<div class="loading">Loading beta admin…</div>'; }
   const A = ui.admin, tab = ui.adminTab;
-  const T = [['metrics','Metrics'],['requests','Invite requests'],['clubdocs','Club documents'],['testers','Testers ' + A.users.length],['invites','Invites'],['feedback','Feedback ' + A.feedback.filter(f => f.status === 'open').length],['errors','Errors ' + A.errors.length]].concat(Store.site.realMoney ? [['real','Real money']] : []).concat([['market','Market data'], ['settings','Settings']]);
+  const T = [['metrics','Metrics'],['requests','Invite requests'],['clubdocs','Club documents'],['adminlog','Admin log'],['testers','Testers ' + A.users.length],['invites','Invites'],['feedback','Feedback ' + A.feedback.filter(f => f.status === 'open').length],['errors','Errors ' + A.errors.length]].concat(Store.site.realMoney ? [['real','Real money']] : []).concat([['market','Market data'], ['settings','Settings']]);
   const when = t => t ? ago(new Date(t).getTime()) + ' ago' : 'never';
   let body = '';
   if (tab === 'testers') body = `<div class="list">${A.users.map(u => `<div class="row" style="flex-wrap:wrap"><div class="grow" style="min-width:200px"><b>${esc(u.display_name)}</b> <span class="muted small">@${esc(u.username)}</span> ${u.env_admin || u.is_admin ? '<span class="tag blue">Admin</span>' : ''} ${u.disabled ? '<span class="tag">Turned off</span>' : ''}
@@ -2104,10 +2143,18 @@ function vAdmin(){
   else if (tab === 'metrics') body = adminMetrics();
   else if (tab === 'clubdocs') body = adminClubDocs();
   else if (tab === 'requests') body = adminRequests();
+  else if (tab === 'adminlog') body = adminLogView();
   else body = `<section class="panel" style="padding:18px 20px"><h2>Invite only</h2><p class="muted small">When on, new accounts need an invite code. Admins listed in ADMIN_USERNAMES can always sign up.</p><div class="seg"><button class="${A.inviteOnly ? 'on' : ''}" data-act="adm-io" data-k="1">On</button><button class="${A.inviteOnly ? '' : 'on'}" data-act="adm-io" data-k="0">Off</button></div></section>
-    <section class="panel" style="padding:18px 20px;margin-top:16px"><h2>Announcement</h2><p class="muted small">Shown at the top of every screen until each tester dismisses it.</p><textarea class="input" id="adm-ann" maxlength="300" placeholder="e.g. New version: please test buy-at-open today">${esc((A.announcement || {}).text || '')}</textarea><div style="display:flex;gap:10px;margin-top:10px"><button class="btn" data-act="adm-ann">Post</button>${A.announcement ? '<button class="btn ghost" data-act="adm-annclear">Remove</button>' : ''}</div></section>`;
+    <section class="panel" style="padding:18px 20px;margin-top:16px"><h2>Announcement</h2><p class="muted small">Shown at the top of every screen until each tester dismisses it.</p><textarea class="input" id="adm-ann" maxlength="300" placeholder="e.g. New version: please test buy-at-open today">${esc((A.announcement || {}).text || '')}</textarea><div style="display:flex;gap:10px;margin-top:10px"><button class="btn" data-act="adm-ann">Post</button>${A.announcement ? '<button class="btn ghost" data-act="adm-annclear">Remove</button>' : ''}</div></section>
+    <section class="panel" style="padding:18px 20px;margin-top:16px"><h2>Read-only mode</h2><p class="muted small">Blocks trades, transfers, approvals and other changes for everyone except admins, with a banner explaining why. Use it while fixing an issue.</p>
+      ${(Store.maintenance || {}).on ? `<p><b>Read-only mode is on.</b></p><button class="btn" data-act="adm-ro" data-k="0">Turn it off</button>` : `<input class="input" id="adm-ro-m" maxlength="300" placeholder="Optional message, e.g. We're fixing a delay with deposits."><p style="margin-top:10px"><button class="btn ghost" data-act="adm-ro" data-k="1">Turn on read-only mode</button></p>`}</section>`;
   return `<div class="pagehead"><div><h1>Beta admin</h1><p class="muted">Beta metrics, testers, invite codes, feedback and error reports.</p></div><button class="btn ghost sm" data-act="adm-refresh">Refresh</button></div>
     <nav class="tabs">${T.map(([k, l]) => `<a href="#/admin" class="${tab === k ? 'on' : ''}" data-act="adm-tab" data-k="${k}">${l}</a>`).join('')}</nav>${body}`;
+}
+function adminLogView(){
+  const X = ui.alog; if (!X){ ui.alog = 'loading'; Store.http('GET', '/api/admin/log').then(r => { ui.alog = r.log; render(); }, e => { ui.alog = { error: e.message }; render(); }); }
+  if (!X || X === 'loading') return '<div class="loading" style="min-height:20vh">Loading…</div>'; if (X.error) return `<div class="panel empty">${esc(X.error)}</div>`;
+  return `<p class="muted small" style="margin-top:0">Every admin change, newest first.</p><div class="panel mtable"><table><thead><tr><th>When</th><th>Admin</th><th>Action</th><th>Details</th><th>Result</th></tr></thead><tbody>${X.map(l => `<tr><td>${ago(new Date(l.ts).getTime())} ago</td><td>${esc(l.username || '')}</td><td>${esc(l.action)}</td><td style="max-width:420px;white-space:normal">${esc(l.detail || '')}</td><td>${l.status < 400 ? 'OK' : 'Refused (' + l.status + ')'}</td></tr>`).join('') || '<tr><td colspan="5">Nothing yet.</td></tr>'}</tbody></table></div>`;
 }
 function adminRequests(){
   const X = ui.areq;
@@ -2269,6 +2316,7 @@ function render(){
     case 'markets': html = vMarkets(); break;
     case 'security': html = vSecurity(); break;
     case 'statements': html = vPocketStatements(); break;
+    case 'help': html = vHelp(); break;
     case 'documents': html = vStatements(); break;
     case 'join': html = Store.signedIn ? vHome() : vOnboard(); break;
     case 'terms': html = vLegal('terms'); break;
@@ -2284,6 +2332,7 @@ function render(){
   const demoVals = route().name === 'demo' ? Object.fromEntries($$('#view select, #view input').map(e => [e.id, e.value])) : null;
   const ann = Store.settings.announcement; let annOff = ''; try { annOff = localStorage.getItem('pi_ann_off') || ''; } catch(e){}
   if (ann && ann.text && String(ann.ts) !== annOff && ui.tour == null) html = `<div class="banner ember" style="margin-bottom:16px"><div style="flex:1"><b>From the Pocket team</b><div class="small">${esc(ann.text)}</div></div><button class="btn sm ghost" data-act="annoff" data-k="${ann.ts}">Dismiss</button></div>` + html;
+  const mt = Store.maintenance; if (mt && mt.on) html = `<div class="banner ember" style="margin-bottom:16px" role="status"><div style="flex:1"><b>Pocket is read-only for a few minutes</b><div class="small">${esc(mt.message || "We're fixing an issue. Your account and money are safe; you can look around, and changes will work again shortly.")}</div></div></div>` + html;
   view.innerHTML = html;
   try { ichRestore(); } catch(e){}
   renderFeedbackButton();
@@ -2754,7 +2803,7 @@ async function act(el, ev){ /* eslint-disable-line */
     case 'adm-spend': return busy(async () => { const m = document.getElementById('ms-m').value, amt = Number(document.getElementById('ms-a').value); await Store.http('POST', '/api/admin/metrics/adspend', { month: m, amount: amt }); ui.ametrics = null; toast('Ad spend saved.'); render(); });
     case 'adm-utm': { const s = (document.getElementById('mu-s').value || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, ''); if (!s){ toast('Name the source first, like instagram.'); return; }
       const link = location.origin + '/?utm_source=' + s + '&utm_medium=' + (document.getElementById('mu-p').checked ? 'paid' : 'referral') + '&utm_campaign=beta'; document.getElementById('mu-l').value = link; try { navigator.clipboard.writeText(link); toast('Link copied.'); } catch(e){} return; }
-    case 'adm-tab': ev.preventDefault(); ui.adminTab = el.dataset.k; ui.ametrics = null; ui.adocs = null; ui.areq = null; ui.areal = null; ui.amd = null; ui.amdCheck = null; return render();
+    case 'adm-tab': ev.preventDefault(); ui.adminTab = el.dataset.k; ui.ametrics = null; ui.adocs = null; ui.areq = null; ui.alog = null; ui.areal = null; ui.amd = null; ui.amdCheck = null; return render();
     case 'adm-refresh': ui.admin = null; ui.ametrics = null; return render();
     case 'adm': return busy(async () => {
       const op = el.dataset.op;
@@ -2766,6 +2815,8 @@ async function act(el, ev){ /* eslint-disable-line */
     });
     case 'adm-newinv': return newInviteSheet();
     case 'adm-invtoggle': return busy(async () => { await Store.http('POST', '/api/admin/invite', { code: el.dataset.k, op: 'toggle' }); await loadAdmin(); });
+    case 'adm-ro': { const on = el.dataset.k === '1'; if (on && !confirm('Turn on read-only mode for everyone?')) return; return busy(async () => { await Store.http('POST', '/api/admin/maintenance', { on, message: on ? (document.getElementById('adm-ro-m') || {}).value : '' }); await Store.refreshMe(); toast(on ? 'Read-only mode is on.' : 'Read-only mode is off.'); render(); }); }
+    case 'onboff': try { localStorage.setItem('pi_onb_off', Store.myPid); } catch(e){} return render();
     case 'adm-reqinvite': return busy(async () => { const r = ui.areq.find(x => String(x.id) === String(id)); const inv = await Store.http('POST', '/api/admin/invite', { label: ('Website: ' + (r.name || r.email)).slice(0, 60), maxUses: 1 });
       const code = inv.code || (inv.invite || {}).code; await Store.http('POST', '/api/admin/waitlist/invited', { id: r.id, code }); r.invited_code = code; r.invited_at = new Date().toISOString(); ui.admin = null; toast('Invite created. Copy the message to send it.'); render(); });
     case 'adm-reqcopy': { const r = ui.areq.find(x => String(x.id) === String(id)), link = location.origin + '/#/signup/' + r.invited_code;

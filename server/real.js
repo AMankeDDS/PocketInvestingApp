@@ -24,6 +24,15 @@ async function migrate(q){
 }
 
 function mount(app, d){
+  /* Sensitive money actions need a fresh code from the authenticator app, even when already signed in. */
+  async function stepUp(req, res, userId){
+    const row = (await d.q('SELECT totp_enabled, totp_secret FROM users WHERE id = $1', [userId])).rows[0];
+    if (!row || !row.totp_enabled){ res.status(403).json({ error: 'Turn on two-step sign-in first.' }); return false; }
+    const secret = totp.open(row.totp_secret, config.appSecret);
+    if (!req.body.code){ res.status(401).json({ error: 'Enter the 6-digit code from your authenticator app to confirm.', needCode: true }); return false; }
+    if (!secret || !totp.verify(secret, req.body.code)){ res.status(401).json({ error: "That code didn't match. Try the newest code.", needCode: true }); return false; }
+    return true;
+  }
   const { q, wrap, ok, bad, needUser, needAdmin, sendTo, newId, isPro, getSetting, setSetting, appUserFromReq } = d;
   alpaca.setLogger(e => q('INSERT INTO broker_log (method, path, status, message) VALUES ($1, $2, $3, $4)', [e.method, e.path, e.status, e.message]).catch(() => {}));
 
@@ -42,6 +51,7 @@ function mount(app, d){
     if (!secret) return bad(res, 'Start the setup again.');
     if (!totp.verify(secret, req.body.code)) return bad(res, "That code didn't match. Check the time on your phone and try the newest code.");
     await q('UPDATE users SET totp_secret = totp_pending, totp_pending = NULL, totp_enabled = true WHERE id = $1', [u.id]);
+    if (d.securityEvent) d.securityEvent(req, u.id, 'two-step', 'Two-step sign-in turned on', 'Two-step sign-in was turned on for your account.');
     ok(res);
   }));
   app.post('/api/2fa/disable', wrap(async (req, res) => {
@@ -50,6 +60,7 @@ function mount(app, d){
     const row = (await q('SELECT totp_secret FROM users WHERE id = $1', [u.id])).rows[0];
     const secret = row && totp.open(row.totp_secret, config.appSecret);
     if (!secret || !totp.verify(secret, req.body.code)) return bad(res, "That code didn't match.");
+    if (d.securityEvent) d.securityEvent(req, u.id, 'two-step', 'Two-step sign-in turned off', 'Two-step sign-in was turned off for your account. If this wasn\'t you, change your password now.');
     await q('UPDATE users SET totp_secret = NULL, totp_enabled = false WHERE id = $1', [u.id]);
     ok(res);
   }));
@@ -147,6 +158,7 @@ function mount(app, d){
 
   app.post('/api/real/bank', wrap(async (req, res) => {
     const x = await needActive(req, res); if (!x) return;
+    if (!(await stepUp(req, res, x.u.id))) return;
     const b = req.body || {};
     let body;
     if (b.processorToken) body = { processor_token: clean(b.processorToken, 200) };
@@ -166,6 +178,7 @@ function mount(app, d){
   app.post('/api/real/transfer', wrap(async (req, res) => {
     const x = await needActive(req, res); if (!x) return;
     const dir = req.body.direction === 'out' ? 'OUTGOING' : 'INCOMING';
+    if (dir === 'OUTGOING' && !(await stepUp(req, res, x.u.id))) return;
     const amount = Math.round(Number(req.body.amount) * 100) / 100;
     if (!(amount >= 1) || amount > 50000) return bad(res, 'Enter an amount between $1 and $50,000.');
     const banks = (await alpaca.listAch(x.a.alpaca_id)) || [];

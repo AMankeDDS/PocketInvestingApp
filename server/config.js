@@ -20,6 +20,8 @@ const config = {
     authMode: (process.env.ALPACA_AUTH_MODE || 'token').toLowerCase() === 'legacy' ? 'legacy' : 'token' // 'token' = Client ID + Client Secret
   },
   require2fa: bool(process.env.REQUIRE_2FA, MODE === 'live'),
+  adminRequire2fa: bool(process.env.ADMIN_REQUIRE_2FA, true), // admins must use two-step sign-in
+  sessionIdleMin: Number(process.env.SESSION_IDLE_MIN || (MODE === 'live' ? 30 : 0)), // sign out after inactivity (0 = off)
   appSecret: process.env.APP_SECRET || '',                 // encrypts two-step sign-in secrets
   maxOrderUsd: num(process.env.MAX_ORDER_USD, 25000),
   /* Instant deposits: built, off until switched on. Pro members only, with guardrails. */
