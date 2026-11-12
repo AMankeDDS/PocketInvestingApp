@@ -33,6 +33,7 @@ async function migrate(){
   await pool.query(`CREATE INDEX IF NOT EXISTS doc_memberships_gid ON doc_memberships ((data->>'gid'))`);
   await pool.query(`CREATE INDEX IF NOT EXISTS doc_copy_requests_member ON doc_copy_requests ((data->>'memberPid'))`);
   await pool.query(`CREATE INDEX IF NOT EXISTS doc_trades_pid ON doc_trades ((data->>'pid'))`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS waitlist (id serial PRIMARY KEY, email text UNIQUE NOT NULL, name text, how text, club_size text, note text, source text, invited_code text, invited_at timestamptz, created_at timestamptz NOT NULL DEFAULT now())`);
 }
 
 const newId = () => crypto.randomBytes(10).toString('hex');

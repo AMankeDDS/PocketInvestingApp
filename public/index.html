@@ -2088,7 +2088,7 @@ function vAdmin(){
   if (!Store.canEdit) return `<div class="empty">The beta admin is available to demo admins.</div>`;
   if (!ui.admin){ loadAdmin(); return '<div class="loading">Loading beta admin…</div>'; }
   const A = ui.admin, tab = ui.adminTab;
-  const T = [['metrics','Metrics'],['clubdocs','Club documents'],['testers','Testers ' + A.users.length],['invites','Invites'],['feedback','Feedback ' + A.feedback.filter(f => f.status === 'open').length],['errors','Errors ' + A.errors.length]].concat(Store.site.realMoney ? [['real','Real money']] : []).concat([['market','Market data'], ['settings','Settings']]);
+  const T = [['metrics','Metrics'],['requests','Invite requests'],['clubdocs','Club documents'],['testers','Testers ' + A.users.length],['invites','Invites'],['feedback','Feedback ' + A.feedback.filter(f => f.status === 'open').length],['errors','Errors ' + A.errors.length]].concat(Store.site.realMoney ? [['real','Real money']] : []).concat([['market','Market data'], ['settings','Settings']]);
   const when = t => t ? ago(new Date(t).getTime()) + ' ago' : 'never';
   let body = '';
   if (tab === 'testers') body = `<div class="list">${A.users.map(u => `<div class="row" style="flex-wrap:wrap"><div class="grow" style="min-width:200px"><b>${esc(u.display_name)}</b> <span class="muted small">@${esc(u.username)}</span> ${u.env_admin || u.is_admin ? '<span class="tag blue">Admin</span>' : ''} ${u.disabled ? '<span class="tag">Turned off</span>' : ''}
@@ -2103,10 +2103,26 @@ function vAdmin(){
   else if (tab === 'market') body = adminMarket();
   else if (tab === 'metrics') body = adminMetrics();
   else if (tab === 'clubdocs') body = adminClubDocs();
+  else if (tab === 'requests') body = adminRequests();
   else body = `<section class="panel" style="padding:18px 20px"><h2>Invite only</h2><p class="muted small">When on, new accounts need an invite code. Admins listed in ADMIN_USERNAMES can always sign up.</p><div class="seg"><button class="${A.inviteOnly ? 'on' : ''}" data-act="adm-io" data-k="1">On</button><button class="${A.inviteOnly ? '' : 'on'}" data-act="adm-io" data-k="0">Off</button></div></section>
     <section class="panel" style="padding:18px 20px;margin-top:16px"><h2>Announcement</h2><p class="muted small">Shown at the top of every screen until each tester dismisses it.</p><textarea class="input" id="adm-ann" maxlength="300" placeholder="e.g. New version: please test buy-at-open today">${esc((A.announcement || {}).text || '')}</textarea><div style="display:flex;gap:10px;margin-top:10px"><button class="btn" data-act="adm-ann">Post</button>${A.announcement ? '<button class="btn ghost" data-act="adm-annclear">Remove</button>' : ''}</div></section>`;
   return `<div class="pagehead"><div><h1>Beta admin</h1><p class="muted">Beta metrics, testers, invite codes, feedback and error reports.</p></div><button class="btn ghost sm" data-act="adm-refresh">Refresh</button></div>
     <nav class="tabs">${T.map(([k, l]) => `<a href="#/admin" class="${tab === k ? 'on' : ''}" data-act="adm-tab" data-k="${k}">${l}</a>`).join('')}</nav>${body}`;
+}
+function adminRequests(){
+  const X = ui.areq;
+  if (!X){ ui.areq = 'loading'; Store.http('GET', '/api/admin/waitlist').then(r => { ui.areq = r.requests; render(); }, e => { ui.areq = { error: e.message }; render(); }); }
+  if (!X || X === 'loading') return '<div class="loading" style="min-height:20vh">Loading…</div>';
+  if (X.error) return `<div class="panel empty">${esc(X.error)}</div>`;
+  const HOW = { own: 'On their own', copy: 'Copying investors', group: 'With friends or family', club: 'With an investment club' };
+  const waiting = X.filter(r => !r.invited_code), done = X.filter(r => r.invited_code);
+  const row = r => `<div class="row" style="flex-wrap:wrap;align-items:flex-start"><div class="grow" style="min-width:220px"><b>${esc(r.name || '')}</b> <span class="small muted">${esc(r.email)}</span>
+    <div class="small">${esc(HOW[r.how] || 'Not given')}${r.club_size ? ', ' + esc(r.club_size) + ' people' : ''} · ${ago(new Date(r.created_at).getTime())} ago${r.source && r.source !== 'website' ? ' · ' + esc(r.source) : ''}</div>${r.note ? `<div class="small muted">${esc(r.note)}</div>` : ''}
+    ${r.invited_code ? `<div class="small">Invited with <b>${esc(r.invited_code)}</b> ${ago(new Date(r.invited_at).getTime())} ago</div>` : ''}</div>
+    ${r.invited_code ? `<button class="btn sm ghost" data-act="adm-reqcopy" data-id="${r.id}">Copy invite message</button>` : `<button class="btn sm" data-act="adm-reqinvite" data-id="${r.id}">Create invite</button>`}</div>`;
+  return `<p class="muted small" style="margin-top:0">People who asked for an invite on pocketinvesting.com. Creating an invite makes a one-time code; copy the message and email it to them.</p>
+    <section class="block"><header><h2>Waiting (${waiting.length})</h2></header><div class="list">${waiting.map(row).join('') || '<div class="empty">No new requests.</div>'}</div></section>
+    ${done.length ? `<section class="block"><header><h2>Invited (${done.length})</h2></header><div class="list">${done.map(row).join('')}</div></section>` : ''}`;
 }
 function adminClubDocs(){
   const X = ui.adocs;
@@ -2738,7 +2754,7 @@ async function act(el, ev){ /* eslint-disable-line */
     case 'adm-spend': return busy(async () => { const m = document.getElementById('ms-m').value, amt = Number(document.getElementById('ms-a').value); await Store.http('POST', '/api/admin/metrics/adspend', { month: m, amount: amt }); ui.ametrics = null; toast('Ad spend saved.'); render(); });
     case 'adm-utm': { const s = (document.getElementById('mu-s').value || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, ''); if (!s){ toast('Name the source first, like instagram.'); return; }
       const link = location.origin + '/?utm_source=' + s + '&utm_medium=' + (document.getElementById('mu-p').checked ? 'paid' : 'referral') + '&utm_campaign=beta'; document.getElementById('mu-l').value = link; try { navigator.clipboard.writeText(link); toast('Link copied.'); } catch(e){} return; }
-    case 'adm-tab': ev.preventDefault(); ui.adminTab = el.dataset.k; ui.ametrics = null; ui.adocs = null; ui.areal = null; ui.amd = null; ui.amdCheck = null; return render();
+    case 'adm-tab': ev.preventDefault(); ui.adminTab = el.dataset.k; ui.ametrics = null; ui.adocs = null; ui.areq = null; ui.areal = null; ui.amd = null; ui.amdCheck = null; return render();
     case 'adm-refresh': ui.admin = null; ui.ametrics = null; return render();
     case 'adm': return busy(async () => {
       const op = el.dataset.op;
@@ -2750,6 +2766,11 @@ async function act(el, ev){ /* eslint-disable-line */
     });
     case 'adm-newinv': return newInviteSheet();
     case 'adm-invtoggle': return busy(async () => { await Store.http('POST', '/api/admin/invite', { code: el.dataset.k, op: 'toggle' }); await loadAdmin(); });
+    case 'adm-reqinvite': return busy(async () => { const r = ui.areq.find(x => String(x.id) === String(id)); const inv = await Store.http('POST', '/api/admin/invite', { label: ('Website: ' + (r.name || r.email)).slice(0, 60), maxUses: 1 });
+      const code = inv.code || (inv.invite || {}).code; await Store.http('POST', '/api/admin/waitlist/invited', { id: r.id, code }); r.invited_code = code; r.invited_at = new Date().toISOString(); ui.admin = null; toast('Invite created. Copy the message to send it.'); render(); });
+    case 'adm-reqcopy': { const r = ui.areq.find(x => String(x.id) === String(id)), link = location.origin + '/#/signup/' + r.invited_code;
+      const text = `Hi ${(r.name || '').split(' ')[0] || 'there'},\n\nHere's your invite to the Pocket Investing beta: ${link}\n\nThe beta uses practice money, so you can try everything with nothing at risk. Reply to this email with any questions.\n\nAndrew`;
+      try { await navigator.clipboard.writeText(text); toast('Invite message copied.'); } catch(e){ prompt('Copy this message:', text); } return; }
     case 'adm-copylink': { const link = location.origin + '/#/signup/' + el.dataset.k; try { await navigator.clipboard.writeText(link); toast('Sign-up link copied.'); } catch(e){ prompt('Copy this sign-up link:', link); } return; }
     case 'adm-fb': return busy(async () => { await Store.http('POST', '/api/admin/feedback', { id }); await loadAdmin(); });
     case 'adm-errclear': return busy(async () => { if (!confirm('Clear all error reports?')) return; await Store.http('POST', '/api/admin/errors/clear'); await loadAdmin(); });

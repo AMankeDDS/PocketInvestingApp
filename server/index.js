@@ -332,6 +332,26 @@ require('./statements').mount(app, { realMoney: config.realMoney, q, wrap, ok, b
 
 /* ---------- the app ---------- */
 const pub = path.join(__dirname, '..', 'public');
+/* The public website: shown at the main domain (pocketinvesting.com and www), and at /site on any domain for previews. */
+const SITE_FILE = require('path').join(pub, 'site', 'index.html');
+const MARKETING_HOSTS = String(process.env.MARKETING_HOSTS || 'pocketinvesting.com,www.pocketinvesting.com').toLowerCase().split(',').map(x => x.trim()).filter(Boolean);
+app.get(['/', '/index.html'], (req, res, next) => { if (!MARKETING_HOSTS.includes(String(req.hostname || '').toLowerCase())) return next(); res.set('Cache-Control', 'no-cache'); res.sendFile(SITE_FILE); });
+app.get('/site', (req, res) => { res.set('Cache-Control', 'no-cache'); res.sendFile(SITE_FILE); });
+/* Beta invite requests from the website. */
+const waitHits = new Map();
+app.post('/api/waitlist', wrap(async (req, res) => {
+  const ip = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim(), now = Date.now(), h = (waitHits.get(ip) || []).filter(t => now - t < 3600000);
+  if (h.length >= 5) return bad(res, 'Too many requests from this connection. Try again in an hour.', 429); h.push(now); waitHits.set(ip, h);
+  if (req.body.website) return ok(res); /* hidden field: bots fill it in */
+  const email = clean(req.body.email).toLowerCase().slice(0, 160), name = clean(req.body.name).slice(0, 80);
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return bad(res, 'Enter a valid email address.');
+  if (!name) return bad(res, 'Enter your name.');
+  const how = ['own', 'copy', 'group', 'club'].includes(req.body.how) ? req.body.how : null, size = clean(req.body.clubSize).slice(0, 20), note = clean(req.body.note).slice(0, 500);
+  await q(`INSERT INTO waitlist (email, name, how, club_size, note, source) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, how = EXCLUDED.how, club_size = EXCLUDED.club_size, note = EXCLUDED.note`, [email, name, how, size || null, note || null, clean(req.body.source).slice(0, 80) || 'website']);
+  ok(res);
+}));
+app.get('/api/admin/waitlist', wrap(async (req, res) => { if (!(await needAdmin(req, res))) return; ok(res, { requests: (await q('SELECT id, email, name, how, club_size, note, source, created_at, invited_code, invited_at FROM waitlist ORDER BY created_at DESC LIMIT 500')).rows }); }));
+app.post('/api/admin/waitlist/invited', wrap(async (req, res) => { if (!(await needAdmin(req, res))) return; await q('UPDATE waitlist SET invited_code = $2, invited_at = now() WHERE id = $1', [Number(req.body.id), clean(req.body.code).slice(0, 20)]); ok(res); }));
 app.use(express.static(pub, { setHeaders(res, p){ if (/\.(html|webmanifest)$|sw\.js$/.test(p)) res.set('Cache-Control', 'no-cache'); } }));
 app.get('*', (req, res) => res.sendFile(path.join(pub, 'index.html')));
 
