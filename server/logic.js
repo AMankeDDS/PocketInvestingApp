@@ -679,6 +679,9 @@ async function decideJoin(tx, id, approve){
   if (approve){ const g = await tx.get('groups', r.gid); const rules = rulesOf(g); await checkJoin(tx, g, r.pid, rules);
     await tx.set('memberships', r.gid + '__' + r.pid, { gid: r.gid, pid: r.pid, role: (await isPro(tx, r.pid)) ? 'member' : 'observer', copyPct: rules.defaultCopyPct, joinedTs: Date.now(), rulesAcceptedTs: r.acceptedRules ? r.ts : null }); }
   await tx.update('joinRequests', id, { status: approve ? 'approved' : 'declined', decidedTs: Date.now() });
+  const gg = await tx.get('groups', r.gid);
+  if (gg) notify(tx, [r.pid], approve ? { title: "You're in: " + gg.name, body: 'Your request to join was approved. Say hello in the group.', url: '/#/group/' + r.gid, tag: 'join-' + r.gid }
+    : { title: gg.name + ': request not approved', body: "The group's Owner didn't approve your request this time.", url: '/#/groups', tag: 'join-' + r.gid });
 }
 A.decideJoin = async (tx, ctx, a) => { const r = await tx.get('joinRequests', a.id); if (!r) return; if (!canManage(await roleIn(tx, r.gid, ctx.pid))) throw fail('Only Owners and Admins can decide.'); await decideJoin(tx, a.id, !!a.approve); };
 

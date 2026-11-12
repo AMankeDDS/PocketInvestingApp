@@ -65,7 +65,20 @@ a{color:var(--blue); text-decoration:none}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 
 /* shell */
-.shell{display:grid; grid-template-columns:1fr; min-height:100vh}
+.shell{display:grid; grid-template-columns:minmax(0,1fr); min-height:100vh}
+@media (max-width:480px){ .topbar{padding:10px 12px; gap:8px} .topbar .session{max-width:36vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap} .topbar .brand{flex:0 0 auto} }
+@media (max-width:370px){ .topbar .session{display:none} }
+@media (max-width:480px){ .sess-x{display:none} }
+@media (min-width:960px){ .fb-top{display:none} }
+@media (max-width:760px){
+  .btn.sm{min-height:40px; padding:9px 14px}
+  .tabs a{min-height:44px; display:inline-flex; align-items:center}
+  .seg button{min-height:40px}
+  .input, select.input{min-height:44px}
+  .row{min-height:48px}
+}
+@media (max-width:959px){ .toasts{top:calc(70px + env(safe-area-inset-top,0px)); bottom:auto} }
+.toasts{pointer-events:none} .toasts > *{pointer-events:auto}
 .rail{display:none}
 .topbar{position:sticky; top:env(safe-area-inset-top,0px); z-index:20; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 18px; background:var(--paper); border-bottom:1px solid var(--line)}
 .brand{display:flex; align-items:center; gap:10px; font-family:var(--f-num); font-weight:700; font-size:19px; color:var(--text)}
@@ -217,7 +230,7 @@ textarea.input{resize:vertical; min-height:84px}
 .ich-svg .ich-dot{fill:var(--surface); stroke-width:2.5}
 .ich-tip{position:absolute; top:28px; transform:translateX(-50%); background:var(--ink); color:#fff; font-size:12px; padding:5px 8px; border-radius:8px; pointer-events:none; white-space:nowrap; font-family:var(--f-num)}
 .chips.sm button{padding:4px 10px; font-size:13px}
-.tplgrid{display:grid; grid-template-columns:1fr 1fr; gap:8px}
+.tplgrid{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:8px}
 .tpl{display:flex; flex-direction:column; gap:3px; text-align:left; padding:12px; border:1.5px solid var(--line); border-radius:12px; background:var(--surface); color:var(--text); cursor:pointer; font:inherit}
 .tpl.on{border-color:var(--blue); background:color-mix(in srgb, var(--blue) 7%, var(--surface))}
 .mcards{display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px}
@@ -700,21 +713,22 @@ function renderNav(){
   const on = k => (k === r || (k === 'groups' && r === 'group') || (k === 'home' && r === 'stock')) ? 'on' : '';
   const s = Clock.session(); const un = Store.get('profiles', Store.myPid) ? Store.unreadCount() : 0;
   const bell = `<a href="#/notifications" class="${r === 'notifications' ? 'on' : ''}" aria-label="Notifications" style="position:relative;display:inline-grid;place-items:center;width:38px;height:38px;border-radius:10px;color:inherit">${ICON.bell.replace('<svg', '<svg width="22" height="22"')}${un ? `<span class="badge" style="top:0;left:22px">${un > 9 ? '9+' : un}</span>` : ''}</a>`;
-  const sess = `<span class="session"><span class="dot ${s.open ? 'on' : ''}"></span>${esc(s.label)}${s.demo ? ' (demo clock)' : ''}</span>`;
+  const fbIcon = Store.signedIn ? `<button class="btn ghost sm fb-top" data-act="feedback" aria-label="Send feedback" title="Send feedback"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>` : '';
+  const sess = `<span class="session"><span class="dot ${s.open ? 'on' : ''}"></span>${esc(s.label)}${s.demo ? '<span class="sess-x"> (demo clock)</span>' : ''}</span>`;
   $('#rail').innerHTML = `<div class="brand"><span class="mark">P</span>Pocket Investing</div>` +
     items.map(([k, l, i]) => `<a class="nav ${on(k)}" href="${href(k)}">${ICON[i]}<span>${l}</span>${k === 'inbox' && n ? `<span class="badge">${n}</span>` : ''}</a>`).join('') +
     `<a class="nav ${r === 'notifications' ? 'on' : ''}" href="#/notifications">${ICON.bell}<span>Notifications</span>${un ? `<span class="badge">${un}</span>` : ''}</a>` +
     (!Store.signedIn && Store.ready ? `<button class="btn" data-act="signin" style="margin:10px 12px">Sign in</button>` : '') +
     (Store.adminNeeds2fa && !Store.canEdit ? `<a class="nav ${r === 'admin' ? 'on' : ''}" href="#/admin">${ICON.me}<span>Beta admin</span></a>` : '') + (Store.canEdit ? `${Store.site.demoTools ? `<a class="nav ${r === 'demo' ? 'on' : ''}" href="#/demo">${ICON.demo}<span>Demo controls</span></a>` : ''}<a class="nav ${r === 'metrics' ? 'on' : ''}" href="#/metrics">${ICON.metrics}<span>Pilot metrics</span></a><a class="nav ${r === 'admin' ? 'on' : ''}" href="#/admin">${ICON.me}<span>Beta admin</span></a>` : '') + sess;
   $('#bottomnav').innerHTML = items.map(([k, l, i]) => `<a class="${on(k)}" href="${href(k)}">${ICON[i]}<span>${l}</span>${k === 'inbox' && n ? `<span class="badge">${n}</span>` : ''}</a>`).join('');
-  $('#topbar').innerHTML = `<div class="brand"><span class="mark">P</span>Pocket</div><div style="display:flex;gap:8px;align-items:center">${sess}${!Store.signedIn && Store.ready ? '<button class="btn sm" data-act="signin">Sign in</button>' : ''}${Store.get('profiles', Store.myPid) ? bell : ''}${Store.canEdit ? `<a href="#/demo" class="btn ghost sm" aria-label="Demo controls">${ICON.demo.replace('<svg','<svg width="18" height="18"')}</a>` : ''}</div>`;
+  $('#topbar').innerHTML = `<div class="brand"><span class="mark">P</span>Pocket</div><div style="display:flex;gap:8px;align-items:center">${sess}${fbIcon}${!Store.signedIn && Store.ready ? '<button class="btn sm" data-act="signin">Sign in</button>' : ''}${Store.get('profiles', Store.myPid) ? bell : ''}${Store.canEdit ? `<a href="#/demo" class="btn ghost sm" aria-label="Demo controls">${ICON.demo.replace('<svg','<svg width="18" height="18"')}</a>` : ''}</div>`;
 }
 
 /* ---------- small pieces ---------- */
 /* Interactive line charts: touch or hover shows the date and amount at that point; click-and-drag
    (or press, hold and drag on a phone) selects a range and shows its start, end and gain or loss.
    With nothing selected, the header shows the same figures for the whole period. */
-const SPANS = { '1d':[86400000, 'Today', 96], '5d':[5 * 86400000, 'Past 5 days', 120], '1m':[30 * 86400000, 'Past month', 90], '3m':[90 * 86400000, 'Past 3 months', 90], '1y':[365 * 86400000, 'Past year', 120] };
+const SPANS = { '1d':[86400000, 'Past 24 hours', 96], '5d':[5 * 86400000, 'Past 5 days', 120], '1m':[30 * 86400000, 'Past month', 90], '3m':[90 * 86400000, 'Past 3 months', 90], '1y':[365 * 86400000, 'Past year', 120] };
 const ICH = {};
 function seriesPts(fn, spanKey){ const [span, , n] = SPANS[spanKey], now = Date.now(), out = []; for (let i = n - 1; i >= 0; i--){ const t = now - span * i / (n - 1); out.push({ t, v: fn(t) }); } return out; }
 function ichDate(t, spanKey){
@@ -839,7 +853,9 @@ function recurringSheet(sym){
     sh.querySelector('#rc-go').onclick = async () => { try { await Store.setRecurring({ sym, amount: Number(sh.querySelector('#rc-a').value), freq: sh.querySelector('#rc-f').value }); closeModal(); toast('Recurring investment set.'); } catch(e){ errToast(e); } };
   });
 }
+const u3 = v => Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: 3 });
 const askCode = msg => { const v = prompt(msg); return v ? v.trim() : ''; };
+try { if (!sessionStorage.getItem('pi_visit')){ sessionStorage.setItem('pi_visit', '1'); localStorage.setItem('pi_visits', String((+localStorage.getItem('pi_visits') || 0) + 1)); } } catch(e){}
 /* ---------- help ---------- */
 function vHelp(){
   const Q = [
@@ -898,9 +914,9 @@ function stView(S, links){
 function taxSection(L){
   const T = ui.taxDocs; if (!T){ ui.taxDocs = 'loading'; Store.http('GET', '/api/tax-docs').then(r => { ui.taxDocs = r.docs; render(); }, () => { ui.taxDocs = []; }); }
   if (Store.site.realMoney && ui.taxReal == null){ ui.taxReal = 'loading'; Store.real.docs().then(r => { ui.taxReal = (r.documents || r || []).filter(d => /tax|1099/i.test(String(d.type || d.name || ''))); render(); }, () => { ui.taxReal = []; render(); }); }
-  const yrNow = new Date().getUTCFullYear(), yr = ui.taxYear || yrNow - 1, docs = Array.isArray(T) ? T : [];
+  const opened = new Date(((Store.get('profiles', Store.myPid) || {}).createdTs) || Date.now()).getUTCFullYear(), yrNow = new Date().getUTCFullYear(), yr = ui.taxYear || (opened >= yrNow ? yrNow : yrNow - 1), docs = Array.isArray(T) ? T : [];
   const clubs = L.accounts.filter(a => a.kind === 'member'), officerOf = new Set(L.accounts.filter(a => a.kind === 'club').map(a => a.gid));
-  return `<section class="block"><header style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h2>Tax documents</h2><select class="input" id="tax-y" style="width:auto">${[yrNow, yrNow - 1, yrNow - 2].map(y => `<option ${y === yr ? 'selected' : ''}>${y}</option>`).join('')}</select></header>
+  return `<section class="block"><header style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h2>Tax documents</h2><select class="input" id="tax-y" style="width:auto" aria-label="Tax year">${[yrNow, yrNow - 1, yrNow - 2].map(y => `<option ${y === yr ? 'selected' : ''}>${y}</option>`).join('')}</select></header>
     <div class="list">
       ${Store.site.realMoney ? (Array.isArray(ui.taxReal) && ui.taxReal.length ? ui.taxReal.map(d => `<a class="row" href="/api/real/documents/${encodeURIComponent(d.id)}" target="_blank" rel="noopener"><div class="grow"><b>${esc(d.name || d.type)}</b><div class="small muted">From Alpaca, your broker · ${esc(String(d.date || '').slice(0, 10))}</div></div><span class="small">PDF</span></a>`).join('') : '<div class="row"><div class="grow small muted">Your official 1099 tax forms come from Alpaca, typically by mid-February. You\'ll get a notification when they\'re ready.</div></div>') : ''}
       <div class="row"><div class="grow"><b>Practice account year-end summary, ${yr}</b><div class="small muted">Practice accounts don't get tax forms. This summary of gains and dividends is for learning.</div></div><button class="btn sm ghost" data-act="taxsummary" data-k="${yr}">View</button></div>
@@ -1090,8 +1106,8 @@ function pooledClub(gid, C){
   const pot = Store.get('portfolios', 'club_' + gid) || { cash: 0, positions: {} }, V = Store.portfolioValue(pot), uv = C.units > 1e-9 ? V / C.units : C.book.startUnitValue;
   const me = C.members.find(m => m.pid === Store.myPid), mineV = me ? me.units * uv : 0, full = Store.canWrite;
   const held = Object.entries(pot.positions || {}).map(([s, p]) => [s, p.shares, p.shares * Market.price(s)]).sort((a, b) => b[2] - a[2]);
-  return `<div class="panel" style="padding:18px 20px"><div class="kv"><div><span>Club account</span><b>${usd(V)}</b></div><div><span>Cash</span><b>${usd(pot.cash)}</b></div><div><span>Unit value</span><b>${usd(uv)}</b></div><div><span>Units</span><b>${C.units.toFixed(3)}</b></div></div>
-      <div class="est" style="display:block;margin-top:12px"><b>Your share: ${usd(mineV)} (${C.units > 1e-9 && me ? (me.units / C.units * 100).toFixed(1) : '0.0'}%)</b><div class="small muted" style="margin-top:4px">${me ? me.units.toFixed(3) : '0.000'} units · added ${usd(me ? me.paid : 0)} · withdrawn ${usd(me ? me.withdrawn : 0)}</div></div>
+  return `<div class="panel" style="padding:18px 20px"><div class="kv"><div><span>Club account</span><b>${usd(V)}</b></div><div><span>Cash</span><b>${usd(pot.cash)}</b></div><div><span>Unit value</span><b>${usd(uv)}</b></div><div><span>Units</span><b>${u3(C.units)}</b></div></div>
+      <div class="est" style="display:block;margin-top:12px"><b>Your share: ${usd(mineV)} (${C.units > 1e-9 && me ? (me.units / C.units * 100).toFixed(1) : '0.0'}%)</b><div class="small muted" style="margin-top:4px">${me ? u3(me.units) : '0.000'} units · added ${usd(me ? me.paid : 0)} · withdrawn ${usd(me ? me.withdrawn : 0)}</div></div>
       ${(() => { const g = Store.get('groups', gid) || {}, my = (Store.membership(gid) || {}).role, officer = MONEY_OFFICERS.includes(my);
         if (g.closed) return `<div class="banner" style="margin-top:12px">The club closed ${new Date(g.closed.ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}. Every member was paid out their share.</div>`;
         if (g.windDown) return `<div class="banner ember" style="margin-top:12px;display:block"><b>Closing the club.</b> Members voted to wind it down: sell all holdings, then pay everyone out by their units (two approvals).
@@ -1119,7 +1135,7 @@ function statsFor(kind, id){
   if (!ui.stats[k]){ ui.stats[k] = 'loading'; Store.http('GET', `/api/stats/${kind}/${encodeURIComponent(id)}`).then(r => { ui.stats[k] = r.stats || { none: true }; render(); }, () => { ui.stats[k] = { none: true }; render(); }); }
   return ui.stats[k] === 'loading' ? null : ui.stats[k];
 }
-function riskBadge(S){ return S && !S.none ? `<span class="tag ${S.riskScore >= 5 ? 'ember' : 'blue'}" title="Risk score from 1 (lowest) to 7, based on how much the value swings">Risk ${S.riskScore} of 7 · ${RISK_WORD(S.riskScore)}</span>` : ''; }
+function riskBadge(S){ if (S && !S.none && S.thin) return `<span class="tag" title="Risk scores need a few weeks of trading history">Not enough history yet</span>`; return S && !S.none ? `<span class="tag ${S.riskScore >= 5 ? 'ember' : 'blue'}" title="Risk score from 1 (lowest) to 7, based on how much the value swings">Risk ${S.riskScore} of 7 · ${RISK_WORD(S.riskScore)}</span>` : ''; }
 function trackRecord(kind, id){
   const S = statsFor(kind, id);
   if (!S) return '<section class="block"><header><h2>Track record</h2></header><div class="panel loading" style="min-height:120px">Loading…</div></section>';
@@ -1181,8 +1197,8 @@ function clubView(gid, role){
   const years = Object.keys(C.years).sort().reverse(), yr = ui.clubYear && C.years[ui.clubYear] ? ui.clubYear : years[0];
   const kindWord = { valuation: 'Valuation', payment: 'Payment', withdrawal: 'Withdrawal' };
   return `${numLine}${C.problem ? '<div class="banner" style="margin-bottom:14px">One withdrawal is larger than that member owned. Check the ledger.</div>' : ''}
-    <div class="panel" style="padding:18px 20px"><div class="kv"><div><span>Club value (latest valuation plus payments since)</span><b>${usd(C.value)}</b></div><div><span>Unit value</span><b>${usd(C.unitValue)}</b></div><div><span>Units</span><b>${C.units.toFixed(3)}</b></div><div><span>Last valuation</span><b>${lastVal ? esc(lastVal.date) : '—'}</b></div></div>
-      ${me ? `<div class="est" style="display:block;margin-top:12px"><b>Your share: ${usd(me.value)} (${(me.share * 100).toFixed(1)}%)</b><div class="small muted" style="margin-top:4px">${me.units.toFixed(3)} units · paid in ${usd(me.paid)} · withdrawn ${usd(me.withdrawn)} · gain <span class="${sgn(me.gain)}">${me.gain >= 0 ? '+' : '−'}${usd(Math.abs(me.gain))}</span></div></div>` : ''}</div>
+    <div class="panel" style="padding:18px 20px"><div class="kv"><div><span>Club value (latest valuation plus payments since)</span><b>${usd(C.value)}</b></div><div><span>Unit value</span><b>${usd(C.unitValue)}</b></div><div><span>Units</span><b>${u3(C.units)}</b></div><div><span>Last valuation</span><b>${lastVal ? esc(lastVal.date) : '—'}</b></div></div>
+      ${me ? `<div class="est" style="display:block;margin-top:12px"><b>Your share: ${usd(me.value)} (${(me.share * 100).toFixed(1)}%)</b><div class="small muted" style="margin-top:4px">${u3(me.units)} units · paid in ${usd(me.paid)} · withdrawn ${usd(me.withdrawn)} · gain <span class="${sgn(me.gain)}">${me.gain >= 0 ? '+' : '−'}${usd(Math.abs(me.gain))}</span></div></div>` : ''}</div>
     ${Store.canWrite ? `<div style="margin:14px 0 0"><button class="btn ghost sm" data-act="cbupload" data-gid="${gid}" data-k="payment">Send proof of payment</button></div>` : ''}
     ${clubRequests(gid, C)}
     ${C.canEdit ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin:14px 0"><button class="btn" data-act="cbentry" data-gid="${gid}" data-k="dues">Record dues for everyone</button><button class="btn ghost sm" data-act="cbentry" data-gid="${gid}" data-k="payment">Payment</button><button class="btn ghost sm" data-act="cbentry" data-gid="${gid}" data-k="withdrawal">Withdrawal</button><button class="btn ghost sm" data-act="cbentry" data-gid="${gid}" data-k="valuation">Valuation</button></div>` : '<p class="hint" style="margin:12px 0">The Treasurer, Owner and Admins keep these books. Every full member can see them.</p>'}
@@ -1196,9 +1212,9 @@ function clubLedgerTables(gid, C, pooled){
   const M = C.members.map(m => liveUV ? Object.assign({}, m, { value: m.units * liveUV, gain: m.units * liveUV + m.withdrawn - m.paid }) : m);
   C = Object.assign({}, C, { members: M, canEdit: C.canEdit && !pooled });
   return `<section class="block"><header style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h2>Members</h2><a class="btn ghost sm" href="/api/club/${gid}/csv" download>Download CSV</a></header><div class="panel mtable"><table><thead><tr><th>Member</th>${C.numbers && Object.keys(C.numbers.members || {}).length ? '<th>Account</th>' : ''}<th>Units</th><th>Value</th><th>Share</th><th>Paid in</th><th>Withdrawn</th><th>Gain</th></tr></thead>
-      <tbody>${C.members.map(m => `<tr><td>${nm(m.pid)}${m.former ? ' <span class="muted">(former)</span>' : ''}</td>${C.numbers && Object.keys(C.numbers.members || {}).length ? `<td class="num">${esc((C.numbers.members || {})[m.pid] || '')}</td>` : ''}<td>${m.units.toFixed(3)}</td><td>${usd(m.value)}</td><td>${(m.share * 100).toFixed(1)}%</td><td>${usd(m.paid)}</td><td>${usd(m.withdrawn)}</td><td class="${sgn(m.gain)}">${m.gain >= 0 ? '+' : '−'}${usd(Math.abs(m.gain))}</td></tr>`).join('')}</tbody></table></div></section>
+      <tbody>${C.members.map(m => `<tr><td>${nm(m.pid)}${m.former ? ' <span class="muted">(former)</span>' : ''}</td>${C.numbers && Object.keys(C.numbers.members || {}).length ? `<td class="num">${esc((C.numbers.members || {})[m.pid] || '')}</td>` : ''}<td>${u3(m.units)}</td><td>${usd(m.value)}</td><td>${(m.share * 100).toFixed(1)}%</td><td>${usd(m.paid)}</td><td>${usd(m.withdrawn)}</td><td class="${sgn(m.gain)}">${m.gain >= 0 ? '+' : '−'}${usd(Math.abs(m.gain))}</td></tr>`).join('')}</tbody></table></div></section>
     <section class="block"><header><h2>Ledger</h2></header><div class="list">${C.entries.slice().reverse().map(e => `<div class="row"><div class="grow"><b style="${e.voided ? 'text-decoration:line-through' : ''}">${kindWord[e.kind]}</b>${e.pid ? ' · ' + nm(e.pid) : ''} <span class="small muted">${esc(e.date)}${e.note ? ' · ' + esc(e.note) : ''}</span>${e.voided ? ` <span class="tag" style="font-size:11px">Voided: ${esc(e.voided.reason)}</span>` : ''}
-      <div class="small muted">${e.voided ? usd(e.amount) + ' (not counted)' : e.kind === 'valuation' ? `Club value ${usd(e.amount)}, unit value ${usd(e.unitValue)}` : `${usd(e.amount)} at ${usd(e.unitValue)} a unit = ${e.units.toFixed(3)} units`}</div></div>
+      <div class="small muted">${e.voided ? usd(e.amount) + ' (not counted)' : e.kind === 'valuation' ? `Club value ${usd(e.amount)}, unit value ${usd(e.unitValue)}` : `${usd(e.amount)} at ${usd(e.unitValue)} a unit = ${u3(e.units)} units`}</div></div>
       ${C.canEdit && e.note !== 'Books started' && !e.voided && Store.canWrite ? `<button class="btn sm ghost" data-act="cbvoid" data-gid="${gid}" data-id="${e.id}" aria-label="Void entry">Void</button>` : ''}</div>`).join('')}</div></section>
     ${years.length ? `<section class="block"><header style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h2>Year-end summary</h2><div class="seg">${years.map(y => `<button class="${y === yr ? 'on' : ''}" data-act="cbyear" data-k="${y}">${y}</button>`).join('')}</div></header>
       <div class="panel mtable"><table><thead><tr><th>Member</th><th>Start of year</th><th>Paid in</th><th>Withdrawn</th><th>End of year</th><th>Gain</th></tr></thead><tbody>${(C.years[yr] || []).map(r => `<tr><td>${nm(r.pid)}</td><td>${usd(r.startValue)}</td><td>${usd(r.paid)}</td><td>${usd(r.withdrawn)}</td><td>${usd(r.endValue)}</td><td class="${sgn(r.gain)}">${r.gain >= 0 ? '+' : '−'}${usd(Math.abs(r.gain))}</td></tr>`).join('')}</tbody></table></div>
@@ -1355,10 +1371,9 @@ function vPracticeHome(){
   const tr = trending().slice(0, 3);
   const watch = (prof.watchlist || []).filter(s => Market.MAP[s]).slice(0, 5);
   const exp = explainerCard();
-  return `${showInstallTip()}${starterCard(prof, groups)}${hero}
+  return `${gettingStarted()}${showInstallTip()}${starterCard(prof, groups)}${hero}
   ${sec('Waiting on you', waiting)}
   ${sec('Your groups', latest ? `<div class="list">${latest}</div>` : '', '<button class="linkbtn small" data-act="gofeedgroups">See all</button>')}
-  ${gettingStarted()}
   ${waitingOnYou()}
   ${comingUp()}
   ${recurringList()}
@@ -1383,7 +1398,7 @@ function starterCard(prof, groups){
   const people = Store.all('profiles').filter(p => p.id !== me && !following.includes(p.id)).map(p => ({ p, f: Store.all('follows').filter(x => x.to === p.id).length + ((p.tags || []).some(t => tagFor.includes(t)) ? 3 : 0) })).sort((a, b) => b.f - a.f).slice(0, 3).map(x => x.p);
   const g = groups.length ? null : Store.all('groups').filter(x => !Store.rulesOf(x).hidden && x.riskLevel === style && Store.rulesOf(x).joinMode === 'open').sort((a, b) => (b.featured ? 1 : 0) - (a.featured ? 1 : 0))[0];
   const syms = STYLE_WATCH[style].filter(sym => !watch.includes(sym));
-  return `<section class="panel" style="padding:18px 20px;margin-bottom:18px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h2>Get started</h2><button class="linkbtn small" data-act="starteroff">Hide</button></div>
+  return `<section class="panel" style="padding:18px 20px;margin-bottom:18px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h2>Picks for you</h2><button class="linkbtn small" data-act="starteroff">Hide</button></div>
     <p class="muted small" style="margin:4px 0 12px">A few picks to fill your feed, based on your ${esc(RISK[style][0].toLowerCase())} style.</p>
     ${people.length && !following.length ? `<div class="small muted" style="margin:0 0 6px">Investors to follow</div><div class="list" style="margin-bottom:12px">${people.map(personRow).join('')}</div>` : ''}
     ${g ? `<div class="small muted" style="margin:0 0 6px">A group to try</div><div class="list" style="margin-bottom:12px">${groupRow(g)}</div>` : ''}
@@ -1401,7 +1416,8 @@ function showInstallTip(){
   let off = false; try { off = localStorage.getItem('pi_install_tip') === 'off'; } catch(e){}
   const mobile = window.matchMedia && window.matchMedia('(max-width: 760px)').matches;
   const standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || navigator.standalone;
-  if (off || !mobile || standalone) return '';
+  let visits = 0; try { visits = +localStorage.getItem('pi_visits') || 0; } catch(e){}
+  if (off || !mobile || standalone || visits < 2) return '';
   const ios = /iPhone|iPad|iPod/.test(navigator.userAgent || '');
   return `<div class="banner" style="margin-bottom:16px"><div style="flex:1"><b>Keep Pocket on your home screen</b><div class="small">${ios ? 'Tap Share, then Add to Home Screen.' : 'Open your browser menu, then Add to Home screen.'} It opens with one tap during meetings.</div></div><button class="btn sm ghost" data-act="tipoff">Got it</button></div>`;
 }
@@ -1698,14 +1714,14 @@ function vGroup(gid, tab){
       <p class="muted" style="max-width:62ch">${esc(g.description || '')}</p>
       ${g.goals ? `<p class="small" style="max-width:62ch;margin:6px 0 0"><b>Our goal:</b> ${esc(g.goals)}</p>` : ''}
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">${g.category ? `<span class="tag">${esc((CATS.find(c => c[0] === g.category) || [0, ''])[1])}</span>` : ''}${g.strategy ? `<span class="tag">${esc(g.strategy)}</span>` : ''}<span class="tag">Lead Trader: ${esc(Store.displayName(g.leadPid))}</span>${role ? `<span class="tag blue">You: ${esc(Store.ROLE_LABEL[role])}</span>` : ''}${g.pooled ? '<span class="tag ember">Pooled practice club</span>' : ''}</div>
-      ${(() => { const st = stackOf(ms.filter(m => m.role !== 'observer').map(m => m.pid), 5), gs = groupStats(gid); return `<div style="display:flex;gap:18px;flex-wrap:wrap;align-items:center;margin-top:14px" class="small">${st.html}<span><b class="num">${ms.length}</b> members</span><span><b class="num">${gs.trades}</b> trades this month</span>${gs.approval != null ? `<span><b class="num">${Math.round(gs.approval * 100)}%</b> of trade requests copied</span>` : ''}</div>`; })()}</div>
+      ${(() => { const st = stackOf(ms.filter(m => m.role !== 'observer').map(m => m.pid), 5), gs = groupStats(gid); return `<div style="display:flex;gap:18px;flex-wrap:wrap;align-items:center;margin-top:14px" class="small">${st.html}<span><b class="num">${ms.length}</b> ${ms.length === 1 ? 'member' : 'members'}</span><span><b class="num">${gs.trades}</b> trades this month</span>${gs.approval != null ? `<span><b class="num">${Math.round(gs.approval * 100)}%</b> of trade requests copied</span>` : ''}</div>`; })()}</div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">${joinButton(g, role, hasMe)}
       ${role === 'observer' && !Store.isPro() && Store.canWrite ? `<button class="btn" data-act="join" data-id="${gid}">Become a full member</button>` : ''}
       ${role && Store.canTradeFor(role) && Store.canWrite && !g.pooled ? `<button class="btn ember" data-act="trade" data-gid="${gid}">Trade for the group</button>` : ''}
       ${role === 'junior' && Store.canWrite ? `<button class="btn ember" data-act="suggest" data-id="${gid}">Suggest a trade</button>` : ''}
       ${role && role !== 'observer' && g.leadPid !== Store.myPid && Store.canWrite && !g.pooled ? `<button class="btn ghost sm" data-act="copyonce" data-gid="${gid}">Catch up: copy current holdings</button>` : ''}
       ${role && Store.canWrite ? `<button class="btn ghost sm" data-act="invite" data-id="${gid}">Invite friends</button>` : ''}
-      ${hasMe && Store.canWrite && role !== 'owner' ? `<button class="btn ghost sm" data-act="report" data-id="${gid}">Report</button>` : ''}
+      ${hasMe && Store.canWrite && role !== 'owner' ? `<button class="linkbtn small muted" data-act="report" data-id="${gid}">Report this group</button>` : ''}
       ${Store.canEdit && Store.canWrite ? `<button class="btn ghost sm" data-act="feature" data-id="${gid}" data-k="${g.featured ? '0' : '1'}">${g.featured ? 'Remove from Featured' : 'Feature in Discover'}</button>` : ''}</div></div>`;
   const tabs = `<nav class="tabs">${[['activity','Activity'],['performance','Performance'],['proposals','Proposals'],['ideas','Ideas'],['meetings','Meetings'],['members','Members']].concat(role && role !== 'observer' ? [['club', 'Club books' + ((clubWaiting().find(w => w.gid === gid) || {}).count ? ' (' + clubWaiting().find(w => w.gid === gid).count + ')' : '')]] : []).concat([['rules', Store.canManage(role) ? 'Settings' : 'Rules']]).map(([k, l]) => `<a class="${tab === k ? 'on' : ''}" href="#/group/${gid}/${k}">${l}</a>`).join('')}</nav>`;
   let body = '';
@@ -2077,7 +2093,7 @@ function vInvite(code, by){
       <div style="display:flex;gap:12px;align-items:center"><div class="avatar" style="background:${AV[Market.hash(g.id) % AV.length]};border-radius:12px">${esc(g.name.slice(0, 1))}</div><h1 style="margin:0">${esc(g.name)}</h1></div>
       ${g.strategy ? `<p style="margin:12px 0 0"><b>${esc(g.strategy)}</b></p>` : ''}${g.description ? `<p class="muted" style="margin:6px 0 0">${esc(g.description)}</p>` : ''}
       <div class="kv" style="margin-top:16px"><div><span>Members</span><b>${n}</b></div><div><span>Started</span><b>${days} day${days === 1 ? '' : 's'} ago</b></div>${ret != null ? `<div><span>Lead Trader's portfolio since it started</span><b class="${sgn(ret)}">${pct(ret)}</b></div>` : ''}</div>
-      ${(() => { const S = g.pooled ? null : statsFor('group', g.id); return S && !S.none ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">${riskBadge(S)}<span class="tag">Worst drop ${(S.maxDrawdown * 100).toFixed(1)}%</span></div>` : ''; })()}
+      ${(() => { const S = g.pooled ? null : statsFor('group', g.id); return S && !S.none ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">${riskBadge(S)}${S.thin ? '' : `<span class="tag">Worst drop ${(S.maxDrawdown * 100).toFixed(1)}%</span>`}</div>` : ''; })()}
       <p class="hint" style="margin-top:8px">${Store.site.realMoney ? 'Practice-portfolio results. ' : 'Simulated money. '}Member names are shown once you join. Past results don't predict future returns.</p></div>
     <section class="block"><header><h2>How this group works</h2></header><div class="panel" style="padding:16px 20px"><ul style="margin:0;padding-left:20px;line-height:1.6">${inviteRules(R).map(x => `<li>${esc(x)}</li>`).join('')}</ul>
       ${R.rulesText ? `<details style="margin-top:10px"><summary>The Owner's group rules</summary><p style="white-space:pre-wrap" class="muted">${esc(R.rulesText)}</p></details>` : ''}</div></section>
@@ -2147,7 +2163,7 @@ function vAdmin(){
   else body = `<section class="panel" style="padding:18px 20px"><h2>Invite only</h2><p class="muted small">When on, new accounts need an invite code. Admins listed in ADMIN_USERNAMES can always sign up.</p><div class="seg"><button class="${A.inviteOnly ? 'on' : ''}" data-act="adm-io" data-k="1">On</button><button class="${A.inviteOnly ? '' : 'on'}" data-act="adm-io" data-k="0">Off</button></div></section>
     <section class="panel" style="padding:18px 20px;margin-top:16px"><h2>Announcement</h2><p class="muted small">Shown at the top of every screen until each tester dismisses it.</p><textarea class="input" id="adm-ann" maxlength="300" placeholder="e.g. New version: please test buy-at-open today">${esc((A.announcement || {}).text || '')}</textarea><div style="display:flex;gap:10px;margin-top:10px"><button class="btn" data-act="adm-ann">Post</button>${A.announcement ? '<button class="btn ghost" data-act="adm-annclear">Remove</button>' : ''}</div></section>
     <section class="panel" style="padding:18px 20px;margin-top:16px"><h2>Read-only mode</h2><p class="muted small">Blocks trades, transfers, approvals and other changes for everyone except admins, with a banner explaining why. Use it while fixing an issue.</p>
-      ${(Store.maintenance || {}).on ? `<p><b>Read-only mode is on.</b></p><button class="btn" data-act="adm-ro" data-k="0">Turn it off</button>` : `<input class="input" id="adm-ro-m" maxlength="300" placeholder="Optional message, e.g. We're fixing a delay with deposits."><p style="margin-top:10px"><button class="btn ghost" data-act="adm-ro" data-k="1">Turn on read-only mode</button></p>`}</section>`;
+      ${(Store.maintenance || {}).on ? `<p><b>Read-only mode is on.</b></p><button class="btn" data-act="adm-ro" data-k="0">Turn it off</button>` : `<input class="input" id="adm-ro-m" aria-label="Read-only message" maxlength="300" placeholder="Optional message, e.g. We're fixing a delay with deposits."><p style="margin-top:10px"><button class="btn ghost" data-act="adm-ro" data-k="1">Turn on read-only mode</button></p>`}</section>`;
   return `<div class="pagehead"><div><h1>Beta admin</h1><p class="muted">Beta metrics, testers, invite codes, feedback and error reports.</p></div><button class="btn ghost sm" data-act="adm-refresh">Refresh</button></div>
     <nav class="tabs">${T.map(([k, l]) => `<a href="#/admin" class="${tab === k ? 'on' : ''}" data-act="adm-tab" data-k="${k}">${l}</a>`).join('')}</nav>${body}`;
 }
@@ -2368,7 +2384,7 @@ function openModal(html, mount){
   const s = $('#modal [data-scrim]'); s.addEventListener('click', e => { if (e.target === s) closeModal(); });
   $$('#modal [data-close]').forEach(b => b.onclick = closeModal);
   if (mount) mount($('#modal .sheet'));
-  const f = $('#modal input, #modal select, #modal textarea'); if (f) f.focus();
+  const f = $('#modal input, #modal select, #modal textarea'); if (f && !(f.hasAttribute('data-nofocus') && window.matchMedia && matchMedia('(max-width: 760px)').matches)) f.focus();
 }
 function closeModal(){ $('#modal').innerHTML = ''; }
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
@@ -2376,7 +2392,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal()
 function tradeSheet({ sym = 'AAPL', side = 'buy', gid = null } = {}){
   const me = Store.myPid;
   const tradeGroups = Store.myGroups().filter(g => Store.canTradeFor((Store.membership(g.id) || {}).role));
-  const st = { sym: sym || 'AAPL', side: side || 'buy', by: side === 'sell' ? 'shares' : 'dollars', amt: side === 'sell' ? '' : '1000', acct: gid || 'me', q:'', step:'edit', chip: side === 'sell' ? null : '1000' };
+  const st = { sym: sym || 'AAPL', side: side || 'buy', by: side === 'sell' ? 'shares' : 'dollars', amt: side === 'sell' ? '' : '100', acct: gid || 'me', q:'', step:'edit', chip: side === 'sell' ? null : '100' };
   const pf = () => Store.get('portfolios', me);
   const held = () => (((pf() || {}).positions || {})[st.sym] || {}).shares || 0;
   const calc = () => { const px = Market.price(st.sym), a = parseFloat(st.amt) || 0; const shares = Math.floor((st.by === 'dollars' ? a / px : a) * 1000) / 1000; return { px, shares, dollars: shares * px }; };
@@ -2393,7 +2409,7 @@ function tradeSheet({ sym = 'AAPL', side = 'buy', gid = null } = {}){
         ${tradeGroups.length ? `<div class="field"><label for="t-acct">Account</label><select class="input" id="t-acct"><option value="me">Personal</option>${tradeGroups.map(g => `<option value="${g.id}" ${st.acct === g.id ? 'selected' : ''}>Trade for ${esc(g.name)}</option>`).join('')}</select></div>` : ''}
         <div class="field"><label for="t-q">Stock</label>
           <div style="display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--surface-2)"><span class="sym">${st.sym}</span><span class="grow muted ellip" style="flex:1">${esc(T.n)}</span><b class="num" data-px="${st.sym}">${usd(Market.price(st.sym))}</b></div>
-          <input class="input" id="t-q" placeholder="Search another stock, e.g. Apple or MSFT" autocomplete="off" value="${esc(st.q)}" style="margin-top:8px"><div id="t-res" class="list" style="display:none;margin-top:6px"></div></div>
+          <input class="input" id="t-q" data-nofocus placeholder="Search another stock, e.g. Apple or MSFT" autocomplete="off" value="${esc(st.q)}" style="margin-top:8px"><div id="t-res" class="list" style="display:none;margin-top:6px"></div></div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px"><div class="seg" id="t-side"><button data-k="buy" class="${st.side === 'buy' ? 'on' : ''}">Buy</button><button data-k="sell" class="${st.side === 'sell' ? 'on' : ''}">Sell</button></div>
           <div class="seg" id="t-by"><button data-k="dollars" class="${st.by === 'dollars' ? 'on' : ''}">Dollars</button><button data-k="shares" class="${st.by === 'shares' ? 'on' : ''}">Shares</button></div></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px" id="t-chips">${chips().map(([k, l]) => `<button class="btn sm ${st.chip === k ? '' : 'ghost'}" data-k="${k}" ${st.side === 'sell' && !held() ? 'disabled' : ''}>${l}</button>`).join('')}</div>
@@ -2714,7 +2730,8 @@ function feedbackSheet(){
 }
 function renderFeedbackButton(){
   let b = document.getElementById('fbbtn');
-  if (!Store.signedIn || ui.tour != null || ui.presenter != null){ if (b) b.remove(); return; }
+  const narrow = window.matchMedia && matchMedia('(max-width: 959px)').matches;
+  if (!Store.signedIn || ui.tour != null || ui.presenter != null || narrow){ if (b) b.remove(); return; }
   if (!b){ b = document.createElement('button'); b.id = 'fbbtn'; b.className = 'btn sm ghost'; b.textContent = 'Feedback'; b.setAttribute('data-act', 'feedback');
     b.setAttribute('style', 'position:fixed;z-index:25;right:14px;bottom:calc(76px + env(safe-area-inset-bottom,0px));background:var(--surface);box-shadow:0 4px 14px rgba(10,16,30,.12)'); document.body.appendChild(b); }
   b.style.bottom = window.matchMedia && window.matchMedia('(min-width: 960px)').matches ? '20px' : 'calc(76px + env(safe-area-inset-bottom,0px))';

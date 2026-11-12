@@ -58,7 +58,7 @@ async function compute(q, pid, sinceTs){
   let openDays = 0, openShares = 0; Object.values(lots).forEach(L => L.forEach(l => { openDays += l.sh * (now - l.ts) / DAY; openShares += l.sh; }));
   const recent = trades.filter(t => t.ts > now - 90 * DAY && !String(t.copyOf || '').startsWith('portfolio:')).length;
   const divTotal = divs.filter(x => x.ts > now - 365 * DAY).reduce((a, x) => a + x.amount, 0);
-  return { pid, dividends12m: Math.round(divTotal * 100) / 100, since: start, days, sinceStart: start === born || start === sinceTs, totalReturn: idx[idx.length - 1] - 1, maxDrawdown: mdd, volatility: vol, riskScore: Object.keys(pf.data.positions || {}).length ? riskScore(vol) : 1,
+  return { pid, dividends12m: Math.round(divTotal * 100) / 100, since: start, days, sinceStart: start === born || start === sinceTs, totalReturn: idx[idx.length - 1] - 1, maxDrawdown: mdd, volatility: vol, riskScore: Object.keys(pf.data.positions || {}).length ? riskScore(vol) : 1, thin: !Object.keys(pf.data.positions || {}).length || days < 14,
     monthly, avgHoldDays: heldShares ? heldDays / heldShares : null, openPositionAgeDays: openShares ? openDays / openShares : null, tradesPerMonth: recent / 3, trades: trades.length, approximate,
     series: pts.filter((p, k) => k % Math.max(1, Math.round(pts.length / 120)) === 0 || k === pts.length - 1).map(p => ({ t: p.t, v: Math.round(p.v * 100) / 100 })) };
 }
