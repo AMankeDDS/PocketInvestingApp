@@ -69,7 +69,7 @@ function vStock(sym){
   }
   const px = Market.price(sym), c = Market.dayChange(sym);
   let pts = seriesPts(t => Market.price(sym, t), ui.chartSpan);
-  if (Market.isReal(sym)){ const k = sym + ':' + ui.chartSpan; if (!ui.bars[k]){ ui.bars[k] = 'loading'; Store.bars(sym, ui.chartSpan).then(b => { ui.bars[k] = b; render(); }, () => { ui.bars[k] = []; }); }
+  if (Market.isReal(sym)){ const k = sym + ':' + ui.chartSpan; if (!ui.bars[k]){ ui.bars[k] = 'loading'; Store.bars(sym, ui.chartSpan).then(b => { Market.addHist(sym, b); ui.bars[k] = b; render(); }, () => { ui.bars[k] = []; }); }
     if (Array.isArray(ui.bars[k]) && ui.bars[k].length > 2) pts = ui.bars[k].map(b => ({ t: b.t, v: b.c })).concat([{ t: Date.now(), v: px }]); }
   const pf = Store.get('portfolios', Store.myPid); const pos = pf && (pf.positions || {})[sym];
   const postsHtml = stockPosts(sym);
@@ -78,7 +78,7 @@ function vStock(sym){
   const groupsHolding = Store.all('groups').filter(g => !Store.rulesOf(g).hidden && (((Store.get('portfolios', g.leadPid) || {}).positions || {})[sym] || Store.all('posts').some(p => p.groupId === g.id && p.groupTrade && p.trade && p.trade.sym === sym && p.ts > Date.now() - 90 * 86400000)));
   return `<div class="pagehead"><div><a href="#/home" class="small">← Back</a><div style="display:flex;gap:12px;align-items:center;margin-top:6px">${logo(sym)}<h1>${esc(t.n)} <span class="muted">${sym}</span></h1></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><span class="tag">${esc(SECTOR[sym] || 'Stock')}</span>${holders ? `<span class="tag">${holders} Pocket member${holders === 1 ? '' : 's'} own it</span>` : ''}</div></div>
-    ${Store.canWrite && Store.get('profiles', Store.myPid) ? `<button class="btn ${watching ? 'ghost' : ''} sm" data-act="watch" data-k="${sym}" aria-pressed="${watching}">${watching ? '★ Watching' : '☆ Watch'}</button>` : ''}</div>
+    ${Store.canWrite && Store.get('profiles', Store.myPid) ? `<button class="btn ${watching ? 'ghost' : ''} sm" data-act="watch" data-k="${sym}" aria-pressed="${watching}">${watching ? '★ Watching' : '☆ Watch'}</button> <button class="btn ghost sm" data-act="alertsheet" data-k="${sym}">Set alert</button>` : ''}</div>
   <div class="panel hero"><div class="value" data-px="${sym}">${usd(px)}</div><div class="num ${sgn(c)}" data-chg="${sym}">${pct(c)} <span class="muted">today</span></div>
     ${ichart('stock:' + sym, pts, ui.chartSpan, { aria: sym + ' price chart' })}
     <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:10px"><div class="seg" role="tablist">${Object.keys(SPANS).map(k => `<button class="${ui.chartSpan === k ? 'on' : ''}" data-act="span" data-k="${k}">${k.toUpperCase()}</button>`).join('')}</div>

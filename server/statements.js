@@ -16,7 +16,7 @@ const pname = async pid => ((((await q('SELECT data FROM doc_profiles WHERE id =
 
 /* Every cash and share movement for an account, oldest first. flow: +in / -out of the account. */
 async function events(pid){
-  const ev = [];
+  const ev = [], resetTs = ((((await q('SELECT data FROM doc_portfolios WHERE id = $1', [pid])).rows[0]) || {}).data || {}).resetTs || 0;
   (await q(`SELECT data FROM doc_trades WHERE data->>'pid' = $1`, [pid])).rows.forEach(({ data: t }) => ev.push({ ts: t.ts, type: 'trade', side: t.side, sym: t.sym, shares: t.shares, price: t.price, copyOf: t.copyOf, groupId: t.groupId }));
   (await q(`SELECT data FROM doc_dividends WHERE data->>'pid' = $1`, [pid]).catch(() => ({ rows: [] }))).rows.forEach(({ data: x }) => ev.push({ ts: x.ts, type: 'dividend', sym: x.sym, amount: x.amount, shares: x.shares }));
   const pooled = await pooledSet();
@@ -28,6 +28,7 @@ async function events(pid){
       const where = `${await gname(r.gid)} (${await Acc.member(r.gid, pid)})`;
       ev.push({ ts: r.data.ts, type: 'flow', flow: r.data.kind === 'payment' ? -r.data.amount : r.data.amount, gid: r.gid, desc: r.data.kind === 'payment' ? 'Moved to ' + where : 'Paid out from ' + where }); }
   }
+  if (resetTs) for (let x = ev.length - 1; x >= 0; x--) if (ev[x].ts <= resetTs) ev.splice(x, 1); /* a practice reset starts the history over */
   return ev.sort((a, b) => a.ts - b.ts);
 }
 /* Holdings and cash at time T, walking back from today's actual account. */

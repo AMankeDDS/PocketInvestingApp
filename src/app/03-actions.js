@@ -71,7 +71,7 @@ async function act(el, ev){ /* eslint-disable-line */
     case 'savenotif': return busy(async () => {
       const c = id => { const e = document.getElementById(id); return e ? e.checked : true; };
       const muted = Store.myGroups().filter(g => !c('n-g-' + g.id)).map(g => g.id);
-      await Store.setNotifPrefs({ approvals: c('n-ap'), votes: c('n-vo'), social: c('n-so'), news: $('#n-nw') ? c('n-nw') : false, approvalsInQuiet: c('n-aq'), mutedGroups: muted, quiet: { on: c('n-qon'), start: $('#n-qs').value, end: $('#n-qe').value }, tz: Intl.DateTimeFormat().resolvedOptions().timeZone });
+      await Store.setNotifPrefs({ weeklyRecap: $('#n-wr') ? c('n-wr') : true, approvals: c('n-ap'), votes: c('n-vo'), social: c('n-so'), news: $('#n-nw') ? c('n-nw') : false, approvalsInQuiet: c('n-aq'), mutedGroups: muted, quiet: { on: c('n-qon'), start: $('#n-qs').value, end: $('#n-qe').value }, tz: Intl.DateTimeFormat().resolvedOptions().timeZone });
       toast('Notification settings saved.');
     });
     case 'adm-spend': return busy(async () => { const m = document.getElementById('ms-m').value, amt = Number(document.getElementById('ms-a').value); await Store.http('POST', '/api/admin/metrics/adspend', { month: m, amount: amt }); ui.ametrics = null; toast('Ad spend saved.'); render(); });
@@ -94,6 +94,12 @@ async function act(el, ev){ /* eslint-disable-line */
     case 'adm-actas': return busy(async () => { await Store.http('POST', '/api/admin/act-as', { userId: el.dataset.id }); location.hash = '#/portfolio'; location.reload(); });
     case 'adm-mktest': return busy(async () => { const r = await Store.http('POST', '/api/admin/test-accounts', { count: +$('#tt-n').value, deposit: +$('#tt-d').value }); ui.atest = null; toast(`Created ${r.made.length} test account${r.made.length === 1 ? '' : 's'}. Brokerage approval, bank and deposit finish in the background.`); render(); });
     case 'navexplore': ui.exploreTab = 'market'; if (location.hash === '#/explore') return render(); location.hash = '#/explore'; return;
+    case 'search': return searchSheet();
+    case 'alertsheet': return alertSheet(el.dataset.k);
+    case 'alertdel': return busy(async () => { await Store.http('POST', '/api/alerts', { remove: el.dataset.id }); ui.alerts = null; render(); });
+    case 'alertprefs': return busy(async () => { await Store.http('POST', '/api/alerts', { prefs: true, watchMoves: $('#al-w').checked, threshold: +$('#al-t').value }); ui.alerts = null; toast('Saved.'); render(); });
+    case 'startover': if (!confirm('Start over with $100,000 in practice cash? Your practice positions are cleared and your track record restarts today. Posts, groups and follows stay.')) return; return busy(async () => { await Store.startOver(); toast('Your practice account is back to $100,000.'); location.hash = '#/portfolio'; });
+    case 'copystop': return copyStopSheet({ gid: el.dataset.gid || null, pid: el.dataset.id || null });
     case 'extab': ui.exploreTab = el.dataset.k; if (location.hash !== '#/explore') location.hash = '#/explore'; return render();
     case 'exmovers': ui.exMovers = el.dataset.k; return render();
     case 'exsector': ui.exSector = el.dataset.k && ui.exSector !== el.dataset.k ? el.dataset.k : null; return render();

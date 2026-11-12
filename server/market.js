@@ -18,9 +18,14 @@ function add(s, n, b){ if (!s || MAP[s] || !(b > 0)) return false; const t = { s
 function setBases(map){ for (const [s, b] of Object.entries(map || {})) if (MAP[s] && b > 0) MAP[s].b = Math.round(b * 10000) / 10000; }
 function setQuotes(q){ const now = Date.now(); for (const [s, v] of Object.entries(q || {})) if (v && v.p > 0) QUOTES[s] = { p: v.p, prev: v.prev || null, t: v.t || now }; }
 const liveQuote = s => { const q = QUOTES[s]; return q && Date.now() - q.t < 15 * 60000 ? q : null; };
+/* Real price history (bars from the market data feed), used for past prices when quotes are real. */
+const HIST = {};
+function addHist(sym, bars){ if (!bars || !bars.length) return; const m = new Map((HIST[sym] || []).map(b => [b.t, b.c])); for (const b of bars) if (b && b.t && b.c > 0) m.set(b.t, b.c); HIST[sym] = [...m.entries()].sort((a, b) => a[0] - b[0]).map(([t, c]) => ({ t, c })); }
+function histAt(sym, ms){ const h = HIST[sym]; if (!h || !h.length || ms < h[0].t - 3 * 86400000) return null; let lo = 0, hi = h.length - 1, ans = null; while (lo <= hi){ const mid = (lo + hi) >> 1; if (h[mid].t <= ms){ ans = h[mid].c; lo = mid + 1; } else hi = mid - 1; } return ans != null ? ans : h[0].c; }
 function price(sym, ms = Date.now()){
   const q = liveQuote(sym);
-  if (q){ if (Math.abs(ms - Date.now()) < 180000) return q.p; const a = simPrice(sym, ms), b = simPrice(sym, Date.now()); return a && b ? Math.round(a * q.p / b * 100) / 100 : q.p; }
+  /* With real quotes, the past comes from real bars; with no history loaded yet, the previous close or the current price (never a simulated path). */
+  if (q){ if (Math.abs(ms - Date.now()) < 180000) return q.p; const h = histAt(sym, ms); if (h) return h; return q.prev && ms < Date.now() - 6 * 3600000 ? q.prev : q.p; }
   return simPrice(sym, ms);
 }
 function simPrice(sym, ms = Date.now()){
@@ -52,4 +57,4 @@ function approvalWindow(mode, now = Date.now(), minutes = 30){
 }
 function canFillNow(mode, now = Date.now()){ const s = session(mode, now); return s.open && s.closeAt - now > 5 * 60000; }
 const ETFS = ['SPY','QQQ','SCHD'];
-module.exports = { ETFS, LIST, MAP, hash, price, simPrice, add, setBases, setQuotes, QUOTES, session, approvalWindow, canFillNow };
+module.exports = { addHist, histAt, ETFS, LIST, MAP, hash, price, simPrice, add, setBases, setQuotes, QUOTES, session, approvalWindow, canFillNow };

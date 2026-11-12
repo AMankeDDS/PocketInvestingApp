@@ -78,8 +78,8 @@ async function fanOut(tx, leaderPid, t, { gid = null, leaderValue, heldBefore })
   const g = gid ? await tx.get('groups', gid) : null;
   const now = Date.now(), win = Market.approvalWindow(await clockMode(tx), now, g ? rulesOf(g).approvalMinutes : 30);
   const recips = gid
-    ? (await tx.find('memberships', { gid })).filter(m => m.pid !== leaderPid && m.role !== 'observer').map(m => ({ pid: m.pid, pct: m.copyPct ?? 1 }))
-    : (await tx.find('copies', { to: leaderPid })).filter(c => c.from !== leaderPid).map(c => ({ pid: c.from, pct: c.copyPct ?? 1 }));
+    ? (await tx.find('memberships', { gid })).filter(m => m.pid !== leaderPid && m.role !== 'observer' && !m.copyPaused).map(m => ({ pid: m.pid, pct: m.copyPct ?? 1 }))
+    : (await tx.find('copies', { to: leaderPid })).filter(c => c.from !== leaderPid && !c.copyPaused).map(c => ({ pid: c.from, pct: c.copyPct ?? 1 }));
   let sent = 0;
   for (const rc of recips){
     const mpf = await tx.get('portfolios', rc.pid); if (!mpf) continue;
@@ -733,11 +733,49 @@ A.decideSuggestion = async (tx, ctx, a) => {
 };
 
 /* ---------- notification settings ---------- */
+/* Start over: practice cash back to $100,000 and positions cleared. Statements and the track record restart from now; posts and trades stay. */
+A.startOver = async (tx, ctx) => {
+  await needProfile(tx, ctx); const pf = await tx.get('portfolios', ctx.pid); if (!pf) throw fail('There is no practice account to reset.');
+  await tx.update('portfolios', ctx.pid, { cash: START_CASH, positions: {}, startValue: START_CASH, resetTs: Date.now(), resets: (pf.resets || 0) + 1 });
+  for (const r of await tx.find('copyRequests', { memberPid: ctx.pid })) if (r.status === 'pending' || r.status === 'queued') await tx.update('copyRequests', r.id, { status: 'expired' });
+};
+/* Copy stop-loss, per investor you copy or group you're in: past a drop, ask to sell or stop copying. */
+A.setCopyStop = async (tx, ctx, a) => {
+  await needProfile(tx, ctx); const pct = a.pct ? Math.max(5, Math.min(50, Math.round(Number(a.pct)))) : null, action = a.action === 'stop' ? 'stop' : 'ask';
+  const patch = { stopPct: pct, stopAction: action }; if (a.resume) patch.copyPaused = false;
+  if (a.gid){ const id = a.gid + '__' + ctx.pid; if (!(await tx.get('memberships', id))) throw fail('Join the group first.'); await tx.update('memberships', id, patch); }
+  else { const id = ctx.pid + '__' + a.pid; if (!(await tx.get('copies', id))) throw fail("You aren't copying them."); await tx.update('copies', id, patch); }
+};
+async function copyStopCheck(tx){
+  const mode = await clockMode(tx), now = Date.now(); let made = 0;
+  const rels = (await tx.find('copies', {})).filter(c => c.stopPct).map(c => ({ kind: 'copies', id: c.from + '__' + c.to, follower: c.from, leader: c.to, gid: null, pct: c.stopPct, action: c.stopAction, paused: c.copyPaused }))
+    .concat((await tx.find('memberships', {})).filter(m => m.stopPct).map(m => ({ kind: 'memberships', id: m.gid + '__' + m.pid, follower: m.pid, leader: null, gid: m.gid, pct: m.stopPct, action: m.stopAction, paused: m.copyPaused })));
+  for (const r of rels){
+    if (r.paused) continue;
+    const pf = await tx.get('portfolios', r.follower); if (!pf) continue;
+    const reqs = (await tx.find('copyRequests', { memberPid: r.follower })).filter(x => (r.gid ? x.gid === r.gid : (!x.gid && x.leaderPid === r.leader)) && (!pf.resetTs || x.createdTs > pf.resetTs));
+    const by = {}; for (const x of reqs.filter(x => x.status === 'filled' && !x.stopLoss)){ const b = by[x.sym] = by[x.sym] || { sh: 0, cost: 0 }; const sh = x.fillShares || x.shares || 0;
+      if (x.side === 'buy'){ b.sh += sh; b.cost += sh * (x.fillPrice || x.leaderPrice || 0); } else b.sh -= sh; }
+    for (const [sym, b] of Object.entries(by)){
+      const held = ((pf.positions || {})[sym] || {}).shares || 0, copied = Math.min(held, b.sh); if (!(copied > 0.0005) || !(b.cost > 0)) continue;
+      const avg = b.cost / Math.max(0.0005, reqs.filter(x => x.sym === sym && x.side === 'buy' && x.status === 'filled' && !x.stopLoss).reduce((s, x) => s + (x.fillShares || x.shares || 0), 0)), px = Market.price(sym), drop = 1 - px / avg;
+      if (!(drop >= r.pct / 100)) continue;
+      if (reqs.some(x => x.stopLoss && x.sym === sym && (x.status === 'pending' || now - x.createdTs < 86400000))) continue;
+      const who = r.gid ? ((await tx.get('groups', r.gid)) || {}).name || 'your group' : (((await tx.get('profiles', r.leader)) || {}).name || 'them');
+      if (r.action === 'stop'){ await tx.update(r.kind, r.id, { copyPaused: true }); notify(tx, [r.follower], { title: `Stopped copying ${who}`, body: `${sym} fell ${Math.round(drop * 100)}% below what you paid, past your ${r.pct}% limit. Copies are paused; resume any time.`, url: r.gid ? '/#/group/' + r.gid : '/#/u/' + r.leader, tag: 'stop-' + r.id }); made++; break; }
+      const win = Market.approvalWindow(mode, now, r.gid ? rulesOf((await tx.get('groups', r.gid)) || {}).approvalMinutes : 30);
+      await tx.set('copyRequests', tx.newId(), { gid: r.gid, kind: r.gid ? 'group' : 'investor', stopLoss: true, tradeId: 'stop', leaderPid: r.leader || (((await tx.get('groups', r.gid)) || {}).leadPid), memberPid: r.follower, sym, side: 'sell',
+        leaderShares: 0, leaderPrice: px, shares: Math.round(copied * 1000) / 1000, status: 'pending', mode: win.mode, createdTs: now, expiresTs: win.expiresTs, leaderFrac: null, stopDrop: drop });
+      notify(tx, [r.follower], { title: `${sym} is down ${Math.round(drop * 100)}% from your copy`, body: `Past your ${r.pct}% limit for copies of ${who}. Approve to sell, or decline to keep it.`, url: '/#/portfolio', tag: 'stop-' + r.id + sym }); made++;
+    }
+  }
+  return made;
+}
 A.setNotifPrefs = async (tx, ctx, a) => {
   await needProfile(tx, ctx);
   const hhmm = v => /^\d{1,2}:\d{2}$/.test(v || '') ? v : null;
   const q = a.quiet || {};
-  await tx.update('profiles', ctx.pid, { notif: { approvals: a.approvals !== false, votes: a.votes !== false, social: a.social !== false, news: a.news === true, approvalsInQuiet: a.approvalsInQuiet !== false,
+  await tx.update('profiles', ctx.pid, { notif: { weeklyRecap: a.weeklyRecap !== false, approvals: a.approvals !== false, votes: a.votes !== false, social: a.social !== false, news: a.news === true, approvalsInQuiet: a.approvalsInQuiet !== false,
     mutedGroups: Array.isArray(a.mutedGroups) ? a.mutedGroups.slice(0, 50).map(String) : [], quiet: { on: !!q.on, start: hhmm(q.start) || '22:00', end: hhmm(q.end) || '07:00' }, tz: str(a.tz, 60) || 'America/New_York' } });
 };
 
@@ -845,4 +883,4 @@ async function deleteAccountDocs(tx, pid){
   await by('copyRequests', 'memberPid'); await by('joinRequests', 'pid'); await by('suggestions', 'pid'); await by('reports', 'reporterPid'); await by('trades', 'pid');
   await tx.del('portfolios', pid); await tx.del('profiles', pid);
 }
-module.exports = { canApprove, approvers, MONEY_OFFICERS, actions: A, housekeeping, deleteAccountDocs, rulesOf, UserError, START_CASH, personalTrade, groupTrade, TAGS };
+module.exports = { copyStopCheck, canApprove, approvers, MONEY_OFFICERS, actions: A, housekeeping, deleteAccountDocs, rulesOf, UserError, START_CASH, personalTrade, groupTrade, TAGS };

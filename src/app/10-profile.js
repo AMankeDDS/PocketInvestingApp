@@ -92,6 +92,9 @@ function vProfile(pid){
   ${!self && Store.isCopying(pid) ? `<div class="banner ember" style="margin-top:16px">You copy ${esc(Store.displayName(pid))}. Each of their trades sends you an approval request sized to your capital.</div>` : ''}
   ${trackRecord('investor', pid)}
   ${self ? securityActivity() : ''}
+  ${self ? `<section class="block"><header><h2>Practice tools</h2></header><div class="list">
+      <a class="row" href="#/alerts"><div class="grow"><b>Price alerts</b><div class="small muted">Get notified when a stock crosses a price or makes a big move</div></div><span class="muted">›</span></a>
+      ${Store.site.realMoney ? '' : `<div class="row"><div class="grow"><b>Start over</b><div class="small muted">Reset your practice account to $100,000. Statements and your track record restart; posts stay.</div></div><button class="btn sm ghost" data-act="startover">Start over</button></div>`}</div></section>` : ''}
   ${self ? `<section class="block"><header><h2>Account</h2></header><div class="list">
     ${Store.accountNumber ? `<div class="row"><div class="grow"><b>Account number</b><div class="small muted">Your practice account</div></div><b class="num">${esc(Store.accountNumber)}</b></div>` : ''}
     <a class="row" href="#/help"><div class="grow"><b>Help</b><div class="small muted">Quick answers about the beta</div></div><span class="muted">›</span></a>
@@ -106,7 +109,7 @@ function vProfile(pid){
       <a class="row" href="#/security"><div class="grow"><b>Two-step sign-in</b><div class="small muted">${Store.twofa ? 'On' : 'Off'}${Store.site.require2fa ? ', required for real money' : ''}</div></div><span class="small">${Store.twofa ? 'Manage' : 'Set up'}</span></a>
       <div class="row"><div class="grow"><b>Signed in as ${esc(Store.username || '')}</b></div><button class="btn sm ghost" data-act="signout">Sign out</button></div>
       <div class="row"><div class="grow"><b>Delete account</b><div class="small muted">Removes your profile, posts and activity</div></div><button class="btn sm ghost" data-act="delacct" style="color:var(--loss);border-color:var(--loss)">Delete</button></div>` : ''}
-    ${Store.all('copies').filter(c => c.from === pid).map(c => `<div class="row"><div class="grow"><b>Copying ${esc(Store.displayName(c.to))}</b><div class="small muted">Each trade asks for your approval</div></div><button class="btn sm ghost" data-act="uncopy" data-id="${c.to}">Stop</button></div>`).join('')}
+    ${Store.all('copies').filter(c => c.from === pid).map(c => `<div class="row"><div class="grow"><b>Copying ${esc(Store.displayName(c.to))}</b><div class="small muted">Each trade asks for your approval</div></div><button class="btn sm ghost" data-act="copystop" data-id="${c.to}">${c.stopPct ? 'Limit ' + c.stopPct + '%' : 'Protect'}</button> <button class="btn sm ghost" data-act="uncopy" data-id="${c.to}">Stop</button></div>`).join('')}
   </div></section>` : ''}
   ${top.length ? (() => { const tot = Object.entries(pf.positions || {}).reduce((a, [s, x]) => a + x.shares * Market.price(s), 0) || 1; const sec = {};
       Object.entries(pf.positions || {}).forEach(([s, x]) => { const k = SECTOR[s] || 'Other'; sec[k] = (sec[k] || 0) + x.shares * Market.price(s); });

@@ -101,7 +101,7 @@ function vLegal(kind){
   return `<div class="panel" style="padding:24px;max-width:720px"><span class="tag ember">Draft for the beta. Final version to come from counsel.</span>
     <h1 style="margin-top:14px">${terms ? 'Terms of use' : 'Privacy policy'}</h1>
     ${terms ? `<p>Pocket Investing is in a private beta. All money, prices and returns in the app are simulated. Nothing in the app is investment advice or a recommendation to buy or sell any security.</p>
-      <p>Trades shown by other members, Lead Traders and groups reflect their own simulated activity. Copying a trade doesn't guarantee the same price or result, and past simulated results don't predict future results.</p>
+      <p>Trades shown by other members, Lead Traders and groups reflect their own practice activity. Copying a trade doesn't guarantee the same price or result, and past simulated results don't predict future results.</p>
       <p>Be respectful. Don't post anything unlawful, misleading or promotional, and don't coordinate trading to move a price. We may remove content or turn off accounts that break these rules.</p>
       <p>The beta is provided as is. Features may change or be removed, and data may be reset.</p>`
     : `<p>We collect what you give us (your name, username and password, which is stored hashed), what you do in the app (posts, votes, simulated trades and settings), basic usage events so we can improve the product, and technical details when something goes wrong.</p>

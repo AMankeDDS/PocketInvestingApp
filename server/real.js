@@ -18,6 +18,7 @@ async function migrate(q){
   await q(`CREATE TABLE IF NOT EXISTS broker_accounts (user_id text PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, alpaca_id text UNIQUE NOT NULL, account_number text, status text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), active_since timestamptz)`);
   await q(`CREATE TABLE IF NOT EXISTS real_orders (id text PRIMARY KEY, user_id text NOT NULL, alpaca_order_id text, sym text NOT NULL, side text NOT NULL, qty numeric, notional numeric, status text NOT NULL, filled_qty numeric, filled_avg_price numeric, source text NOT NULL DEFAULT 'personal', ref text, message text, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`);
   await q(`CREATE INDEX IF NOT EXISTS real_orders_user ON real_orders (user_id, created_at DESC)`);
+  await q(`ALTER TABLE real_orders ADD COLUMN IF NOT EXISTS order_type text, ADD COLUMN IF NOT EXISTS limit_price numeric, ADD COLUMN IF NOT EXISTS tif text`);
   await q(`CREATE TABLE IF NOT EXISTS real_transfers (id text PRIMARY KEY, user_id text NOT NULL, direction text NOT NULL, amount numeric NOT NULL, status text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`);
   await q(`CREATE TABLE IF NOT EXISTS instant_credits (id text PRIMARY KEY, user_id text NOT NULL, transfer_id text NOT NULL, journal_id text, amount numeric NOT NULL, status text NOT NULL, repay_journal_id text, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`);
   await q(`CREATE TABLE IF NOT EXISTS broker_log (id bigserial PRIMARY KEY, method text, path text, status int, message text, created_at timestamptz NOT NULL DEFAULT now())`);
@@ -82,7 +83,7 @@ function mount(app, d){
     return { u, a };
   }
   async function outstanding(userId){ return Number((await q(`SELECT coalesce(sum(amount), 0) AS s FROM instant_credits WHERE user_id = $1 AND status = 'outstanding'`, [userId])).rows[0].s); }
-  const orderView = o => ({ id: o.id, sym: o.sym, side: o.side, qty: o.qty == null ? null : Number(o.qty), notional: o.notional == null ? null : Number(o.notional), status: o.status, filledQty: o.filled_qty == null ? 0 : Number(o.filled_qty),
+  const orderView = o => ({ type: o.order_type || 'market', limitPrice: o.limit_price == null ? null : Number(o.limit_price), tif: o.tif || 'day', id: o.id, sym: o.sym, side: o.side, qty: o.qty == null ? null : Number(o.qty), notional: o.notional == null ? null : Number(o.notional), status: o.status, filledQty: o.filled_qty == null ? 0 : Number(o.filled_qty),
     filledPrice: o.filled_avg_price == null ? null : Number(o.filled_avg_price), source: o.source, message: o.message, createdAt: o.created_at, updatedAt: o.updated_at });
 
   async function instantInfo(userId, pid, a){
@@ -215,11 +216,15 @@ function mount(app, d){
     if (qty != null && !(qty > 0)) return bad(res, 'Enter a number of shares above zero.');
     if (notional != null && !(notional >= 1)) return bad(res, 'The minimum order is $1.');
     const est = notional != null ? notional : qty * (await priceOf(sym));
-    if (est > config.maxOrderUsd) return bad(res, `Orders are limited to $${config.maxOrderUsd.toLocaleString('en-US')} during the beta.`);
+    const limit = req.body.type === 'limit', lp = limit ? Math.round(Number(req.body.limitPrice) * 100) / 100 : null, tif = limit && req.body.tif === 'gtc' ? 'gtc' : 'day';
+    if (limit){ if (qty == null) return bad(res, 'Limit orders are placed in shares. Switch to Shares to set a limit price.'); if (!(lp > 0)) return bad(res, 'Enter a limit price.');
+      if (tif === 'gtc' && Math.abs(qty - Math.round(qty)) > 1e-9) return bad(res, 'Good till canceled orders need whole shares. Use Day for fractional shares.'); }
+    if ((limit ? qty * lp : est) > config.maxOrderUsd) return bad(res, `Orders are limited to $${config.maxOrderUsd.toLocaleString('en-US')} during the beta.`);
     const id = newId();
-    const o = { symbol: sym, side, type: 'market', time_in_force: 'day', client_order_id: id };
+    const o = limit ? { symbol: sym, side, type: 'limit', limit_price: lp.toFixed(2), time_in_force: tif, client_order_id: id } : { symbol: sym, side, type: 'market', time_in_force: 'day', client_order_id: id };
     if (qty != null) o.qty = String(qty); else o.notional = notional.toFixed(2);
     await q('INSERT INTO real_orders (id, user_id, sym, side, qty, notional, status, source, ref) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)', [id, x.u.id, sym, side, qty, notional, 'sending', String(req.body.source || 'personal').slice(0, 20), req.body.ref ? String(req.body.ref).slice(0, 60) : null]);
+    if (limit) await q('UPDATE real_orders SET order_type = $2, limit_price = $3, tif = $4 WHERE id = $1', [id, 'limit', lp, tif]);
     try {
       const r = await alpaca.createOrder(x.a.alpaca_id, o);
       await q('UPDATE real_orders SET alpaca_order_id = $1, status = $2, filled_qty = $3, filled_avg_price = $4, updated_at = now() WHERE id = $5', [r.id, r.status || 'new', r.filled_qty || 0, r.filled_avg_price || null, id]);

@@ -1,5 +1,11 @@
 /* Interactive price charts (drag to measure, range buttons). */
 
+/* Load real bars for a stock (once every 10 minutes per range), then redraw. */
+function needBars(sym, span = '1d'){
+  if (!Market.isReal(sym)) return; const k = sym + ':' + span; ui.barsReq = ui.barsReq || {};
+  if (ui.barsReq[k] && Date.now() - ui.barsReq[k] < 600000) return; ui.barsReq[k] = Date.now();
+  Store.bars(sym, span).then(b => { if (b && b.length){ Market.addHist(sym, b); schedule(); } }).catch(() => {});
+}
 function seriesPts(fn, spanKey){ const [span, , n] = SPANS[spanKey], now = Date.now(), out = []; for (let i = n - 1; i >= 0; i--){ const t = now - span * i / (n - 1); out.push({ t, v: fn(t) }); } return out; }
 
 function ichDate(t, spanKey){

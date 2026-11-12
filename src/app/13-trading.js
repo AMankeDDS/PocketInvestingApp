@@ -49,7 +49,7 @@ function copyOnceSheet(o){
 }
 
 function orderRow(o, open){
-  const what = `${o.side === 'buy' ? 'Buy' : 'Sell'} ${o.notional != null ? usd(o.notional) + ' of' : shs(o.qty)} ${esc(o.sym)}`;
+  const what = `${o.side === 'buy' ? 'Buy' : 'Sell'} ${o.notional != null ? usd(o.notional) + ' of' : shs(o.qty)} ${esc(o.sym)}${o.type === 'limit' && o.limitPrice ? ` · limit ${usd(o.limitPrice)}${o.tif === 'gtc' ? ', good till canceled' : ''}` : ''}`;
   const fill = o.filledQty ? `${shs(o.filledQty)} shares at ${usd(o.filledPrice)}` : '';
   return `<div class="row"><div class="grow"><b>${what}</b><div class="small muted">${esc(RSTATUS[o.status] || o.status)}${fill ? ', ' + fill : ''}${o.message ? ', ' + esc(o.message) : ''}</div></div>${open && o.status !== 'pending_cancel' && o.status !== 'sending' ? `<button class="btn sm ghost" data-act="rcancel" data-id="${esc(o.id)}">Cancel</button>` : `<span class="small muted">${new Date(o.createdAt).toLocaleDateString('en-US', { month:'short', day:'numeric' })}</span>`}</div>`;
 }
@@ -84,7 +84,7 @@ function tradeSheet({ sym = 'AAPL', side = 'buy', gid = null } = {}){
         ${grp() ? '' : `<div class="field"><label style="display:flex;gap:10px;align-items:center;font-weight:500"><input type="checkbox" id="t-share" ${st.share ? 'checked' : ''}> Share this trade to the feed</label></div>`}
         <div class="field" id="t-note-f" style="${grp() || st.share ? '' : 'display:none'}"><label for="t-note">${grp() ? 'Note to the group (optional)' : 'Note (optional)'}</label><input class="input" id="t-note" value="${esc(st.note || '')}" placeholder="Why this trade"></div>
         <button class="btn ${grp() ? 'ember' : ''}" id="t-rev" style="width:100%">Review order</button>
-        <p class="hint" style="text-align:center;margin-top:10px">Market order at the current simulated price. Investing involves risk, including loss of principal.</p>`;
+        <p class="hint" style="text-align:center;margin-top:10px">Market order at the current ${Store.site.realPrices ? 'market' : 'simulated'} price, with practice money. Investing involves risk, including loss of principal.</p>`;
       wireEdit(); upd();
       if (focusAmt){ const a = q('t-amt'); a.focus(); const v = a.value; a.value = ''; a.value = v; }
     }

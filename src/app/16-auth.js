@@ -27,7 +27,7 @@ function authSheet(mode){
         if (signup) await Store.signupFull({ username: v('a-u'), password: v('a-p'), name: v('a-n'), risk: ui.risk, invite: v('a-i'), terms: sh.querySelector('#a-t').checked, groupInvite: ui.inviteFor ? ui.inviteCode : undefined, source: signupSource() });
         else if (reset) await Store.resetPassword(v('a-u'), v('a-c'), v('a-p'));
         else await Store.login(v('a-u'), v('a-p'), v('a-2fa'));
-        closeModal(); ui.seenReqs = null; toast(signup ? 'Your account is ready with $100,000 in simulated cash.' : reset ? 'Password updated. You are signed in.' : 'Welcome back.');
+        closeModal(); ui.seenReqs = null; toast(signup ? `Your account is ready with $100,000 in practice ${Store.site.realPrices ? 'money' : 'cash'}.` : reset ? 'Password updated. You are signed in.' : 'Welcome back.');
         const back = (() => { try { return sessionStorage.getItem('pi_after_auth'); } catch(e){ return null; } })();
         try { sessionStorage.removeItem('pi_after_auth'); } catch(e){}
         location.hash = back || '#/home'; render();

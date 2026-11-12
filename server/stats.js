@@ -20,7 +20,7 @@ async function compute(q, pid, sinceTs){
   else (await q(`SELECT gid, data FROM club_entries WHERE data->>'pid' = $1`, [pid]).catch(() => ({ rows: [] }))).rows.filter(r => pooled.has(r.gid) && !r.data.voided && r.data.kind !== 'valuation').forEach(r => flows.push({ side: 'flow', ts: r.data.ts, flow: r.data.kind === 'payment' ? -r.data.amount : r.data.amount }));
   const events = trades.concat(divs, flows).sort((a, b) => a.ts - b.ts);
   const now = Date.now(), first = trades.length ? trades[0].ts : now;
-  const born = Math.min(prof.createdTs || first, first);
+  const born = Math.max(Math.min(prof.createdTs || first, first), pf.data.resetTs || 0); /* a practice reset restarts the track record */
   const start = Math.max(born, sinceTs || 0, now - 365 * DAY);
   /* Walk backwards from today's actual holdings, undoing each trade, so today's value is always exact. */
   let cash = pf.data.cash || 0; const pos = {}; Object.entries(pf.data.positions || {}).forEach(([s, p]) => { pos[s] = p.shares; });

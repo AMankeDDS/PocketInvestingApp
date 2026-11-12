@@ -36,7 +36,7 @@ function vPracticeHome(which = 'home'){
   const hero = `<div class="panel hero"><div style="display:flex;justify-content:space-between;align-items:center"><span class="muted">${Store.site.realMoney ? 'Practice portfolio' : 'Portfolio value'}</span><span class="tag">${Store.site.realMoney ? 'Practice' : 'Simulated'}</span></div>
     <div class="value" data-pv="${me}">${usd(v)}</div>
     <div class="num"><span class="${sgn(d)}" data-pd="${me}">${pct(d)}</span> <span class="muted">today</span> &nbsp; <span class="${sgn(total)}">${pct(total)}</span> <span class="muted">all time</span></div>
-    ${ichart('pf:home', seriesPts(t => { let v = pf.cash || 0; for (const [s, p] of Object.entries(pf.positions || {})) v += p.shares * Market.price(s, t); return v; }, ui.pfSpan), ui.pfSpan, { h: 120, aria: 'Portfolio value chart' })}
+    ${(Object.keys(pf.positions || {}).forEach(s => needBars(s, ui.pfSpan || '1d')), '')}${ichart('pf:home', seriesPts(t => { let v = pf.cash || 0; for (const [s, p] of Object.entries(pf.positions || {})) v += p.shares * Market.price(s, t); return v; }, ui.pfSpan), ui.pfSpan, { h: 120, aria: 'Portfolio value chart' })}
     <div class="seg" role="tablist" style="margin-top:10px">${Object.keys(SPANS).map(k => `<button class="${ui.pfSpan === k ? 'on' : ''}" data-act="pfspan" data-k="${k}">${k.toUpperCase()}</button>`).join('')}</div>
     ${(() => { const dv = myDividends(); return dv.length ? `<p class="small muted" style="margin:10px 0 0">Dividends received in the past year: <b class="gain">${usd(dv.reduce((a, x) => a + x.amount, 0))}</b> <span class="muted">(practice estimates)</span></p>` : ''; })()}
     <div class="actions" style="align-items:center"><button class="btn" data-act="trade">Trade</button><a class="btn ghost" href="#/groups">Find a group</a><span class="updated" data-updated style="margin-left:auto">Updated just now</span></div></div>`;
@@ -79,7 +79,7 @@ ${sec('Holdings', `<div class="list">${hold.length ? hold.map(h => { const px = 
   }
   /* The Home tab: what's happening, with approvals and votes first. */
   const pfLine = Store.site.realMoney ? `<a class="panel" href="#/portfolio" style="display:flex;align-items:center;gap:12px;padding:16px 18px;margin-bottom:18px;color:var(--text)"><div class="grow"><div class="small muted">Your brokerage account</div><div style="font-size:22px;font-weight:700" class="num">${ui.real && ui.real.balances ? usd(ui.real.balances.equity) : 'Real money'}</div></div><div class="small muted">View ›</div></a>` : `<a class="panel" href="#/portfolio" style="display:flex;align-items:center;gap:12px;padding:16px 18px;margin-bottom:18px;color:var(--text)"><div class="grow"><div class="small muted">${Store.site.realMoney ? 'Practice portfolio' : 'Your portfolio'}</div><div style="font-size:24px;font-weight:700" class="num" data-pv="${me}">${usd(v)}</div></div><div style="text-align:right"><div class="num ${sgn(d)}">${pct(d)} today</div><div class="small muted">View portfolio ›</div></div></a>`;
-  return `${sec('Waiting on you', waiting)}${pfLine}${gettingStarted()}${showInstallTip()}${starterCard(prof, groups)}
+  return `${Store.site.realMoney ? realCopySection(true) : ''}${sec('Waiting on you', waiting)}${pfLine}${gettingStarted()}${showInstallTip()}${starterCard(prof, groups)}
   ${sec('Your groups', latest ? `<div class="list">${latest}</div>` : '', '<button class="linkbtn small" data-act="gofeedgroups">See all</button>')}
   ${waitingOnYou()}
   ${comingUp()}

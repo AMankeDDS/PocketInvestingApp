@@ -97,7 +97,15 @@ async function bars(sym, span){
   const cfg = { '1d': ['5Min', 1.5], '5d': ['30Min', 7], '1m': ['1Day', 32], '3m': ['1Day', 95], '1y': ['1Day', 370] }[span] || ['5Min', 1.5];
   const r = await alpaca.bars(sym, cfg[0], new Date(Date.now() - cfg[1] * 86400000).toISOString());
   const v = ((r && r.bars) || []).map(b => ({ t: Date.parse(b.t), c: b.c }));
-  barCache.set(key, { t: Date.now(), v }); return v;
+  barCache.set(key, { t: Date.now(), v }); Market.addHist(sym, v); return v;
+}
+/* A year of real daily closes for every tracked or held stock, so past valuations (statements, track records, group performance) use real prices. */
+async function loadHistory(){
+  if (!config.realPrices) return 0;
+  const set = new Set(await trackedSymbols());
+  (await deps.q(`SELECT DISTINCT jsonb_object_keys(data->'positions') AS s FROM doc_portfolios WHERE jsonb_typeof(data->'positions') = 'object'`).catch(() => ({ rows: [] }))).rows.forEach(r => set.add(r.s));
+  let n = 0; for (const sym of set){ if (!Market.MAP[sym]) continue; try { await bars(sym, '1y'); n++; } catch (e){} await new Promise(r => setTimeout(r, 300)); }
+  return n;
 }
 
 /* ---------- demo prices anchored to real closes (button in Demo controls, optional daily) ---------- */
@@ -323,6 +331,7 @@ function mount(app, d){
 async function start(){
   await applySavedAnchors().catch(e => console.error('price anchors', e.message));
   const { q } = deps;
+  if (config.realPrices){ const runHist = () => loadHistory().then(n => { if (n) console.log('Price history loaded for ' + n + ' stocks.'); }).catch(e => console.error('history', e.message)); setTimeout(runHist, 15000); setInterval(runHist, 6 * 3600000); }
   if (config.sec.mode !== 'off'){ const runInd = () => pullIndustries().then(n => { if (n) console.log('Industries saved for ' + n + ' stocks.'); }).catch(e => console.error('industries', e.message)); setTimeout(runInd, 90000); setInterval(runInd, 86400000); }
   if (config.sec.mode !== 'off'){ const runEarn = () => pullEarnings().then(n => { if (n) console.log('Earnings dates updated for ' + n + ' stocks.'); }).catch(e => console.error('earnings', e.message)); setTimeout(runEarn, 30000); setInterval(runEarn, 12 * 3600000); }
   if (config.sec.mode !== 'off'){ const runSec = () => pullFilings().catch(e => { status.sec = { at: Date.now(), error: { status: e.status || null, message: e.message } }; console.error('SEC filings failed:', e.message); }); setTimeout(runSec, 20000); setInterval(runSec, 30 * 60000); }
@@ -335,4 +344,6 @@ async function start(){
   if (config.realPrices){ await run(refreshQuotes, 'quotes'); setInterval(() => run(refreshQuotes, 'quotes'), 30000); }
   setInterval(() => run(autoAnchor, 'price anchors'), 60 * 60000); run(autoAnchor, 'price anchors');
 }
-module.exports = { sectorOf, pullIndustries, pullEarnings, migrate, mount, start, loadExtras, extras, bases: () => anchors.bases || {}, anchorPrices, pullFilings, filingHeadline, ensure, search, pullNews, listNews, newsAlerts, syncAssets, refreshQuotes, MIN_PRICE };
+/* Before creating sample people on a real-price site: real quotes and a year of daily closes for the sample stocks. */
+async function warmForSeed(){ if (!config.realPrices) return; await refreshQuotes().catch(() => {}); for (const t of Market.LIST.slice(0, 40)){ await bars(t.s, '1y').catch(() => {}); } }
+module.exports = { warmForSeed, sectorOf, pullIndustries, pullEarnings, migrate, mount, start, loadExtras, extras, bases: () => anchors.bases || {}, anchorPrices, pullFilings, filingHeadline, ensure, search, pullNews, listNews, newsAlerts, syncAssets, refreshQuotes, MIN_PRICE };

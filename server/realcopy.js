@@ -43,10 +43,10 @@ function mount(app, d){
     const fraction = o.side === 'buy' ? Math.min(1, lEquity > 0 ? qty * px / lEquity : 0) : Math.min(1, qty / Math.max(qty, lHeldAfter + qty));
     if (!(fraction > 0)) return;
     const followers = new Map();
-    for (const r of (await q(`SELECT data FROM doc_copies WHERE data->>'to' = $1`, [leaderPid])).rows) followers.set(r.data.from, { pct: r.data.copyPct ?? 1, gid: null });
+    for (const r of (await q(`SELECT data FROM doc_copies WHERE data->>'to' = $1`, [leaderPid])).rows) { if (!r.data.copyPaused) followers.set(r.data.from, { pct: r.data.copyPct ?? 1, gid: null }); }
     const groups = (await q(`SELECT id, data FROM doc_groups WHERE data->>'leadPid' = $1`, [leaderPid])).rows;
     for (const g of groups) for (const m of (await q(`SELECT data FROM doc_memberships WHERE data->>'gid' = $1`, [g.id])).rows.map(r => r.data))
-      if (m.pid !== leaderPid && m.role !== 'observer' && !followers.has(m.pid)) followers.set(m.pid, { pct: m.copyPct ?? 1, gid: g.id, mins: ((g.data.rules || {}).approvalMins) || 30 });
+      if (m.pid !== leaderPid && m.role !== 'observer' && !m.copyPaused && !followers.has(m.pid)) followers.set(m.pid, { pct: m.copyPct ?? 1, gid: g.id, mins: Number((g.data.rules || {}).approvalMinutes) || 30 });
     const lname = await name(o.user_id);
     for (const [pid, f] of followers){
       const uid = pid.replace(/^u_/, ''), fa = await acct(uid), id = newId();
@@ -108,6 +108,28 @@ function mount(app, d){
         slip: r.fill_price && r.leader_price ? Number(r.fill_price) / Number(r.leader_price) - 1 : null }); }
     ok(res, { trades: [...by.values()] });
   }));
+  /* Real-money copy stop-loss: same settings as practice; asks to sell or pauses copying. */
+  async function realStopCheck(){
+    const rels = (await q(`SELECT data FROM doc_copies WHERE (data->>'stopPct') IS NOT NULL`)).rows.map(r => ({ coll: 'copies', id: r.data.from + '__' + r.data.to, follower: r.data.from, leaderUser: String(r.data.to).replace(/^u_/, ''), gid: null, d: r.data }))
+      .concat((await q(`SELECT data FROM doc_memberships WHERE (data->>'stopPct') IS NOT NULL`)).rows.map(r => ({ coll: 'memberships', id: r.data.gid + '__' + r.data.pid, follower: r.data.pid, leaderUser: null, gid: r.data.gid, d: r.data })));
+    for (const r of rels){
+      if (r.d.copyPaused || !r.d.stopPct) continue; const uid = r.follower.replace(/^u_/, ''), fa = await acct(uid); if (!fa || fa.status !== 'ACTIVE') continue;
+      const rows = (await q(`SELECT * FROM real_copy_requests WHERE follower_user = $1 AND status = 'filled' AND leader_order <> 'stop' AND ${r.gid ? 'gid = $2' : 'gid IS NULL AND leader_user = $2'}`, [uid, r.gid || r.leaderUser])).rows;
+      const by = {}; for (const x of rows){ const b = by[x.sym] = by[x.sym] || { sh: 0, cost: 0, bought: 0 }; const sh = Number(x.filled_qty || 0); if (x.side === 'buy'){ b.sh += sh; b.bought += sh; b.cost += sh * Number(x.fill_price || 0); } else b.sh -= sh; }
+      let pos = []; try { pos = (await alpaca.positions(fa.alpaca_id)) || []; } catch (e){ continue; }
+      for (const [sym, b] of Object.entries(by)){
+        const held = Number((pos.find(p => p.symbol === sym) || {}).qty || 0), copied = Math.min(held, b.sh); if (!(copied > 1e-6) || !(b.bought > 0)) continue;
+        const avg = b.cost / b.bought, px = Market.price(sym), drop = 1 - px / avg; if (!(drop >= r.d.stopPct / 100)) continue;
+        if ((await q(`SELECT 1 FROM real_copy_requests WHERE follower_user = $1 AND sym = $2 AND leader_order = 'stop' AND (status = 'pending' OR created_at > now() - interval '1 day')`, [uid, sym])).rows.length) continue;
+        if (r.d.stopAction === 'stop'){ const doc = r.d; doc.copyPaused = true; await q(`UPDATE doc_${r.coll} SET data = $2 WHERE id = $1`, [r.id, JSON.stringify(doc)]).catch(() => {});
+          notify(uid, { title: 'Copying paused', body: `${sym} fell ${Math.round(drop * 100)}% below what you paid, past your ${r.d.stopPct}% limit.`, url: '/#/portfolio', tag: 'rstop-' + r.id }); break; }
+        await q(`INSERT INTO real_copy_requests (id, leader_user, leader_order, follower_user, gid, sym, side, leader_price, leader_qty, suggested_qty, fraction, status, reason, expires_at) VALUES ($1,$2,'stop',$3,$4,$5,'sell',$6,0,$7,1,'pending',$8, now() + interval '30 minutes')`,
+          [newId(), r.leaderUser || uid, uid, r.gid, sym, px, r6(copied), `Stop-loss: down ${Math.round(drop * 100)}% from what you paid (limit ${r.d.stopPct}%)`]);
+        notify(uid, { title: `${sym} is down ${Math.round(drop * 100)}% from your copy`, body: 'Real money: past your limit. Approve to sell, or decline to keep it.', url: '/#/portfolio', tag: 'rstop-' + r.id + sym });
+      }
+    }
+  }
+  setInterval(() => realStopCheck().catch(e => console.error('real stop-loss', e.message)), 120000);
   /* Expire requests nobody answered. */
   setInterval(() => q(`UPDATE real_copy_requests SET status = 'expired' WHERE status = 'pending' AND expires_at < now()`).catch(() => {}), 60000);
 }

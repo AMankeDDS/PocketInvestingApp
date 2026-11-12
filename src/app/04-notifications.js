@@ -62,6 +62,7 @@ function vNotifySettings(){
     ${tog('n-ap', n.approvals !== false, 'Approval requests', 'Group trades, investors you copy, Risk Manager reviews and trade suggestions')}
     ${tog('n-vo', n.votes !== false, 'New votes in my groups', '')}
     ${tog('n-so', n.social !== false, 'Followers, copiers and join requests', '')}
+    ${tog('n-wr', n.weeklyRecap !== false, 'Weekly group recap', 'Monday mornings: trades, votes and new members in each of your groups')}
     ${Store.site.news ? tog('n-nw', n.news === true, 'News about stocks I own or watch', 'Up to 3 a day, never during quiet hours') : ''}</div></section>
   <section class="block"><header><h2>Quiet hours</h2></header><div class="list">
     ${tog('n-qon', !!q.on, 'Pause alerts overnight', '')}

@@ -80,14 +80,14 @@ function vStatements(){
 
 function rTradeSheet(sym, side){
   const R = ui.real; if (!R || !R.balances) return;
-  const st = { sym: sym || 'AAPL', side: side || 'buy', by: side === 'sell' ? 'shares' : 'dollars', amt: '', step: 'edit' };
+  const st = { sym: sym || 'AAPL', side: side || 'buy', by: side === 'sell' ? 'shares' : 'dollars', amt: '', step: 'edit', type: 'market', lp: '', tif: 'day' };
   const held = () => ((R.positions || []).find(p => p.sym === st.sym) || {}).qty || 0;
   const px = () => (ui.rquotes && ui.rquotes[st.sym]) || Market.price(st.sym);
   openModal('<div id="rts"></div>', sh => {
     const root = sh.querySelector('#rts'), q = id => root.querySelector('#' + id);
     const refreshQuote = () => Store.real.quotes([st.sym]).then(r => { ui.rquotes = Object.assign(ui.rquotes || {}, r.quotes); if (st.step === 'edit') upd(); }).catch(() => {});
     function upd(){
-      const a = parseFloat(st.amt) || 0, p = px(), shares = st.by === 'dollars' ? a / p : a, dollars = st.by === 'dollars' ? a : a * p;
+      const lim = st.type === 'limit' ? parseFloat(st.lp) || 0 : 0, a = parseFloat(st.amt) || 0, p = lim > 0 ? lim : px(), shares = st.by === 'dollars' ? a / p : a, dollars = st.by === 'dollars' ? a : a * p;
       q('r-est').textContent = st.by === 'dollars' ? '≈ ' + shs(Math.floor(shares * 1000) / 1000) + ' shares at ' + usd(p) : '≈ ' + usd(dollars);
       let ok = a > 0, after = '';
       const bp = R.balances.buyingPower || 0, pendIn = (R.transfers || []).filter(t => t.direction === 'INCOMING' && ['QUEUED', 'SENT_TO_CLEARING', 'APPROVAL_PENDING', 'PENDING', 'SUBMITTED'].includes(t.status)).reduce((s, t) => s + Number(t.amount || 0), 0);
@@ -96,6 +96,9 @@ function rTradeSheet(sym, side){
         if (left < -0.01){ ok = false; why = why || (bp < 0.01 ? (pendIn > 0 ? `Your ${usd(pendIn)} deposit is still on its way, so you don't have buying power yet. You can trade as soon as it arrives, usually within 1 to 3 business days.` : "You don't have any buying power yet. Add money to your account to start trading.")
           : `That's more than your ${usd(bp)} of buying power. Lower the amount, or tap Max to use all of it.` + (pendIn > 0 ? ` Your ${usd(pendIn)} deposit is still on its way and will add to it.` : '')); } if (st.by === 'dollars' && a > 0 && a < 1){ ok = false; after = 'The minimum order is $1.'; } }
       else { const h = held(); if (!h){ ok = false; why = `You don't own any ${st.sym} in your real account, so there's nothing to sell. Switch to Buy, or pick a stock you own.`; } else if (shares > h + 1e-6){ ok = false; why = why || `You own ${shs(h)} shares of ${st.sym}. Lower the amount, or tap Max to sell all of them.`; } else after = "You'll keep " + shs(Math.max(0, h - shares)) + ' shares.'; }
+      if (st.type === 'limit' && st.by === 'dollars'){ ok = false; why = why || 'Limit orders are placed in shares. Switch to Shares to continue.'; }
+      if (st.type === 'limit' && !(lim > 0)){ ok = false; why = why || 'Enter a limit price to continue.'; }
+      if (st.type === 'limit' && st.tif === 'gtc' && a > 0 && Math.abs(a - Math.round(a)) > 1e-9){ ok = false; why = why || 'Good till canceled orders need whole shares. Enter a whole number, or choose Day for fractional shares.'; }
       whyNot(q('r-after'), q('r-rev'), ok && !why ? '' : (why || after), after);
     }
     function draw(){
@@ -104,6 +107,8 @@ function rTradeSheet(sym, side){
         <div class="field"><label for="r-sym">Stock</label><select class="input" id="r-sym">${Market.LIST.map(t => `<option value="${t.s}" ${t.s === st.sym ? 'selected' : ''}>${t.s} — ${esc(t.n)}</option>`).join('')}</select></div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px"><div class="seg" id="r-side"><button data-k="buy" class="${st.side === 'buy' ? 'on' : ''}">Buy</button><button data-k="sell" class="${st.side === 'sell' ? 'on' : ''}">Sell</button></div><div class="seg" id="r-by"><button data-k="dollars" class="${st.by === 'dollars' ? 'on' : ''}">Dollars</button><button data-k="shares" class="${st.by === 'shares' ? 'on' : ''}">Shares</button></div></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px" id="r-chips">${(st.side === 'buy' ? [['100','$100'],['500','$500'],['1000','$1,000'],['max','Max']] : [['0.25','25%'],['0.5','50%'],['0.75','75%'],['1','All']]).map(([k, l]) => `<button class="btn sm ghost" data-k="${k}">${l}</button>`).join('')}</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px"><div class="seg" id="r-type"><button data-k="market" class="${st.type === 'market' ? 'on' : ''}">Market</button><button data-k="limit" class="${st.type === 'limit' ? 'on' : ''}">Limit</button></div>${st.type === 'limit' ? `<div class="seg" id="r-tif"><button data-k="day" class="${st.tif === 'day' ? 'on' : ''}">Day</button><button data-k="gtc" class="${st.tif === 'gtc' ? 'on' : ''}">Good till canceled</button></div>` : ''}</div>
+        ${st.type === 'limit' ? `<div class="field"><label for="r-lp">Limit price ($)</label><input class="input num" id="r-lp" type="number" min="0" step="0.01" inputmode="decimal" value="${esc(st.lp)}"><div class="hint">${st.side === 'buy' ? 'Buys only at this price or lower.' : 'Sells only at this price or higher.'} ${st.tif === 'gtc' ? 'Stays open until it fills or you cancel it.' : 'Cancels at the end of the day if it hasn\'t filled.'}</div></div>` : ''}
         <div class="field"><label for="r-amt">${st.by === 'dollars' ? 'Amount in dollars' : 'Number of shares'}</label><input class="input num" id="r-amt" type="number" min="0" step="any" inputmode="decimal" value="${esc(st.amt)}"></div>
         <div class="est"><span>Estimate</span><b class="num" id="r-est">—</b></div><div class="hint" id="r-after" style="margin:-6px 0 14px"></div>
         <button class="btn" id="r-rev" style="width:100%">Review order</button>`;
@@ -113,19 +118,22 @@ function rTradeSheet(sym, side){
       q('r-chips').onclick = e => { const b = e.target.closest('button'); if (!b) return; const k = b.dataset.k;
         if (st.side === 'buy'){ st.by = 'dollars'; st.amt = k === 'max' ? String(Math.floor(R.balances.buyingPower * 100) / 100) : k; } else { st.by = 'shares'; st.amt = String(Math.floor(held() * +k * 1e6) / 1e6); } draw(); };
       q('r-amt').oninput = () => { st.amt = q('r-amt').value; upd(); };
+      q('r-type').onclick = e => { const b = e.target.closest('button'); if (!b) return; st.type = b.dataset.k; if (st.type === 'limit'){ st.by = 'shares'; if (!st.lp) st.lp = px().toFixed(2); } draw(); };
+      if (q('r-tif')) q('r-tif').onclick = e => { const b = e.target.closest('button'); if (!b) return; st.tif = b.dataset.k; draw(); };
+      if (q('r-lp')) q('r-lp').oninput = () => { st.lp = q('r-lp').value; upd(); };
       q('r-rev').onclick = review; upd();
     }
     function review(){
       const a = parseFloat(st.amt) || 0, p = px();
       st.step = 'review';
       root.innerHTML = `<header><h2>Review order</h2><button class="x" data-close aria-label="Close">×</button></header>
-        <div class="list">${[['Account', 'Real money' + (R.alpacaEnv === 'sandbox' ? ' (test)' : '')], ['Order', (st.side === 'buy' ? 'Buy ' : 'Sell ') + st.sym + ' at market'], [st.by === 'dollars' ? 'Amount' : 'Shares', st.by === 'dollars' ? usd(a) : shs(a)], ['Latest price', usd(p)], ['Estimated ' + (st.by === 'dollars' ? 'shares' : (st.side === 'buy' ? 'cost' : 'proceeds')), st.by === 'dollars' ? shs(Math.floor(a / p * 1000) / 1000) : usd(a * p)]].map(([x, y]) => `<div class="row"><div class="grow muted">${x}</div><b class="num">${y}</b></div>`).join('')}</div>
+        <div class="list">${[['Account', 'Real money' + (R.alpacaEnv === 'sandbox' ? ' (test)' : '')], ['Order', (st.side === 'buy' ? 'Buy ' : 'Sell ') + st.sym + (st.type === 'limit' ? ` with a limit of ${usd(parseFloat(st.lp))} (${st.tif === 'gtc' ? 'good till canceled' : 'day'})` : ' at market')], [st.by === 'dollars' ? 'Amount' : 'Shares', st.by === 'dollars' ? usd(a) : shs(a)], ['Latest price', usd(p)], ['Estimated ' + (st.by === 'dollars' ? 'shares' : (st.side === 'buy' ? 'cost' : 'proceeds')), st.by === 'dollars' ? shs(Math.floor(a / p * 1000) / 1000) : usd(a * p)]].map(([x, y]) => `<div class="row"><div class="grow muted">${x}</div><b class="num">${y}</b></div>`).join('')}</div>
         <p class="hint" style="margin:14px 0">Market orders fill at the next available price, which can differ from the estimate. Orders placed while the market is closed fill after it opens. ${DISCLOSE}</p>
         <div style="display:flex;gap:10px"><button class="btn ghost" id="r-back">Back</button><button class="btn" id="r-place" style="flex:1">Place ${st.side} order</button></div>`;
       q('r-back').onclick = () => { st.step = 'edit'; draw(); };
       q('r-place').onclick = async () => {
         q('r-place').disabled = true;
-        try { const o = { sym: st.sym, side: st.side }; if (st.by === 'dollars') o.notional = a; else o.qty = a;
+        try { const o = { sym: st.sym, side: st.side }; if (st.by === 'dollars') o.notional = a; else o.qty = a; if (st.type === 'limit'){ o.type = 'limit'; o.limitPrice = parseFloat(st.lp); o.tif = st.tif; }
           await Store.real.order(o); closeModal(); toast(`Order sent: ${st.side === 'buy' ? 'buy' : 'sell'} ${st.by === 'dollars' ? usd(a) + ' of' : shs(a)} ${st.sym}. We'll tell you when it fills.`); loadReal();
         } catch(e){ q('r-place').disabled = false; errToast(e); }
       };
@@ -164,14 +172,14 @@ function rBankSheet(){
 }
 
 /* Real-money copy requests: nothing is placed until the member approves. */
-function realCopySection(){
+function realCopySection(pendingOnly){
   if (ui.realReq == null){ ui.realReq = 'loading'; Store.real.copyRequests().then(r => { ui.realReq = r.requests; render(); }, () => { ui.realReq = []; }); }
   const L = Array.isArray(ui.realReq) ? ui.realReq : [], pend = L.filter(r => r.status === 'pending'), recent = L.filter(r => r.status !== 'pending').slice(0, 5);
   const S = { placed: 'Order placed', filled: 'Filled', declined: 'Declined', expired: 'Expired', failed: "Couldn't place" };
-  if (!pend.length && !recent.length) return '';
+  if (pendingOnly && !pend.length) return ''; if (!pend.length && !recent.length) return '';
   return `${pend.length ? `<section class="block"><header><h2>Waiting for your approval</h2><span class="tag ember">Real money</span></header>${pend.map(r => `<article class="post" style="border-color:var(--ember)">
       <div class="meta"><div class="grow"><b>${esc(r.leader)} ${r.side === 'buy' ? 'bought' : 'sold'} ${esc(r.sym)}</b> <span class="small muted">at ${usd(r.leaderPrice)}${r.gid ? ' for ' + esc((Store.get('groups', r.gid) || {}).name || 'your group') : ''}</span></div><span class="tag ember">${timeLeft(r.expiresTs)}</span></div>
       <p style="margin:8px 0">Approve to ${r.side} <b>${shs(r.suggested)}</b> shares of ${esc(r.sym)} in your brokerage account (about ${usd(r.suggested * Market.price(r.sym))}), sized to your account. Nothing happens unless you approve.</p>
       <div class="acts"><button class="btn ember" data-act="rcopy" data-id="${r.id}" data-k="full">Approve</button><button class="btn ghost" data-act="rcopy" data-id="${r.id}" data-k="half">Half size</button><button class="btn ghost" data-act="rcopy" data-id="${r.id}" data-k="decline">Decline</button></div></article>`).join('')}</section>` : ''}
-    ${recent.length ? `<section class="block"><header><h2>Recent copies</h2></header><div class="list">${recent.map(r => `<div class="row"><div class="grow"><b>${r.side === 'buy' ? 'Buy' : 'Sell'} ${esc(r.sym)}</b> <span class="small muted">copying ${esc(r.leader)}</span>${r.reason ? `<div class="small muted">${esc(r.reason)}</div>` : ''}</div><span class="small">${S[r.status] || r.status}${r.fillPrice ? ' at ' + usd(r.fillPrice) : ''}</span></div>`).join('')}</div></section>` : ''}`;
+    ${recent.length && !pendingOnly ? `<section class="block"><header><h2>Recent copies</h2></header><div class="list">${recent.map(r => `<div class="row"><div class="grow"><b>${r.side === 'buy' ? 'Buy' : 'Sell'} ${esc(r.sym)}</b> <span class="small muted">copying ${esc(r.leader)}</span>${r.reason ? `<div class="small muted">${esc(r.reason)}</div>` : ''}</div><span class="small">${S[r.status] || r.status}${r.fillPrice ? ' at ' + usd(r.fillPrice) : ''}</span></div>`).join('')}</div></section>` : ''}`;
 }

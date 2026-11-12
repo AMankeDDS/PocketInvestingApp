@@ -488,6 +488,7 @@ const realDeps = { broadcastRaw: (...a) => broadcastRaw(...a), securityEvent: (.
   isPro: async pid => { const r = await q('SELECT data FROM doc_profiles WHERE id = $1', [pid]); const p = r.rows[0] && r.rows[0].data; return !!p && (p.kind === 'demo' || p.plan === 'pro'); } };
 real.mount(app, realDeps);
 realDeps.push = push; realDeps.pool = db.pool; require('./realcopy').mount(app, realDeps);
+require('./alerts').mount(app, { q, wrap, ok, bad, needUser, sendTo, push, db, getSetting: setting, setSetting, broadcast: (...a) => broadcast(...a), logic: require('./logic') });
 marketdata.mount(app, { q, wrap, ok, bad, needUser, needAdmin, getSetting: setting, setSetting, broadcastMsg: obj => broadcastRaw(obj), push, pool: db.pool });
 metrics.mount(app, { q, wrap, ok, bad, needAdmin, getSetting: setting, setSetting });
 stats.mount(app, { q, wrap, ok, bad, currentUser, isAdmin });
@@ -522,11 +523,12 @@ app.get('*', (req, res) => res.sendFile(path.join(pub, 'index.html')));
 /* ---------- boot ---------- */
 (async () => {
   await db.migrate();
-  await real.migrate(q); await require('./realcopy').migrate(q);
+  await real.migrate(q); await require('./realcopy').migrate(q); await require('./alerts').migrate(q);
   if (!config.demoTools) await q(`INSERT INTO settings (key, value) VALUES ('clock', '"live"') ON CONFLICT (key) DO UPDATE SET value = '"live"'`).catch(() => {}); /* without demo tools, the market follows real hours */
   await marketdata.migrate(q);
   await marketdata.loadExtras();
   await push.init(db.pool);
+  if (config.sampleData && config.realPrices && !(await q('SELECT 1 FROM doc_profiles LIMIT 1')).rows.length){ console.log('Loading real price history before creating sample data…'); await require('./marketdata').warmForSeed().catch(e => console.error('warm', e.message)); }
   if (config.sampleData && await seedIfEmpty(db.withTx)) console.log('Loaded sample data.');
   { const dividends = require('./dividends'); const payDiv = async () => { try { const r = await dividends.run(db.withTx); if (r.paid) console.log('Paid ' + r.paid + ' practice dividends.'); broadcast(r.changes); } catch (e){ console.error('dividends', e.message); } }; setTimeout(payDiv, 15000); setInterval(payDiv, 60 * 60000); }
   if (config.sampleData){ const fixed = await require('./seed').repairSampleTrades(db.withTx).catch(e => { console.error('sample trade repair', e.message); return 0; }); if (fixed) console.log('Repaired sample trade history for ' + fixed + ' sample investors.'); }

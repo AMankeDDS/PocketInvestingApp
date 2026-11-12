@@ -33,9 +33,13 @@ const Market = (() => {
   function setBases(map){ for (const [s, b] of Object.entries(map || {})) if (MAP[s] && b > 0) MAP[s].b = Math.round(b * 10000) / 10000; }
   function setQuotes(q){ const now = Date.now(); for (const [s, v] of Object.entries(q || {})) if (v && v.p > 0) QUOTES[s] = { p: v.p, prev: v.prev || null, t: v.t || now }; }
   const liveQuote = s => { const q = QUOTES[s]; return q && Date.now() - q.t < 15 * 60000 ? q : null; };
+  /* Real price history (bars from the market data feed), used for past prices when quotes are real. */
+  const HIST = {};
+  function addHist(sym, bars){ if (!bars || !bars.length) return; const m = new Map((HIST[sym] || []).map(b => [b.t, b.c])); for (const b of bars) if (b && b.t && b.c > 0) m.set(b.t, b.c); HIST[sym] = [...m.entries()].sort((a, b) => a[0] - b[0]).map(([t, c]) => ({ t, c })); }
+  function histAt(sym, ms){ const h = HIST[sym]; if (!h || !h.length || ms < h[0].t - 3 * 86400000) return null; let lo = 0, hi = h.length - 1, ans = null; while (lo <= hi){ const mid = (lo + hi) >> 1; if (h[mid].t <= ms){ ans = h[mid].c; lo = mid + 1; } else hi = mid - 1; } return ans != null ? ans : h[0].c; }
   function price(sym, ms = Date.now()){
     const q = liveQuote(sym);
-    if (q){ if (Math.abs(ms - Date.now()) < 180000) return q.p; const a = priceAt(sym, ms), b = priceAt(sym, Date.now()); return a && b ? Math.round(a * q.p / b * 100) / 100 : q.p; }
+    if (q){ if (Math.abs(ms - Date.now()) < 180000) return q.p; const h = histAt(sym, ms); if (h) return h; return q.prev && ms < Date.now() - 6 * 3600000 ? q.prev : q.p; }
     return priceAt(sym, ms);
   }
   const dayChange = (sym, now = Date.now()) => { const q = liveQuote(sym); if (q && q.prev) return q.p / q.prev - 1; const a = price(sym, now - 86400000), b = price(sym, now); return a ? b / a - 1 : 0; };
@@ -43,7 +47,7 @@ const Market = (() => {
     const out = []; for (let i = points - 1; i >= 0; i--) out.push(price(sym, now - spanMs * i / (points - 1))); return out;
   }
   const isReal = s => !!liveQuote(s);
-  return { LIST, MAP, ETFS_UI: ['SPY','QQQ','SCHD'], price, dayChange, series, hash, add, setBases, setQuotes, isReal };
+  return { addHist, LIST, MAP, ETFS_UI: ['SPY','QQQ','SCHD'], price, dayChange, series, hash, add, setBases, setQuotes, isReal };
 })();
 
 
@@ -107,7 +111,7 @@ const Store = (() => {
   }
   function connect(){
     try { ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws'); } catch(e){ return; }
-    ws.onmessage = e => { try { const m = JSON.parse(e.data); if (m.type === 'changes') applyChanges(m.changes); else if (m.type === 'real' && m.what === 'copyreq'){ ui.realReq = null; emit(); } else if (m.type === 'real' && m.what === 'paused'){ ui.real = null; emit(); } else if (m.type === 'explore'){ ui.exploreTs = 0; emit(); } else if (m.type === 'notice'){ loadMe().then(emit, () => {}); } else if (m.type === 'resync'){ loadState().then(emit, () => {}); } else if (m.type === 'real') realListeners.forEach(fn => { try { fn(m); } catch(x){} });
+    ws.onmessage = e => { try { const m = JSON.parse(e.data); if (m.type === 'changes') applyChanges(m.changes); else if (m.type === 'real' && m.what === 'copyreq'){ ui.realReq = null; emit(); } else if (m.type === 'real' && m.what === 'paused'){ ui.real = null; emit(); } else if (m.type === 'explore'){ ui.exploreTs = 0; emit(); } else if (m.type === 'alert'){ ui.alerts = null; toast(m.text, { ms: 8000 }); } else if (m.type === 'notice'){ loadMe().then(emit, () => {}); } else if (m.type === 'resync'){ loadState().then(emit, () => {}); } else if (m.type === 'real') realListeners.forEach(fn => { try { fn(m); } catch(x){} });
       else if (m.type === 'market'){ (m.extras || []).forEach(x => Market.add(x.s, x.n, x.b)); if (m.bases) Market.setBases(m.bases); if (m.quotes) Market.setQuotes(m.quotes); if (m.extras || m.bases) emit(); }
       else if (m.type === 'news'){ newsCache.clear(); emit(); } } catch(err){} };
     ws.onclose = () => setTimeout(async () => { try { await loadState(); emit(); } catch(e){} connect(); }, 2000 + Math.random() * 2000);
@@ -297,7 +301,7 @@ const Store = (() => {
     newInviteCode: gid => api('newInviteCode', { gid }), setInviteLink: (gid, on) => api('setInviteLink', { gid, on }), groupByCode: code => api('groupByCode', { code }),
     releaseReview: id => api('releaseReview', { id }), pauseReview: (id, reason) => api('pauseReview', { id, reason }), demoReview: (gid, op) => api('demoReview', { gid, op }),
     suggestTrade: o => api('suggestTrade', o), decideSuggestion: (id, approve) => api('decideSuggestion', { id, approve }),
-    setNotifPrefs: o => api('setNotifPrefs', o),
+    setNotifPrefs: o => api('setNotifPrefs', o), startOver: () => api('startOver'), setCopyStop: o => api('setCopyStop', o),
     searchStocks: q => http('GET', '/api/assets/search?q=' + encodeURIComponent(q)).then(r => r.results),
     ensureStock: async sym => { const r = await http('POST', '/api/assets/ensure', { sym }); Market.add(r.stock.s, r.stock.n, r.stock.b); return r.stock; },
     bars: (sym, span) => http('GET', `/api/bars?sym=${encodeURIComponent(sym)}&span=${span}`).then(r => r.bars),
@@ -421,7 +425,7 @@ const sampleTag = pid => isSample(pid) ? ' <span class="tag" style="font-size:10
 
 const newsNote = () => Store.site.realPrices ? '' : '<p class="hint" style="margin:8px 2px 0">Prices are simulated. News is real.</p>';
 
-const DISCLOSE = "Copying a trade doesn't guarantee the same price or result. Investing involves risk, including loss of principal. Simulated results don't reflect real trading.";
+const DISCLOSE = "Copying a trade doesn't guarantee the same price or result. Investing involves risk, including loss of principal. Practice results don't reflect real trading.";
 
 const fracWord = f => f >= 0.995 ? 'all' : Math.abs(f - 0.5) < 0.02 ? 'half' : Math.abs(f - 0.25) < 0.02 ? 'a quarter' : Math.abs(f - 0.75) < 0.02 ? 'three-quarters' : Math.round(f * 100) + '%';
 
