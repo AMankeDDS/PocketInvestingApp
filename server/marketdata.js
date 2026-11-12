@@ -17,6 +17,8 @@ const errInfo = e => ({ status: e.status == null ? null : e.status, message: Str
 async function migrate(q){
   await q(`CREATE TABLE IF NOT EXISTS assets (sym text PRIMARY KEY, name text NOT NULL, exchange text, fractionable boolean, in_use boolean NOT NULL DEFAULT false, ref_price numeric, ref_ts timestamptz, updated_at timestamptz NOT NULL DEFAULT now())`);
   await q(`CREATE INDEX IF NOT EXISTS assets_name ON assets (lower(name))`);
+  await q(`CREATE TABLE IF NOT EXISTS company_info (sym text PRIMARY KEY, sic int, industry text, sector text, updated_at timestamptz NOT NULL DEFAULT now())`);
+  await q(`CREATE TABLE IF NOT EXISTS market_events (id text PRIMARY KEY, date date NOT NULL, title text NOT NULL, syms text[] NOT NULL DEFAULT '{}', note text, created_by text, created_at timestamptz NOT NULL DEFAULT now())`);
   await q(`CREATE TABLE IF NOT EXISTS earnings (sym text PRIMARY KEY, next_date date NOT NULL, last_date date, updated_at timestamptz NOT NULL DEFAULT now())`);
   await q(`CREATE TABLE IF NOT EXISTS news (id text PRIMARY KEY, ts timestamptz NOT NULL, headline text NOT NULL, summary text, url text, source text, symbols text[] NOT NULL DEFAULT '{}', created_at timestamptz NOT NULL DEFAULT now())`);
   await q(`CREATE INDEX IF NOT EXISTS news_ts ON news (ts DESC)`);
@@ -157,6 +159,7 @@ async function pullEarnings(){
   const map = await loadCiks(), syms = (await trackedSymbols()).filter(s => !Market.ETFS.includes(s) && map[s]).slice(0, 60); let n = 0;
   for (const sym of syms){
     let j; try { j = await secJson(`${config.sec.dataUrl}/submissions/CIK${String(map[sym].cik).padStart(10, '0')}.json`); } catch (e){ continue; }
+    await saveIndustry(sym, j).catch(() => {});
     const R = (j && j.filings && j.filings.recent) || {}, dates = [];
     for (let i = 0; i < (R.form || []).length && i < 400; i++) if (R.form[i] === '8-K' && String((R.items || [])[i] || '').split(',').includes('2.02')) dates.push(R.filingDate[i]);
     if (!dates.length) continue;
@@ -166,6 +169,28 @@ async function pullEarnings(){
     await deps.q(`INSERT INTO earnings (sym, next_date, last_date, updated_at) VALUES ($1, $2, $3, now()) ON CONFLICT (sym) DO UPDATE SET next_date = EXCLUDED.next_date, last_date = EXCLUDED.last_date, updated_at = now()`, [sym, new Date(next).toISOString().slice(0, 10), last]);
     n++; await new Promise(r => setTimeout(r, 150));
   }
+  return n;
+}
+/* Sectors, from the industry code each company files with the SEC (an approximation of standard sectors). */
+function sectorOf(sic){
+  const R = [[100, 999, 'Consumer staples'], [1000, 1299, 'Materials'], [1300, 1399, 'Energy'], [1400, 1499, 'Materials'], [1500, 1799, 'Industrials'], [2000, 2199, 'Consumer staples'], [2200, 2599, 'Consumer'],
+    [2600, 2699, 'Materials'], [2700, 2799, 'Communication'], [2800, 2829, 'Materials'], [2830, 2836, 'Health care'], [2840, 2899, 'Consumer staples'], [2900, 2999, 'Energy'], [3000, 3399, 'Materials'],
+    [3400, 3569, 'Industrials'], [3570, 3579, 'Technology'], [3580, 3599, 'Industrials'], [3600, 3699, 'Technology'], [3700, 3716, 'Consumer'], [3717, 3799, 'Industrials'], [3800, 3839, 'Technology'],
+    [3840, 3851, 'Health care'], [3852, 3999, 'Consumer'], [4000, 4799, 'Industrials'], [4800, 4899, 'Communication'], [4900, 4999, 'Utilities'], [5000, 5199, 'Industrials'], [5400, 5499, 'Consumer staples'],
+    [5912, 5912, 'Consumer staples'], [5200, 5999, 'Consumer'], [6000, 6499, 'Financials'], [6500, 6599, 'Real estate'], [6798, 6798, 'Real estate'], [6700, 6799, 'Financials'], [7000, 7299, 'Consumer'],
+    [7370, 7379, 'Technology'], [7300, 7399, 'Industrials'], [7800, 7989, 'Communication'], [7990, 7999, 'Consumer'], [8000, 8099, 'Health care'], [8100, 8999, 'Industrials']];
+  const n = Number(sic); if (!n) return null; const hit = R.find(([a, b]) => n >= a && n <= b); return hit ? hit[2] : null;
+}
+async function saveIndustry(sym, j){
+  if (!j || !j.sic) return;
+  await deps.q(`INSERT INTO company_info (sym, sic, industry, sector, updated_at) VALUES ($1, $2, $3, $4, now()) ON CONFLICT (sym) DO UPDATE SET sic = EXCLUDED.sic, industry = EXCLUDED.industry, sector = EXCLUDED.sector, updated_at = now()`,
+    [sym, Number(j.sic), String(j.sicDescription || '').slice(0, 120), sectorOf(j.sic)]);
+}
+async function pullIndustries(){
+  if (config.sec.mode === 'off') return 0;
+  const map = await loadCiks(), have = new Set((await deps.q(`SELECT sym FROM company_info WHERE updated_at > now() - interval '30 days'`)).rows.map(r => r.sym));
+  const syms = (await trackedSymbols()).filter(s => !Market.ETFS.includes(s) && map[s] && !have.has(s)).slice(0, 250); let n = 0;
+  for (const sym of syms){ try { await saveIndustry(sym, await secJson(`${config.sec.dataUrl}/submissions/CIK${String(map[sym].cik).padStart(10, '0')}.json`)); n++; } catch (e){} await new Promise(r => setTimeout(r, 150)); }
   return n;
 }
 async function pullFilings(force){
@@ -298,6 +323,7 @@ function mount(app, d){
 async function start(){
   await applySavedAnchors().catch(e => console.error('price anchors', e.message));
   const { q } = deps;
+  if (config.sec.mode !== 'off'){ const runInd = () => pullIndustries().then(n => { if (n) console.log('Industries saved for ' + n + ' stocks.'); }).catch(e => console.error('industries', e.message)); setTimeout(runInd, 90000); setInterval(runInd, 86400000); }
   if (config.sec.mode !== 'off'){ const runEarn = () => pullEarnings().then(n => { if (n) console.log('Earnings dates updated for ' + n + ' stocks.'); }).catch(e => console.error('earnings', e.message)); setTimeout(runEarn, 30000); setInterval(runEarn, 12 * 3600000); }
   if (config.sec.mode !== 'off'){ const runSec = () => pullFilings().catch(e => { status.sec = { at: Date.now(), error: { status: e.status || null, message: e.message } }; console.error('SEC filings failed:', e.message); }); setTimeout(runSec, 20000); setInterval(runSec, 30 * 60000); }
   if (!config.marketData) return;
@@ -309,4 +335,4 @@ async function start(){
   if (config.realPrices){ await run(refreshQuotes, 'quotes'); setInterval(() => run(refreshQuotes, 'quotes'), 30000); }
   setInterval(() => run(autoAnchor, 'price anchors'), 60 * 60000); run(autoAnchor, 'price anchors');
 }
-module.exports = { pullEarnings, migrate, mount, start, loadExtras, extras, bases: () => anchors.bases || {}, anchorPrices, pullFilings, filingHeadline, ensure, search, pullNews, listNews, newsAlerts, syncAssets, refreshQuotes, MIN_PRICE };
+module.exports = { sectorOf, pullIndustries, pullEarnings, migrate, mount, start, loadExtras, extras, bases: () => anchors.bases || {}, anchorPrices, pullFilings, filingHeadline, ensure, search, pullNews, listNews, newsAlerts, syncAssets, refreshQuotes, MIN_PRICE };

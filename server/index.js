@@ -325,6 +325,40 @@ app.post('/api/act-as/stop', wrap(async (req, res) => {
   if (ok2) setCookie(req, res, COOKIE, back, 30 * 86400); else clearCookie(res);
   res.append('Set-Cookie', 'pi_return=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0'); ok(res, { back: !!ok2 });
 }));
+/* ---------- Explore: industries, earnings this week, market events, and related companies ---------- */
+app.get('/api/explore', wrap(async (req, res) => {
+  const u = await currentUser(req), pid = u ? 'u_' + u.id : null;
+  const industries = Object.fromEntries((await q('SELECT sym, industry, sector FROM company_info')).rows.map(r => [r.sym, { industry: r.industry, sector: r.sector }]));
+  const earnings = (await q(`SELECT sym, next_date FROM earnings WHERE next_date >= current_date AND next_date < current_date + 7 ORDER BY next_date`)).rows.map(r => ({ sym: r.sym, date: r.next_date }));
+  const events = (await q(`SELECT id, date, title, syms, note FROM market_events WHERE date >= current_date - 1 AND date < current_date + 45 ORDER BY date`)).rows;
+  /* Related to what you own: companies in the same industry, and what other members who hold the same stocks also hold.
+     Built only from aggregate counts (at least 3 members), never from any one person's holdings. */
+  let related = null;
+  if (pid){
+    const me = ((await q('SELECT data FROM doc_portfolios WHERE id = $1', [pid])).rows[0] || {}).data || {};
+    const gids = (await q(`SELECT data->>'gid' AS gid FROM doc_memberships WHERE data->>'pid' = $1`, [pid])).rows.map(r => r.gid);
+    const mine = Object.keys(me.positions || {}), groupSyms = new Set();
+    const leads = (await q(`SELECT data->>'leadPid' AS l FROM doc_groups WHERE id = ANY($1)`, [gids])).rows.map(r => r.l).filter(l => l && l !== pid);
+    for (const r of (await q(`SELECT data FROM doc_portfolios WHERE id = ANY($1)`, [leads.concat(gids.map(g => 'club_' + g))])).rows) Object.keys((r.data || {}).positions || {}).forEach(s => groupSyms.add(s));
+    const own = new Set(mine.concat([...groupSyms]));
+    const peers = {}; for (const s of own){ const ind = industries[s] && industries[s].industry; if (!ind) continue;
+      const same = Object.entries(industries).filter(([t, v]) => v.industry === ind && t !== s && !own.has(t)).map(([t]) => t).slice(0, 6); if (same.length) peers[s] = { industry: ind, syms: same }; }
+    const co = {}; if (own.size){
+      for (const r of (await q(`SELECT id, data FROM doc_portfolios WHERE id LIKE 'u\_%' AND id <> $1`, [pid])).rows){ const ps = Object.keys((r.data || {}).positions || {}); if (!ps.some(s => own.has(s))) continue;
+        for (const s of ps) if (!own.has(s)) co[s] = (co[s] || 0) + 1; } }
+    related = { own: [...own], fromGroups: [...groupSyms].filter(s => !mine.includes(s)), peers, alsoHeld: Object.entries(co).filter(([, n]) => n >= 3).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([sym, n]) => ({ sym, n })) };
+  }
+  ok(res, { industries, earnings, events, related });
+}));
+app.post('/api/admin/market-events', wrap(async (req, res) => {
+  const a = await needAdmin(req, res); if (!a) return;
+  if (req.body.remove){ await q('DELETE FROM market_events WHERE id = $1', [String(req.body.remove)]); return ok(res); }
+  const date = String(req.body.date || ''), title = clean(req.body.title).slice(0, 120);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !title) return bad(res, 'Add a date and a title.');
+  const syms = String(req.body.syms || '').toUpperCase().split(/[\s,]+/).filter(s => /^[A-Z.]{1,6}$/.test(s)).slice(0, 8);
+  await q('INSERT INTO market_events (id, date, title, syms, note, created_by) VALUES ($1, $2, $3, $4, $5, $6)', [db.newId(), date, title, syms, clean(req.body.note).slice(0, 300) || null, a.id]);
+  broadcastRaw({ type: 'explore' }); ok(res);
+}));
 app.get('/api/invite/:code', wrap(async (req, res) => {
   const code = String(req.params.code || '').toUpperCase().slice(0, 16);
   const r = (await q(`SELECT id, data FROM doc_groups WHERE upper(data->>'inviteCode') = $1`, [code])).rows[0];

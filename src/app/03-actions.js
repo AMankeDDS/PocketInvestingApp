@@ -93,6 +93,12 @@ async function act(el, ev){ /* eslint-disable-line */
     case 'actstop': return busy(async () => { await Store.http('POST', '/api/act-as/stop', {}); location.hash = '#/admin'; location.reload(); });
     case 'adm-actas': return busy(async () => { await Store.http('POST', '/api/admin/act-as', { userId: el.dataset.id }); location.hash = '#/portfolio'; location.reload(); });
     case 'adm-mktest': return busy(async () => { const r = await Store.http('POST', '/api/admin/test-accounts', { count: +$('#tt-n').value, deposit: +$('#tt-d').value }); ui.atest = null; toast(`Created ${r.made.length} test account${r.made.length === 1 ? '' : 's'}. Brokerage approval, bank and deposit finish in the background.`); render(); });
+    case 'navexplore': ui.exploreTab = 'market'; if (location.hash === '#/explore') return render(); location.hash = '#/explore'; return;
+    case 'extab': ui.exploreTab = el.dataset.k; if (location.hash !== '#/explore') location.hash = '#/explore'; return render();
+    case 'exmovers': ui.exMovers = el.dataset.k; return render();
+    case 'exsector': ui.exSector = el.dataset.k && ui.exSector !== el.dataset.k ? el.dataset.k : null; return render();
+    case 'adm-event': return busy(async () => { await Store.http('POST', '/api/admin/market-events', { date: $('#ev-d').value, title: $('#ev-t').value, syms: $('#ev-s').value, note: $('#ev-n').value }); ui.exploreTs = 0; toast('Event added to Explore.'); render(); });
+    case 'adm-evdel': return busy(async () => { await Store.http('POST', '/api/admin/market-events', { remove: el.dataset.id }); ui.exploreTs = 0; render(); });
     case 'adm-ro': { const on = el.dataset.k === '1'; if (on && !confirm('Turn on read-only mode for everyone?')) return; return busy(async () => { await Store.http('POST', '/api/admin/maintenance', { on, message: on ? (document.getElementById('adm-ro-m') || {}).value : '' }); await Store.refreshMe(); toast(on ? 'Read-only mode is on.' : 'Read-only mode is off.'); render(); }); }
     case 'onboff': try { localStorage.setItem('pi_onb_off', Store.myPid); } catch(e){} return render();
     case 'adm-reqinvite': return busy(async () => { const r = ui.areq.find(x => String(x.id) === String(id)); const inv = await Store.http('POST', '/api/admin/invite', { label: ('Website: ' + (r.name || r.email)).slice(0, 60), maxUses: 1 });

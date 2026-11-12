@@ -107,7 +107,7 @@ const Store = (() => {
   }
   function connect(){
     try { ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws'); } catch(e){ return; }
-    ws.onmessage = e => { try { const m = JSON.parse(e.data); if (m.type === 'changes') applyChanges(m.changes); else if (m.type === 'real' && m.what === 'copyreq'){ ui.realReq = null; emit(); } else if (m.type === 'real' && m.what === 'paused'){ ui.real = null; emit(); } else if (m.type === 'notice'){ loadMe().then(emit, () => {}); } else if (m.type === 'resync'){ loadState().then(emit, () => {}); } else if (m.type === 'real') realListeners.forEach(fn => { try { fn(m); } catch(x){} });
+    ws.onmessage = e => { try { const m = JSON.parse(e.data); if (m.type === 'changes') applyChanges(m.changes); else if (m.type === 'real' && m.what === 'copyreq'){ ui.realReq = null; emit(); } else if (m.type === 'real' && m.what === 'paused'){ ui.real = null; emit(); } else if (m.type === 'explore'){ ui.exploreTs = 0; emit(); } else if (m.type === 'notice'){ loadMe().then(emit, () => {}); } else if (m.type === 'resync'){ loadState().then(emit, () => {}); } else if (m.type === 'real') realListeners.forEach(fn => { try { fn(m); } catch(x){} });
       else if (m.type === 'market'){ (m.extras || []).forEach(x => Market.add(x.s, x.n, x.b)); if (m.bases) Market.setBases(m.bases); if (m.quotes) Market.setQuotes(m.quotes); if (m.extras || m.bases) emit(); }
       else if (m.type === 'news'){ newsCache.clear(); emit(); } } catch(err){} };
     ws.onclose = () => setTimeout(async () => { try { await loadState(); emit(); } catch(e){} connect(); }, 2000 + Math.random() * 2000);
@@ -376,6 +376,7 @@ const nameLink = pid => `<a href="#/u/${esc(pid)}" style="color:inherit;font-wei
 const linkify = t => esc(t).replace(/\$([A-Z]{1,5})\b/g, (m, s) => Market.MAP[s] ? `<a href="#/stock/${s}">$${s}</a>` : m);
 
 const ICON = {
+  explore: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/></svg>',
   portfolio: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12A9 9 0 1 1 12 3v9z"/><path d="M21 12a9 9 0 0 0-9-9v9z" fill="currentColor" opacity=".18"/></svg>',
   home:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z"/></svg>',
   feed:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5h14v10H9l-4 4z"/></svg>',
