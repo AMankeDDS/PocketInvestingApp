@@ -255,9 +255,39 @@ app.post('/api/change-password', authLimit, wrap(async (req, res) => {
 }));
 app.post('/api/delete-account', authLimit, wrap(async (req, res) => {
   const u = await needUser(req, res); if (!u) return;
-  const row = (await q('SELECT pass_hash FROM users WHERE id = $1', [u.id])).rows[0];
+  if (u.acting_admin) return bad(res, "You can't delete an account while acting as a test account.");
+  const row = (await q('SELECT pass_hash, totp_enabled, totp_secret, username FROM users WHERE id = $1', [u.id])).rows[0];
   if (!(await bcrypt.compare(String(req.body.password || ''), row.pass_hash))) return bad(res, "That password isn't right.");
-  const { changes } = await db.withTx(async tx => { await deleteAccountDocs(tx, 'u_' + u.id); await tx.query('DELETE FROM users WHERE id = $1', [u.id]); await tx.query('DELETE FROM events WHERE user_id = $1', [u.id]); });
+  if (row.totp_enabled){ const secret = require('./totp').open(row.totp_secret, config.appSecret);
+    if (!req.body.code) return res.status(401).json({ error: 'Enter the 6-digit code from your authenticator app to confirm.', needCode: true });
+    if (!secret || !require('./totp').verify(secret, req.body.code)) return res.status(401).json({ error: "That code didn't match. Try the newest code.", needCode: true }); }
+  if (String(req.body.confirm || '') !== 'DELETE') return bad(res, 'Type DELETE to confirm.');
+  /* Group owners hand over first. */
+  const owned = (await q(`SELECT g.id, g.data->>'name' AS name FROM doc_groups g WHERE g.data->>'ownerPid' = $1 AND EXISTS (SELECT 1 FROM doc_memberships m WHERE m.data->>'gid' = g.id AND m.data->>'pid' <> $1)`, ['u_' + u.id])).rows;
+  if (owned.length) return bad(res, `You own ${owned.map(g => g.name).join(', ')}. Transfer ownership to another member first, then delete your account.`);
+  /* Real money: the brokerage account must be empty, then it is closed with the broker and the records are kept. */
+  const ba = (await q('SELECT * FROM broker_accounts WHERE user_id = $1', [u.id]).catch(() => ({ rows: [] }))).rows[0];
+  if (ba && ba.alpaca_id){
+    const alp = require('./alpaca');
+    try { const tr = (await alp.listTransfers(ba.alpaca_id)) || [], t = await alp.tradingAccount(ba.alpaca_id), pos = (await alp.positions(ba.alpaca_id)) || [];
+      if (pos.length || Number(t.equity || 0) > 0.009 || Number(t.cash || 0) > 0.009) return bad(res, 'Sell your holdings and withdraw your full balance first. Then you can close your account.');
+      /* money still on its way in or out also blocks closing */
+      const pending = (Array.isArray(tr) ? tr : []).some(x => !['COMPLETE', 'RETURNED', 'CANCELED', 'REJECTED'].includes(String(x.status || '').toUpperCase()));
+      const localPending = (await q(`SELECT 1 FROM real_transfers WHERE user_id = $1 AND upper(status) NOT IN ('COMPLETE','RETURNED','CANCELED','REJECTED') LIMIT 1`, [u.id]).catch(() => ({ rows: [] }))).rows.length;
+      if (pending || localPending) return bad(res, 'A deposit or withdrawal is still on its way. Once it finishes and your balance is $0, you can close your account.'); }
+    catch (e){ return bad(res, "We couldn't check your brokerage account right now. Try again in a few minutes."); }
+    try { await alp.closeAccount(ba.alpaca_id); } catch (e){ return bad(res, "Your brokerage account couldn't be closed right now. Try again later, or contact us."); }
+    await q(`UPDATE broker_accounts SET status = 'CLOSED' WHERE user_id = $1`, [u.id]).catch(() => {});
+  }
+  await q('INSERT INTO admin_log (user_id, action, detail, status) VALUES ($1, $2, $3, $4)', [u.id, 'account-deleted', JSON.stringify({ username: row.username, brokerage: !!ba }), 200]).catch(() => {});
+  const { changes } = await db.withTx(async tx => {
+    await deleteAccountDocs(tx, 'u_' + u.id); await tx.query('DELETE FROM events WHERE user_id = $1', [u.id]);
+    await tx.query('DELETE FROM photos WHERE key = $1', ['u_' + u.id]).catch(() => {});
+    if (ba){ /* keep the user row (and with it the brokerage records), but remove anything personal and any way to sign in */
+      await tx.query(`UPDATE users SET username = $2, display_name = 'Deleted member', pass_hash = $3, totp_enabled = false, totp_secret = NULL WHERE id = $1`, [u.id, 'deleted_' + u.id, await bcrypt.hash(require('crypto').randomBytes(24).toString('hex'), 10)]);
+      await tx.query('DELETE FROM sessions WHERE user_id = $1', [u.id]).catch(() => {});
+    } else await tx.query('DELETE FROM users WHERE id = $1', [u.id]);
+  });
   broadcast(changes); clearCookie(res); ok(res);
 }));
 
@@ -488,6 +518,7 @@ const realDeps = { broadcastRaw: (...a) => broadcastRaw(...a), securityEvent: (.
   isPro: async pid => { const r = await q('SELECT data FROM doc_profiles WHERE id = $1', [pid]); const p = r.rows[0] && r.rows[0].data; return !!p && (p.kind === 'demo' || p.plan === 'pro'); } };
 real.mount(app, realDeps);
 realDeps.push = push; realDeps.pool = db.pool; require('./realcopy').mount(app, realDeps);
+require('./photos').mount(app, { q, wrap, ok, bad, needUser, needAdmin, db, broadcast: (...x) => broadcast(...x) });
 require('./alerts').mount(app, { q, wrap, ok, bad, needUser, sendTo, push, db, getSetting: setting, setSetting, broadcast: (...a) => broadcast(...a), logic: require('./logic') });
 marketdata.mount(app, { q, wrap, ok, bad, needUser, needAdmin, getSetting: setting, setSetting, broadcastMsg: obj => broadcastRaw(obj), push, pool: db.pool });
 metrics.mount(app, { q, wrap, ok, bad, needAdmin, getSetting: setting, setSetting });
@@ -523,7 +554,7 @@ app.get('*', (req, res) => res.sendFile(path.join(pub, 'index.html')));
 /* ---------- boot ---------- */
 (async () => {
   await db.migrate();
-  await real.migrate(q); await require('./realcopy').migrate(q); await require('./alerts').migrate(q);
+  await real.migrate(q); await require('./realcopy').migrate(q); await require('./alerts').migrate(q); await require('./photos').migrate(q);
   if (!config.demoTools) await q(`INSERT INTO settings (key, value) VALUES ('clock', '"live"') ON CONFLICT (key) DO UPDATE SET value = '"live"'`).catch(() => {}); /* without demo tools, the market follows real hours */
   await marketdata.migrate(q);
   await marketdata.loadExtras();

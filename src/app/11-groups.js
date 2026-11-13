@@ -57,7 +57,7 @@ function groupRow(g){
   const ms = Store.membersOf(g.id), my = Store.membership(g.id);
   const lead = Store.get('portfolios', g.leadPid); const ret = lead ? Store.portfolioValue(lead) / (lead.startValue || Store.START_CASH) - 1 : 0;
   const st = stackOf(ms.filter(m => m.role !== 'observer').map(m => m.pid)), gs = groupStats(g.id);
-  return `<a class="row" href="#/group/${g.id}"><div class="avatar" style="background:${AV[Market.hash(g.id) % AV.length]};border-radius:12px">${esc(g.name.slice(0, 1))}</div>
+  return `<a class="row" href="#/group/${g.id}">${gAvatar(g)}
     <div class="grow"><div class="ellip" style="font-weight:600">${esc(g.name)}${g.featured ? ' <span class="tag ember" style="font-size:10px;padding:1px 6px;vertical-align:2px">Featured</span>' : ''}</div>
       <div class="small muted ellip" style="display:flex;gap:8px;align-items:center;margin-top:3px">${st.html}<span class="ellip">${esc(st.label)}${gs.week ? ', ' + gs.week + ' trade' + (gs.week === 1 ? '' : 's') + ' this week' : ''}</span></div></div>
     <div class="r"><div class="small num ${g.pooled ? '' : sgn(ret)}">${g.pooled ? 'Pooled' : pct(ret)}</div><div class="small muted">${my ? esc(Store.ROLE_LABEL[my.role]) : (g.membership === 'invite' ? 'Invite only' : 'Open')}</div></div></a>`;
@@ -71,8 +71,10 @@ function vGroups(){
   ${(() => { const rp = (Store.get('profiles', Store.myPid) || {}).riskProfile; const sug = rp ? others.filter(g => g.riskLevel === rp || (rp === 'dividends' && divHeavy(g.leadPid))) : []; return sug.length ? `<section class="block"><header><h2>Suggested for your style</h2><span class="tag">${esc(RISK[rp][0])}</span></header><div class="list">${sug.map(groupRow).join('')}</div></section>` : ''; })()}
   ${(() => { const fe = others.filter(g => g.featured); return fe.length ? `<section class="block"><header><h2>Featured groups</h2><span class="muted small">Chosen by the Pocket team</span></header><div class="list">${fe.map(groupRow).join('')}</div></section>` : ''; })()}
   <section class="block"><header><h2>Discover</h2></header>
-    <div class="chips">${[['all','All']].concat(CATS).map(([k, l]) => `<button class="${(ui.groupCat || 'all') === k ? 'on' : ''}" data-act="gcat" data-k="${k}">${l}</button>`).join('')}</div>
-    <div class="list">${others.filter(g => (ui.groupCat || 'all') === 'all' || g.category === ui.groupCat).map(groupRow).join('') || '<div class="empty">No groups in this category yet. Start one.</div>'}</div></section>`;
+    ${(() => { const sel = CATS.find(c => c[0] === ui.groupCat) ? CATS.find(c => c[0] === ui.groupCat)[1] : (ui.groupCat || 'all'), opts = ['all'].concat(STD_TAGS, popularTags().filter(t => !STD_TAGS.includes(t)));
+      const shown = others.filter(g => sel === 'all' || groupTags(g).some(t => t.toLowerCase() === String(sel).toLowerCase()));
+      return `<div class="chips one">${opts.map(k => `<button class="${sel === k ? 'on' : ''}" data-act="gcat" data-k="${esc(k)}">${k === 'all' ? 'All' : esc(k)}</button>`).join('')}</div>
+    <div class="list">${shown.map(groupRow).join('') || `<div class="empty">No ${sel === 'all' ? '' : esc(sel) + ' '}groups yet.${Store.canWrite ? ` <button class="btn sm" data-act="newgroup" data-k="${esc(sel === 'all' ? '' : sel)}" style="margin-left:6px">Create ${sel === 'all' ? 'a' : 'a ' + esc(sel)} group</button>` : ''}</div>`}</div>`; })()}</section>`;
 }
 
 function vGroup(gid, tab){
@@ -83,7 +85,7 @@ function vGroup(gid, tab){
   const head = `<div class="pagehead"><div><a href="#/groups" class="small">← Groups</a><h1 style="margin-top:6px">${esc(g.name)}</h1>
       <p class="muted" style="max-width:62ch">${esc(g.description || '')}</p>
       ${g.goals ? `<p class="small" style="max-width:62ch;margin:6px 0 0"><b>Our goal:</b> ${esc(g.goals)}</p>` : ''}
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">${g.category ? `<span class="tag">${esc((CATS.find(c => c[0] === g.category) || [0, ''])[1])}</span>` : ''}${g.strategy ? `<span class="tag">${esc(g.strategy)}</span>` : ''}<span class="tag">Lead Trader: ${esc(Store.displayName(g.leadPid))}</span>${role ? `<span class="tag blue">You: ${esc(Store.ROLE_LABEL[role])}</span>` : ''}${g.pooled ? '<span class="tag ember">Pooled practice club</span>' : ''}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">${groupTags(g).map(t => `<button class="tag" data-act="gtag" data-k="${esc(t)}" style="cursor:pointer">${esc(t)}</button>`).join('')}${g.strategy ? `<span class="tag">${esc(g.strategy)}</span>` : ''}<span class="tag">Lead Trader: ${esc(Store.displayName(g.leadPid))}</span>${role ? `<span class="tag blue">You: ${esc(Store.ROLE_LABEL[role])}</span>` : ''}${g.pooled ? '<span class="tag ember">Pooled practice club</span>' : ''}</div>
       ${(() => { const st = stackOf(ms.filter(m => m.role !== 'observer').map(m => m.pid), 5), gs = groupStats(gid); return `<div style="display:flex;gap:18px;flex-wrap:wrap;align-items:center;margin-top:14px" class="small">${st.html}<span><b class="num">${ms.length}</b> ${ms.length === 1 ? 'member' : 'members'}</span><span><b class="num">${gs.trades}</b> trades this month</span>${gs.approval != null ? `<span><b class="num">${Math.round(gs.approval * 100)}%</b> of trade requests copied</span>` : ''}</div>`; })()}</div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">${joinButton(g, role, hasMe)}
       ${role === 'observer' && !Store.isPro() && Store.canWrite ? `<button class="btn" data-act="join" data-id="${gid}">Become a full member</button>` : ''}
@@ -259,7 +261,7 @@ function vInvite(code, by){
     : !Store.canWrite ? '' : R.joinMode === 'request' ? `<button class="btn" data-act="reqjoin" data-id="${g.id}" style="width:100%">Request to join</button>` : `<button class="btn" data-act="join" data-id="${g.id}" style="width:100%">Join ${esc(g.name)}</button>`;
   return `<div style="max-width:560px;margin:0 auto">
     <div class="panel" style="padding:24px"><p class="small muted" style="margin:0 0 6px">You're invited to join</p>
-      <div style="display:flex;gap:12px;align-items:center"><div class="avatar" style="background:${AV[Market.hash(g.id) % AV.length]};border-radius:12px">${esc(g.name.slice(0, 1))}</div><h1 style="margin:0">${esc(g.name)}</h1></div>
+      <div style="display:flex;gap:12px;align-items:center">${gAvatar(g)}<h1 style="margin:0">${esc(g.name)}</h1></div>
       ${g.strategy ? `<p style="margin:12px 0 0"><b>${esc(g.strategy)}</b></p>` : ''}${g.description ? `<p class="muted" style="margin:6px 0 0">${esc(g.description)}</p>` : ''}
       <div class="kv" style="margin-top:16px"><div><span>Members</span><b>${n}</b></div><div><span>Started</span><b>${days} day${days === 1 ? '' : 's'} ago</b></div>${ret != null ? `<div><span>Lead Trader's portfolio since it started</span><b class="${sgn(ret)}">${pct(ret)}</b></div>` : ''}</div>
       ${(() => { const S = g.pooled ? null : statsFor('group', g.id); return S && !S.none ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">${riskBadge(S)}${S.thin ? '' : `<span class="tag">Worst drop ${(S.maxDrawdown * 100).toFixed(1)}%</span>`}</div>` : ''; })()}
@@ -279,25 +281,25 @@ function newInviteSheet(){
   });
 }
 
-function groupSheet(){
+function groupSheet(preTag){
   openModal(`<header><h2>Create a group</h2><button class="x" data-close aria-label="Close">×</button></header>
     <div class="field"><label>Start from</label><div class="tplgrid" role="radiogroup">${GROUP_TEMPLATES.map(([k, l, d], i) => `<button type="button" class="tpl${i === 0 ? ' on' : ''}" role="radio" aria-checked="${i === 0}" data-tpl="${k}"><b>${l}</b><span class="small muted">${d}</span></button>`).join('')}</div>
       <div class="est" id="g-tplsum" style="display:block;margin-top:10px"></div></div>
     <div class="field"><label for="g-n">Group name</label><input class="input" id="g-n" maxlength="60" placeholder="e.g. Sunday Stock Club"></div>
     <div class="field"><label for="g-s">Strategy</label><input class="input" id="g-s" maxlength="120" placeholder="e.g. Long-term dividend growth"></div>
     <div class="field"><label for="g-d">Description</label><textarea class="input" id="g-d" maxlength="300" placeholder="What the group invests in and how it decides"></textarea></div>
-    <div class="grid2"><div class="field"><label for="g-c">Category</label><select class="input" id="g-c">${CATS.map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select></div><div class="field"><label for="g-goal">Group goal (optional)</label><input class="input" id="g-goal" maxlength="300" placeholder="e.g. Grow dividend income every year"></div></div>
+    <div class="grid2">${tagField('g-tags', preTag ? [preTag] : [])}<div class="field"><label for="g-goal">Group goal (optional)</label><input class="input" id="g-goal" maxlength="300" placeholder="e.g. Grow dividend income every year"></div></div>
     <div class="field"><label for="g-m">Who can join</label><select class="input" id="g-m"><option value="open">Anyone</option><option value="request">Request to join, I approve</option><option value="invite">Invite link only</option></select><span class="hint">You can set rules, limits and roles in the group's Settings tab.</span></div>
     <div class="est" style="display:block"><b>Group Pro: $19.99 a month per group</b><div class="small muted" style="margin-top:4px">Roles, voting, approval-based copying and member management. Simulated here; nothing is charged.</div></div>
     <p class="hint">You'll be the Owner and Lead Trader. Members copy your trades only when they approve each one.</p>
-    <button class="btn" id="g-go" style="width:100%">Start Group Pro and create group</button>`, sh => {
+    <button class="btn" id="g-go" style="width:100%">Start Group Pro and create group</button>`, sh => { mountTagField(sh, 'g-tags');
     let tpl = 'club';
     const pickTpl = k => { tpl = k; const T = GROUP_TEMPLATES.find(x => x[0] === k);
       sh.querySelectorAll('[data-tpl]').forEach(b => { const on = b.dataset.tpl === k; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); });
       sh.querySelector('#g-m').value = T[3]; sh.querySelector('#g-tplsum').innerHTML = `<b>${T[1]} rules</b><ul style="margin:6px 0 0;padding-left:18px" class="small">${T[4].map(x => `<li>${x}</li>`).join('')}</ul><div class="small muted" style="margin-top:6px">You can change any of these later in Settings.</div>`; };
     sh.querySelectorAll('[data-tpl]').forEach(b => b.onclick = () => pickTpl(b.dataset.tpl)); pickTpl('club');
     sh.querySelector('#g-go').onclick = async () => {
-      try { const id = await Store.createGroup({ template: tpl, name: sh.querySelector('#g-n').value, strategy: sh.querySelector('#g-s').value, description: sh.querySelector('#g-d').value, membership: sh.querySelector('#g-m').value, category: sh.querySelector('#g-c').value, goals: sh.querySelector('#g-goal').value });
+      try { const id = await Store.createGroup({ template: tpl, name: sh.querySelector('#g-n').value, strategy: sh.querySelector('#g-s').value, description: sh.querySelector('#g-d').value, membership: sh.querySelector('#g-m').value, tags: getTags(sh, 'g-tags'), goals: sh.querySelector('#g-goal').value });
         closeModal(); toast('Group created.'); location.hash = '#/group/' + id; } catch(e){ errToast(e); }
     };
   });
@@ -379,7 +381,7 @@ function rulesSheet(gid){
     <div class="field"><label for="s-n">Name</label><input class="input" id="s-n" maxlength="60" value="${esc(g.name)}"></div>
     <div class="field"><label for="s-st">Strategy</label><input class="input" id="s-st" maxlength="120" value="${esc(g.strategy || '')}"></div>
     <div class="field"><label for="s-d">Description</label><textarea class="input" id="s-d" maxlength="300">${esc(g.description || '')}</textarea></div>
-    <div class="grid2"><div class="field"><label for="s-cat">Category</label><select class="input" id="s-cat">${CATS.map(([k, l]) => `<option value="${k}" ${g.category === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div><div class="field"><label for="s-goal">Group goal</label><input class="input" id="s-goal" maxlength="300" value="${esc(g.goals || '')}"></div></div>
+    <div class="grid2">${tagField('s-tags', groupTags(g))}<div class="field"><label for="s-goal">Group goal</label><input class="input" id="s-goal" maxlength="300" value="${esc(g.goals || '')}"></div></div>
     <h3 style="margin:18px 0 10px">Joining</h3>
     <div class="grid2"><div class="field"><label for="s-jm">How people join</label><select class="input" id="s-jm">${opt('open', R.joinMode, 'Anyone can join')}${opt('request', R.joinMode, 'Request, then approval')}${opt('invite', R.joinMode, 'Invite link only')}</select></div>
       <div class="field"><label for="s-mx">Member limit</label><input class="input" id="s-mx" type="number" min="2" placeholder="No limit" value="${R.maxMembers || ''}"></div>
@@ -401,15 +403,16 @@ function rulesSheet(gid){
     <div class="field" id="s-list-f"><label>Allowed list</label><div style="display:flex;flex-wrap:wrap">${Market.LIST.map(t => `<label style="display:inline-flex;gap:6px;align-items:center;margin:0 14px 8px 0"><input type="checkbox" class="al-sym" value="${t.s}" ${R.allowedList.includes(t.s) ? 'checked' : ''}> ${t.s}</label>`).join('')}</div></div>
     <h3 style="margin:18px 0 10px">Paid group</h3><p class="hint" style="margin-top:0">Monthly member fees are available after adviser registration.</p>
     <div class="hint" id="s-err" style="color:var(--loss);min-height:1.2em"></div>
+    <div class="field"><label>Group photo</label><div><button type="button" class="btn ghost sm" data-act="photo" data-k="group" data-gid="${gid}">${g.photoV ? 'Change photo' : 'Add a photo'}</button></div></div>
     <button class="btn" id="s-go" style="width:100%">Save settings</button>`, sh => {
-    const q = id => sh.querySelector('#' + id); const syncL = () => q('s-list-f').style.display = q('s-al').value === 'list' ? '' : 'none'; q('s-al').onchange = syncL; syncL();
+    const q = id => sh.querySelector('#' + id); mountTagField(sh, 's-tags'); const syncL = () => q('s-list-f').style.display = q('s-al').value === 'list' ? '' : 'none'; q('s-al').onchange = syncL; syncL();
     q('s-go').onclick = async () => {
       const mx = q('s-mx').value.trim(), mp = q('s-mp').value;
       const rules = { joinMode: q('s-jm').value, maxMembers: mx ? Math.round(Number(mx)) : null, minAccount: Math.max(0, Number(q('s-min').value) || 0), hidden: q('s-hid').value === 'true', rulesText: q('s-rt').value,
         proposeRoles: ['owner'].concat($$('.pr-role', sh).filter(c => c.checked).map(c => c.value)), quorum: Number(q('s-q').value), passRule: q('s-pr').value, votingDays: Number(q('s-vd').value), voteWaitDays: Number(q('s-vw').value),
         maxPositionPct: mp ? Number(mp) : null, allowed: q('s-al').value, allowedList: $$('.al-sym', sh).filter(c => c.checked).map(c => c.value), approvalMinutes: Number(q('s-aw').value), riskReview: q('s-rr').value === 'true', defaultCopyPct: Number(q('s-cp').value) };
       if (rules.allowed === 'list' && !rules.allowedList.length){ q('s-err').textContent = 'Pick at least one allowed investment.'; return; }
-      try { await Store.updateGroup(gid, { rules, name: q('s-n').value, strategy: q('s-st').value, description: q('s-d').value, category: q('s-cat').value, goals: q('s-goal').value }); closeModal(); toast('Group settings saved.'); } catch(e){ q('s-err').textContent = e.userFacing ? e.message : 'Something went wrong.'; }
+      try { await Store.updateGroup(gid, { rules, name: q('s-n').value, strategy: q('s-st').value, description: q('s-d').value, tags: getTags(sh, 's-tags'), goals: q('s-goal').value }); closeModal(); toast('Group settings saved.'); } catch(e){ q('s-err').textContent = e.userFacing ? e.message : 'Something went wrong.'; }
     };
   });
 }

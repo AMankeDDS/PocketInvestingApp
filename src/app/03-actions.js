@@ -12,6 +12,7 @@ async function act(el, ev){ /* eslint-disable-line */
     case 'starteroff': try { localStorage.setItem('pi_starter_off', '1'); } catch(e){} return render();
     case 'explainoff': { let d = []; try { d = JSON.parse(localStorage.getItem('pi_explain_off') || '[]'); } catch(e){} d.push(el.dataset.k); try { localStorage.setItem('pi_explain_off', JSON.stringify(d)); } catch(e){} return render(); }
     case 'gcat': ui.groupCat = el.dataset.k; return render();
+    case 'gtag': ui.groupCat = el.dataset.k; location.hash = '#/groups'; return;
     case 'addsample': return busy(async () => { if (!confirm('Add the new sample investors, groups and history? Nothing will be deleted.')) return; const r = await Store.addSampleData(); toast(r && r.added ? `Added ${r.added} sample items and refreshed the sample investors.` : 'Sample data is already up to date.'); });
     case 'more': ui.feedLimit += 30; return render();
     case 'gofeedgroups': ui.feedTab = 'groups'; location.hash = '#/feed'; return;
@@ -228,7 +229,15 @@ async function act(el, ev){ /* eslint-disable-line */
     case 'pexit': ui.presenter = null; return renderPresenter();
     case 'leave': return busy(async () => { await Store.leave(id); toast('You left the group.'); });
     case 'copypct': return busy(() => Store.setCopyPct(el.dataset.gid, +el.dataset.k));
-    case 'newgroup': return groupSheet();
+    case 'newgroup': return groupSheet(el.dataset.k || null);
+    case 'gohome': closeModal(); if (!location.hash || location.hash === '#/home' || location.hash === '#/'){ window.scrollTo({ top: 0, behavior: 'smooth' }); return; } location.hash = '#/home'; return;
+    case 'theme': try { localStorage.setItem('pi_theme', el.dataset.k); } catch(e){} applyTheme(); return render();
+    case 'exjump': { const k = el.dataset.k; if (k === 'feed'){ ui.exploreTab = 'feed'; render(); window.scrollTo({ top: 0 }); return; }
+      const was = ui.exploreTab; ui.exploreTab = 'market'; ui.exActive = k; if (was === 'feed') render(); requestAnimationFrame(() => { const t = document.getElementById('ex-' + k); if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' }); exSpy(true); }); return; }
+    case 'exall': ui.exAll = Object.assign({}, ui.exAll, { [el.dataset.k]: !(ui.exAll || {})[el.dataset.k] }); return render();
+    case 'photo': return photoSheet({ target: el.dataset.k || 'me', gid: el.dataset.gid || null });
+    case 'reportphoto': if (!confirm('Report this profile photo to the Pocket team?')) return; return busy(async () => { await Store.http('POST', '/api/action/report', { kind: 'photo', pid: el.dataset.id, reason: 'photo' }); toast('Thanks. The Pocket team will review it.'); });
+    case 'rmphoto': if (!confirm('Remove this photo?')) return; return busy(async () => { await Store.http('POST', '/api/admin/photo-remove', { key: el.dataset.k }); toast('Photo removed.'); });
     case 'newprop': return proposalSheet(el.dataset.gid);
     case 'vote': return busy(async () => { await Store.vote(id, el.dataset.k); toast('Vote recorded.'); });
     case 'closeprop': return busy(async () => { await Store.closeProposal(id); toast('Voting closed.'); });

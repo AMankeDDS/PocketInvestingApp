@@ -5,26 +5,49 @@ function exploreData(){
     Store.http('GET', '/api/explore').then(r => { ui.explore = r; ui.exploreTs = Date.now(); }, () => { ui.explore = ui.explore || { industries: {}, earnings: [], events: [], related: null }; }).finally(() => { ui.exploreLoading = false; render(); }); } }
   return ui.explore || { industries: {}, earnings: [], events: [], related: null };
 }
+const EX_CHIPS = [['market', 'Market'], ['movers', 'Movers'], ['sectors', 'Sectors'], ['onpocket', 'On Pocket'], ['earnings', 'Earnings'], ['news', 'News'], ['feed', 'Feed']];
 function vExplore(){
-  const tab = ui.exploreTab || 'market';
-  const seg = `<div class="seg" style="margin-bottom:16px" role="tablist"><button class="${tab === 'market' ? 'on' : ''}" data-act="extab" data-k="market" role="tab" aria-selected="${tab === 'market'}">Market</button><button class="${tab === 'feed' ? 'on' : ''}" data-act="extab" data-k="feed" role="tab" aria-selected="${tab === 'feed'}">Feed</button></div>`;
-  if (tab === 'feed') return seg + vFeed();
-  return `<div class="pagehead"><div><h1>Explore</h1><p class="muted">What's moving today, in the market and on Pocket.</p></div><a class="btn ghost sm" href="#/markets">Search stocks</a></div>${seg}${exploreMarket()}`;
+  const tab = ui.exploreTab || 'market', act = tab === 'feed' ? 'feed' : (ui.exActive || 'market');
+  const body = tab === 'feed' ? vFeed() : exploreMarket(), has = k => k === 'feed' || k === 'market' || tab === 'feed' || body.includes(`id="ex-${k}"`);
+  const chips = `<nav class="exchips" aria-label="Explore sections">${EX_CHIPS.filter(([k]) => has(k)).map(([k, l]) => `<button class="${act === k ? 'on' : ''}" data-act="exjump" data-k="${k}" aria-current="${act === k}">${l}</button>`).join('')}</nav>`;
+  return `<h1 class="ex-h1">Explore</h1>${chips}${body}`;
+}
+/* Highlight the chip for the section in view. */
+function exSpy(force){
+  if (route().name !== 'explore' || (ui.exploreTab || 'market') === 'feed') return;
+  const nav = document.querySelector('.exchips'); if (!nav) return; const lim = nav.getBoundingClientRect().bottom + 24;
+  let cur = 'market'; document.querySelectorAll('section[id^="ex-"]').forEach(s => { if (s.getBoundingClientRect().top <= lim) cur = s.id.slice(3); });
+  if (!force && cur === ui.exActive) return; ui.exActive = cur;
+  nav.querySelectorAll('button').forEach(b => { const on = b.dataset.k === cur; b.classList.toggle('on', on); b.setAttribute('aria-current', on); if (on) nav.scrollTo({ left: Math.max(0, b.offsetLeft - 20), behavior: 'smooth' }); });
+}
+let exSpyT = 0; window.addEventListener('scroll', () => { if (exSpyT) return; exSpyT = setTimeout(() => { exSpyT = 0; exSpy(); }, 80); }, { passive: true });
+/* "Market closed · opens Monday 9:30 AM ET", using the regular schedule and NYSE holidays. */
+const NYSE_HOLIDAYS = new Set(['2026-01-01','2026-01-19','2026-02-16','2026-04-03','2026-05-25','2026-06-19','2026-07-03','2026-09-07','2026-11-26','2026-12-25','2027-01-01','2027-01-18','2027-02-15','2027-03-26','2027-05-31','2027-06-18','2027-07-05','2027-09-06','2027-11-25','2027-12-24']);
+function marketStatusLine(){
+  if (!Store.site.realPrices) return '';
+  const f = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: 'numeric', minute: 'numeric', hourCycle: 'h23', weekday: 'long' });
+  const at = t => Object.fromEntries(f.formatToParts(new Date(t)).map(x => [x.type, x.value]));
+  const isDay = p => !['Saturday', 'Sunday'].includes(p.weekday) && !NYSE_HOLIDAYS.has(`${p.year}-${p.month}-${p.day}`);
+  const now = at(Date.now()), mins = (+now.hour) * 60 + (+now.minute);
+  if (isDay(now) && mins >= 570 && mins < 960) return 'Market open · closes 4:00 PM ET';
+  if (isDay(now) && mins < 570) return 'Market closed · opens today 9:30 AM ET';
+  for (let d = 1; d < 10; d++){ const p = at(Date.now() + d * 86400000); if (isDay(p)) return `Market closed · opens ${d === 1 ? 'tomorrow' : p.weekday} 9:30 AM ET`; }
+  return 'Market closed';
 }
 function exploreMarket(){
   const D = exploreData(), sectorOf = s => (D.industries[s] || {}).sector || SECTOR[s] || null;
   const live = s => !Store.site.realPrices || Market.isReal(s);
   const uni = Market.LIST.map(t => t.s).filter(s => !SMALL_CAPS.has(s) && !(Market.ETFS_UI || []).includes(s) && !INDEXES.some(i => i[0] === s) && Market.price(s) >= 1 && live(s));
-  const chg = s => Market.dayChange(s), sec = (title, inner, extra = '') => inner ? `<section class="block"><header style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h2>${title}</h2>${extra}</header>${inner}</section>` : '';
+  const chg = s => Market.dayChange(s), sec = (key, title, inner, extra = '') => inner ? `<section class="block" id="ex-${key}"><header style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h2>${title}</h2>${extra}</header>${inner}</section>` : '';
   /* market at a glance */
   const idx = INDEXES.filter(([s]) => Market.MAP[s]);
-  const glance = idx.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">${idx.map(([s, n]) => `<a class="panel" href="#/stock/${s}" style="padding:14px 16px;color:var(--text)"><div class="small muted">${n}</div><div style="display:flex;justify-content:space-between;align-items:flex-end;gap:8px"><div><b class="num">${usd(Market.price(s))}</b><div class="small num ${sgn(chg(s))}">${pct(chg(s))}</div></div>${mini(s)}</div></a>`).join('')}</div><p class="hint" style="margin:8px 0 0">Shown through each index's fund (${idx.map(i => i[0]).join(', ')}).</p>` : '';
+  const glance = idx.length ? `${marketStatusLine() ? `<p class="small muted" style="margin:-4px 0 10px">${marketStatusLine()}</p>` : ''}<div class="exstrip">${idx.map(([s, n]) => `<a class="panel" href="#/stock/${s}"><div class="small muted">${n}</div><div style="display:flex;justify-content:space-between;align-items:flex-end;gap:8px"><div><b class="num">${usd(Market.price(s))}</b><div class="small num ${sgn(chg(s))}">${pct(chg(s))}</div></div>${mini(s)}</div></a>`).join('')}</div><p class="hint" style="margin:8px 0 0">Shown through each index's fund (${idx.map(i => i[0]).join(', ')}).</p>` : '';
   /* movers */
   const tab = ui.exMovers || 'gainers', fs = ui.exSector || null, pool = uni.filter(s => !fs || sectorOf(s) === fs);
   const list = tab === 'losers' ? pool.filter(s => chg(s) < 0).sort((a, b) => chg(a) - chg(b)) : pool.filter(s => chg(s) > 0).sort((a, b) => chg(b) - chg(a));
   const movers = `<div class="seg" style="margin-bottom:10px">${[['gainers', 'Biggest gainers'], ['losers', 'Biggest losers']].map(([k, l]) => `<button class="${tab === k ? 'on' : ''}" data-act="exmovers" data-k="${k}">${l}</button>`).join('')}</div>
     ${fs ? `<p class="small" style="margin:0 0 8px">Showing ${esc(fs)} only. <button class="linkbtn small" data-act="exsector" data-k="">Show all sectors</button></p>` : ''}
-    <div class="list">${list.slice(0, 8).map(s => stockRow(s)).join('') || '<div class="empty">No moves to show yet today.</div>'}</div>`;
+    <div class="list">${list.slice(0, (ui.exAll || {}).movers ? 20 : 5).map(s => stockRow(s)).join('') || '<div class="empty">No moves to show yet today.</div>'}</div>${list.length > 5 ? `<button class="linkbtn small" data-act="exall" data-k="movers" style="margin-top:8px">${(ui.exAll || {}).movers ? 'Show fewer' : 'See all'}</button>` : ''}`;
   /* sectors */
   const by = {}; uni.forEach(s => { const k = sectorOf(s); if (!k) return; (by[k] = by[k] || []).push(chg(s)); });
   const sectors = Object.entries(by).filter(([, v]) => v.length >= 2).map(([k, v]) => [k, v.reduce((a, b) => a + b, 0) / v.length, v.length]).sort((a, b) => b[1] - a[1]);
@@ -52,13 +75,13 @@ function exploreMarket(){
   const earnings = earn.length ? `<div class="list">${earn.map(e => `<a class="row" href="#/stock/${e.sym}">${logo(e.sym)}<div class="grow"><b class="sym">${e.sym}</b> <span class="small muted">${esc((Market.MAP[e.sym] || {}).n || '')}</span></div><span class="small">${fmtDay(e.date)}</span></a>`).join('')}</div><p class="hint" style="margin:8px 0 0">Estimated from each company's past SEC earnings filings.</p>` : '';
   const events = (D.events || []).length ? `<div class="list">${D.events.map(e => `<div class="row" style="flex-wrap:wrap"><div class="grow" style="min-width:200px"><b>${esc(e.title)}</b>${e.note ? `<div class="small muted">${esc(e.note)}</div>` : ''}<div style="margin-top:4px">${(e.syms || []).map(s => `<a class="tag" href="#/stock/${s}" style="text-decoration:none">${s}</a>`).join(' ')}</div></div><span class="small">${fmtDay(e.date)}</span></div>`).join('')}</div>` : '';
   const newsSyms = [...new Set(list.slice(0, 6).concat((R && R.own) || []))].slice(0, 12);
-  return `${sec('Market at a glance', glance)}
-    ${sec("Today's movers", movers, '<span class="small muted">Biggest moves today, not recommendations</span>')}
-    ${sec('Sectors today', tiles)}
-    ${sec('On Pocket', onPocket)}
-    ${related ? sec('Related to what you own', related) : ''}
-    ${sec('Earnings this week', earnings)}
-    ${sec('Coming up', events, '<span class="small muted">Launches, conferences and other dates to know</span>')}
-    ${newsSyms.length ? newsSection('Market news', newsSyms, 6) : ''}
+  return `${sec('market', 'Market at a glance', glance)}
+    ${sec('movers', "Today's movers", movers, '<span class="small muted">Biggest moves today, not recommendations</span>')}
+    ${sec('sectors', 'Sectors today', tiles)}
+    ${sec('onpocket', 'On Pocket', onPocket)}
+    ${related ? sec('related', 'Related to what you own', related) : ''}
+    ${sec('earnings', 'Earnings this week', earnings)}
+    ${sec('events', 'Coming up', events, '<span class="small muted">Launches, conferences and other dates to know</span>')}
+    <div id="ex-news-wrap">${newsSyms.length ? newsSection('Market news', newsSyms, (ui.exAll || {}).news ? 15 : 5, { id: 'ex-news', more: 'news' }) : ''}</div>
     <p class="hint" style="margin-top:22px">${Store.site.realPrices ? 'Prices from the market.' : 'Prices are simulated.'} For information only, not investment advice.</p>`;
 }

@@ -8,7 +8,7 @@ function vReal(){
   const R = ui.real;
   if (!R){ loadReal(); return '<div class="loading" style="min-height:30vh">Loading your account…</div>'; }
   if (R.error) return `<div class="panel empty">${esc(R.error)} <button class="linkbtn" data-act="realrefresh">Try again</button></div>`;
-  const env = R.alpacaEnv === 'sandbox' ? '<div class="banner" style="margin-bottom:14px"><b>Test environment.</b>&nbsp;Accounts, deposits and orders here are simulated by the brokerage. No real money moves.</div>' : '';
+  const env = R.alpacaEnv === 'sandbox' ? '<div class="banner text" style="margin-bottom:14px"><b>Test environment.</b>&nbsp;Accounts, deposits and orders here are simulated by the brokerage. No real money moves.</div>' : '';
   if (R.require2fa && !R.twofa) return env + `<div class="panel" style="padding:24px"><h2>Turn on two-step sign-in first</h2><p class="muted">Real-money accounts need a second step when you sign in: a 6-digit code from an authenticator app such as Google Authenticator or 1Password.</p><a class="btn" href="#/security">Set up two-step sign-in</a></div>`;
   if (!R.account) return env + `<div class="panel" style="padding:24px"><h2>Open your brokerage account</h2><p class="muted">It takes about five minutes. Your account is held at our brokerage partner, Alpaca, and you approve every trade that touches it. You'll need your Social Security number and address.</p><a class="btn" href="#/open">Open an account</a></div>${brokerLine()}`;
   if (R.account.status !== 'ACTIVE'){
@@ -27,7 +27,7 @@ function vReal(){
     ${inst.outstanding ? `<p class="hint" style="margin:10px 0 0">${usd(inst.outstanding)} of instant deposit is available to invest and becomes withdrawable when your bank transfer clears.</p>` : ''}</div>
   <section class="block"><header><h2>Holdings</h2></header><div class="list">${R.positions.length ? R.positions.map(p => `<div class="row"><div class="grow"><div class="sym">${esc(p.sym)}</div><div class="small muted">${shs(p.qty)} shares, average ${usd(p.avgPrice)}</div></div><div class="r"><div class="num">${usd(p.value)}</div><div class="small num ${sgn(p.plPct)}">${pct(p.plPct)}</div></div></div>`).join('') : '<div class="empty">No holdings yet. Deposit money, then place your first trade.</div>'}</div></section>
   ${openOrders.length ? `<section class="block"><header><h2>Open orders</h2></header><div class="list">${openOrders.map(o => orderRow(o, true)).join('')}</div></section>` : ''}
-  <section class="block"><header><h2>Bank account</h2></header><div class="list">${bank ? `<div class="row"><div class="grow"><b>${esc(bank.nickname || 'Bank account')}</b> <span class="muted small">${esc(bank.type || '')} ending ${esc(bank.last4)}</span><div class="small muted">${esc(bank.status === 'APPROVED' ? 'Linked' : bank.status)}</div></div><button class="btn sm ghost" data-act="runbank" data-id="${esc(bank.id)}">Remove</button></div>`
+  <section class="block"><header><h2>Bank account</h2></header><div class="list">${bank ? `<div class="row"><div class="grow"><b>${esc(bankLabel(bank))}</b><div class="small muted">${esc(bank.status === 'APPROVED' ? 'Linked' : bank.status)}</div></div><button class="btn sm ghost" data-act="runbank" data-id="${esc(bank.id)}">Remove</button></div>`
     : `<div class="row"><div class="grow"><b>No bank linked</b><div class="small muted">Link a bank account to deposit and withdraw.</div></div><button class="btn sm" data-act="rbank">Link a bank</button></div>`}</div></section>
   <section class="block"><header><h2>Activity</h2><a class="small" href="#/documents">Brokerage statements and tax documents</a></header><div class="list">
     ${R.transfers.map(t => `<div class="row"><div class="grow"><b>${t.direction === 'INCOMING' ? 'Deposit' : 'Withdrawal'}</b><div class="small muted">${new Date(t.createdAt).toLocaleDateString('en-US', { month:'short', day:'numeric' })}, ${esc(TSTATUS[t.status] || t.status)}</div></div><b class="num">${t.direction === 'INCOMING' ? '+' : '−'}${usd(t.amount)}</b></div>`).join('')}
@@ -57,7 +57,7 @@ function vOpenAccount(){
     <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:12px"><input type="checkbox" id="o-agree" ${f.agree ? 'checked' : ''} style="margin-top:4px"> <span class="small">I agree to the brokerage's customer and account agreements and the Pocket Investing Terms, and confirm the information above is accurate. <span class="muted">[Links to the final agreements go here.]</span></span></label>`;
   return `<div class="pagehead"><div><a href="#/portfolio" class="small">← Back</a><h1 style="margin-top:6px">Open your brokerage account</h1><p class="muted">Step ${st + 1} of ${steps.length}: ${steps[st]}</p></div>
     ${Store.site.alpacaEnv === 'sandbox' ? '<button class="btn ghost sm" data-act="oftest">Fill test details</button>' : ''}</div>
-    ${Store.site.alpacaEnv === 'sandbox' ? '<div class="banner" style="margin-bottom:14px;max-width:640px;font-size:14px"><b>Test environment.</b>&nbsp;Use made-up details here, never your real Social Security number. "Fill test details" does it for you.</div>' : ''}
+    ${Store.site.alpacaEnv === 'sandbox' ? '<div class="banner text" style="margin-bottom:14px;max-width:640px;font-size:14px"><b>Test environment.</b>&nbsp;Use made-up details here, never your real Social Security number. "Fill test details" does it for you.</div>' : ''}
     <div class="panel" style="padding:20px;max-width:640px">${body}<div class="hint" id="o-err" style="color:var(--loss);min-height:1.2em;margin:6px 0"></div>
     <div style="display:flex;gap:10px">${st > 0 ? '<button class="btn ghost" data-act="ofback">Back</button>' : ''}<button class="btn" data-act="${st < 3 ? 'ofnext' : 'ofsubmit'}">${st < 3 ? 'Continue' : 'Submit application'}</button></div></div>${brokerLine()}`;
 }
@@ -103,7 +103,7 @@ function rTradeSheet(sym, side){
     }
     function draw(){
       root.innerHTML = `<header><h2>Real-money order</h2><button class="x" data-close aria-label="Close">×</button></header>
-        <div class="banner" style="margin-bottom:12px;font-size:14px"><b>Real money.</b>&nbsp;${R.alpacaEnv === 'sandbox' ? 'Test environment: no real money moves.' : 'This order uses your brokerage account.'}</div>
+        <div class="banner text" style="margin-bottom:12px;font-size:14px"><b>Real money.</b> ${R.alpacaEnv === 'sandbox' ? 'Test environment: no real money moves.' : 'This order uses your brokerage account.'}</div>
         <div class="field"><label for="r-sym">Stock</label><select class="input" id="r-sym">${Market.LIST.map(t => `<option value="${t.s}" ${t.s === st.sym ? 'selected' : ''}>${t.s} — ${esc(t.n)}</option>`).join('')}</select></div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px"><div class="seg" id="r-side"><button data-k="buy" class="${st.side === 'buy' ? 'on' : ''}">Buy</button><button data-k="sell" class="${st.side === 'sell' ? 'on' : ''}">Sell</button></div><div class="seg" id="r-by"><button data-k="dollars" class="${st.by === 'dollars' ? 'on' : ''}">Dollars</button><button data-k="shares" class="${st.by === 'shares' ? 'on' : ''}">Shares</button></div></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px" id="r-chips">${(st.side === 'buy' ? [['100','$100'],['500','$500'],['1000','$1,000'],['max','Max']] : [['0.25','25%'],['0.5','50%'],['0.75','75%'],['1','All']]).map(([k, l]) => `<button class="btn sm ghost" data-k="${k}">${l}</button>`).join('')}</div>
@@ -172,6 +172,9 @@ function rBankSheet(){
 }
 
 /* Real-money copy requests: nothing is placed until the member approves. */
+/* "Checking ending 6789"; a nickname or bank name is added only when it says something new. */
+function bankLabel(b){ if (!b) return 'Bank account'; const ty = String(b.type || '').toLowerCase(), Ty = ty ? ty[0].toUpperCase() + ty.slice(1) : 'Account', core = `${b.bankName ? esc(b.bankName) + ' ' + ty : Ty} ending ${b.last4 || ''}`.trim(), nick = String(b.nickname || '').trim();
+  return nick && nick.toLowerCase() !== ty && nick.toLowerCase() !== 'bank account' ? `${nick} · ${core}` : core; }
 function realCopySection(pendingOnly){
   if (ui.realReq == null){ ui.realReq = 'loading'; Store.real.copyRequests().then(r => { ui.realReq = r.requests; render(); }, () => { ui.realReq = []; }); }
   const L = Array.isArray(ui.realReq) ? ui.realReq : [], pend = L.filter(r => r.status === 'pending'), recent = L.filter(r => r.status !== 'pending').slice(0, 5);

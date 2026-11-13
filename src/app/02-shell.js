@@ -14,13 +14,14 @@ function renderNav(){
   const searchBtn = `<button class="btn ghost sm" data-act="search" aria-label="Search stocks, people and groups" title="Search"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></button>`;
   const fbIcon = Store.signedIn ? `<button class="btn ghost sm fb-top" data-act="feedback" aria-label="Send feedback" title="Send feedback"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>` : '';
   const sess = `<span class="session" title="${esc(s.label)}" aria-label="${esc(s.label)}"><span class="dot ${s.open ? 'on' : ''}"></span><span class="sess-label">${esc(s.label)}</span><span class="sess-short">${esc(s.label.replace(/^Market /i, '').replace(/^./, x => x.toUpperCase()))}</span>${s.demo ? '<span class="sess-x"> (demo clock)</span>' : ''}</span>`;
-  $('#rail').innerHTML = `<div class="brand"><span class="mark">P</span>Pocket Investing</div><button class="nav" data-act="search" style="width:calc(100% - 24px);border:0;background:none;text-align:left;cursor:pointer;font:inherit;color:inherit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><span>Search</span></button>` +
+  $('#rail').innerHTML = `<a class="brand" href="#/home" data-act="gohome" aria-label="Pocket Investing, go to Home" style="color:inherit;text-decoration:none"><span class="mark">P</span>Pocket Investing</a><button class="nav" data-act="search" style="width:calc(100% - 24px);border:0;background:none;text-align:left;cursor:pointer;font:inherit;color:inherit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><span>Search</span></button>` +
     railItems.map(([k, l, i]) => `<a class="nav ${on(k)}" href="${href(k)}"${k === 'explore' ? ' data-act="navexplore"' : ''}>${ICON[i]}<span>${l}</span>${['inbox', 'home', 'portfolio'].includes(k) && n ? `<span class="badge">${n}</span>` : ''}</a>`).join('') +
     `<a class="nav ${r === 'notifications' ? 'on' : ''}" href="#/notifications">${ICON.bell}<span>Notifications</span>${un ? `<span class="badge">${un}</span>` : ''}</a>` +
     (!Store.signedIn && Store.ready ? `<button class="btn" data-act="signin" style="margin:10px 12px">Sign in</button>` : '') +
     (Store.adminNeeds2fa && !Store.canEdit ? `<a class="nav ${r === 'admin' ? 'on' : ''}" href="#/admin">${ICON.me}<span>Beta admin</span></a>` : '') + (Store.canEdit ? `${Store.site.demoTools ? `<a class="nav ${r === 'demo' ? 'on' : ''}" href="#/demo">${ICON.demo}<span>Demo controls</span></a>` : ''}<a class="nav ${r === 'metrics' ? 'on' : ''}" href="#/metrics">${ICON.metrics}<span>Pilot metrics</span></a><a class="nav ${r === 'admin' ? 'on' : ''}" href="#/admin">${ICON.me}<span>Beta admin</span></a>` : '') + sess;
   $('#bottomnav').innerHTML = items.map(([k, l, i]) => `<a class="${on(k)}" href="${href(k)}"${k === 'explore' ? ' data-act="navexplore"' : ''}>${ICON[i]}<span>${l}</span>${['inbox', 'home', 'portfolio'].includes(k) && n ? `<span class="badge">${n}</span>` : ''}</a>`).join('');
-  $('#topbar').innerHTML = `<div class="brand"><span class="mark">P</span><span class="brand-word">Pocket</span></div><div class="tb-right" style="display:flex;gap:8px;align-items:center">${sess}${searchBtn}${fbIcon}${!Store.signedIn && Store.ready ? '<button class="btn sm" data-act="signin">Sign in</button>' : ''}${Store.get('profiles', Store.myPid) ? bell : ''}${Store.canEdit ? `<a href="#/demo" class="btn ghost sm" aria-label="Demo controls">${ICON.demo.replace('<svg','<svg width="18" height="18"')}</a>` : ''}</div>`;
+  $('#topbar').innerHTML = `<a class="brand" href="#/home" data-act="gohome" aria-label="Pocket, go to Home" style="color:inherit;text-decoration:none"><span class="mark">P</span><span class="brand-word">Pocket</span></a><div class="tb-right" style="display:flex;gap:8px;align-items:center">${sess}${searchBtn}${fbIcon}${!Store.signedIn && Store.ready ? '<button class="btn sm" data-act="signin">Sign in</button>' : ''}${Store.get('profiles', Store.myPid) ? bell : ''}${Store.canEdit ? `<a href="${Store.site.demoTools ? '#/demo' : '#/admin'}" class="btn ghost sm" aria-label="Admin tools" title="Admin tools"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/></svg></a>` : ''}</div>`;
+  requestAnimationFrame(() => { const tb = $('#topbar'); if (tb) document.documentElement.style.setProperty('--tb-h', Math.round(tb.getBoundingClientRect().height) + 'px'); });
 }
 
 function renderItem(it, showGroup){
@@ -115,14 +116,19 @@ function toast(msg, opt = {}){
 function errToast(e){ toast(e && e.userFacing ? e.message : 'Something went wrong. Try again.'); if (!(e && e.userFacing)) console.error(e); }
 
 function openModal(html, mount){
+  if (!(history.state && history.state.pkModal)) try { history.pushState({ pkModal: 1, h: location.hash }, ''); } catch(e){}
   $('#modal').innerHTML = `<div class="scrim" data-scrim><div class="sheet" role="dialog" aria-modal="true">${html}</div></div>`;
   const s = $('#modal [data-scrim]'); s.addEventListener('click', e => { if (e.target === s) closeModal(); });
   $$('#modal [data-close]').forEach(b => b.onclick = closeModal);
   if (mount) mount($('#modal .sheet'));
+  { const sh = $('#modal .sheet'); if (sh && sh.scrollHeight > innerHeight * 0.85 && !sh.querySelector('[data-cancel]')){ sh.insertAdjacentHTML('beforeend', '<button class="btn ghost" data-close data-cancel style="width:100%;margin-top:10px">Cancel</button>'); sh.querySelector('[data-cancel]').onclick = closeModal; } }
   const f = $('#modal input, #modal select, #modal textarea'); if (f && !(f.hasAttribute('data-nofocus') && window.matchMedia && matchMedia('(max-width: 760px)').matches)) f.focus();
 }
 
-function closeModal(){ $('#modal').innerHTML = ''; }
+/* Closing a sheet removes its history entry, but only if the app is still on the same page (an action may have just moved to another page). */
+function closeModal(){ const had = !!$('#modal').innerHTML; $('#modal').innerHTML = ''; if (had) setTimeout(() => { const st = history.state; if (st && st.pkModal && st.h === location.hash && !$('#modal').innerHTML) try { history.back(); } catch(e){} }, 0); }
+/* Back closes an open sheet instead of leaving the page; a leftover sheet entry is simply cleared. */
+window.addEventListener('popstate', () => { if ($('#modal').innerHTML){ $('#modal').innerHTML = ''; return; } if (history.state && history.state.pkModal) try { history.replaceState(null, ''); } catch(e){} });
 
 function suggestSheet(gid){
   const g = Store.get('groups', gid), R = Store.rulesOf(g);

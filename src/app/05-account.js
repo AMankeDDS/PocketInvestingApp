@@ -36,11 +36,21 @@ function pwSheet(){
 }
 
 function deleteSheet(){
+  const real = Store.site.realMoney;
   openModal(`<header><h2>Delete your account</h2><button class="x" data-close aria-label="Close">×</button></header>
     <p>This permanently removes your profile, portfolio, posts, votes and activity. If you own a group with other members, transfer ownership first.</p>
-    <div class="field"><label for="del-p">Enter your password to confirm</label><input class="input" id="del-p" type="password" autocomplete="current-password"></div>
-    <div class="hint" id="del-e" style="color:var(--loss);min-height:1.2em"></div><button class="btn" id="del-go" style="width:100%;background:var(--loss)">Delete my account</button>`, sh => {
-    sh.querySelector('#del-go').onclick = async () => { try { await Store.deleteAccount(sh.querySelector('#del-p').value); closeModal(); toast('Your account has been deleted.'); location.hash = '#/home'; } catch(e){ sh.querySelector('#del-e').textContent = e.userFacing ? e.message : 'Something went wrong.'; } };
+    ${real ? '<div class="banner text" style="margin-bottom:12px;font-size:14px"><b>Brokerage account.</b> Sell your holdings and withdraw your full balance first. Deleting then closes your brokerage account; the broker keeps the records the law requires.</div>' : ''}
+    <div class="field"><label for="del-p">Your password</label><input class="input" id="del-p" type="password" autocomplete="current-password"></div>
+    ${Store.twofa ? '<div class="field"><label for="del-c">Code from your authenticator app</label><input class="input num" id="del-c" inputmode="numeric" autocomplete="one-time-code" maxlength="6"></div>' : ''}
+    <div class="field"><label for="del-t">Type DELETE to confirm</label><input class="input" id="del-t" autocomplete="off" autocapitalize="characters"></div>
+    <label style="display:flex;gap:10px;align-items:flex-start;margin:0 0 12px"><input type="checkbox" id="del-k" style="margin-top:4px"><span>I understand this can't be undone.</span></label>
+    <div class="hint" id="del-e" style="color:var(--loss);min-height:1.2em"></div><button class="btn" id="del-go" style="width:100%;background:var(--loss)" disabled>Delete my account</button>`, sh => {
+    const q = id => sh.querySelector('#' + id), go = q('del-go');
+    const upd = () => { go.disabled = !(q('del-p').value && q('del-t').value.trim() === 'DELETE' && q('del-k').checked && (!q('del-c') || /^\d{6}$/.test(q('del-c').value.trim()))); };
+    ['del-p', 'del-t', 'del-c'].forEach(id => { if (q(id)) q(id).oninput = upd; }); q('del-k').onchange = upd;
+    go.onclick = async () => { go.disabled = true; q('del-e').textContent = '';
+      try { await Store.http('POST', '/api/delete-account', { password: q('del-p').value, code: q('del-c') ? q('del-c').value.trim() : undefined, confirm: q('del-t').value.trim() }); closeModal(); toast('Your account has been deleted.'); setTimeout(() => location.reload(), 800); }
+      catch(e){ q('del-e').textContent = e.message; upd(); } };
   });
 }
 

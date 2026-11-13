@@ -62,7 +62,7 @@ function vAdmin(){
     <section class="panel" style="padding:18px 20px;margin-top:16px"><h2>Read-only mode</h2><p class="muted small">Blocks trades, transfers, approvals and other changes for everyone except admins, with a banner explaining why. Use it while fixing an issue.</p>
       ${(Store.maintenance || {}).on ? `<p><b>Read-only mode is on.</b></p><button class="btn" data-act="adm-ro" data-k="0">Turn it off</button>` : `<input class="input" id="adm-ro-m" aria-label="Read-only message" maxlength="300" placeholder="Optional message, e.g. We're fixing a delay with deposits."><p style="margin-top:10px"><button class="btn ghost" data-act="adm-ro" data-k="1">Turn on read-only mode</button></p>`}</section>`;
   return `<div class="pagehead"><div><h1>Beta admin</h1><p class="muted">Beta metrics, testers, invite codes, feedback and error reports.</p></div><button class="btn ghost sm" data-act="adm-refresh">Refresh</button></div>
-    <nav class="tabs">${T.map(([k, l]) => `<a href="#/admin" class="${tab === k ? 'on' : ''}" data-act="adm-tab" data-k="${k}">${l}</a>`).join('')}</nav>${body}`;
+    <nav class="tabs">${T.map(([k, l]) => `<a href="#/admin" class="${tab === k ? 'on' : ''}" data-act="adm-tab" data-k="${k}">${l}</a>`).join('')}</nav>${body}${reportsPanel()}`;
 }
 
 function adminLogView(){

@@ -268,13 +268,34 @@ async function clubState(tx, gid){
   const pids = (await tx.find('memberships', { gid })).filter(m => m.role !== 'observer').map(m => m.pid);
   return summary(E, B ? B.data.startUnitValue : 10, pids);
 }
+/* Group tags: up to 3, standard or custom. Cleaned up, matched regardless of capitalization, and never promising returns. */
+const STD_TAGS = ['Growth', 'Dividends', 'Value', 'Beginners', 'Index', 'Consumer brands'];
+const CAT_KEY = { growth: 'Growth', dividends: 'Dividends', value: 'Value', beginners: 'Beginners', index: 'Index', consumer: 'Consumer brands' };
+const TAG_BAN = /guarantee|pump|dump|signal|get ?rich|rich ?quick|free ?money|can'?t ?lose|no ?risk|risk ?free|sure ?thing|insider|\b\d+x\b|moon ?shot|to the moon|double your/i;
+const TAG_RUDE = /\b(fuck|shit|bitch|cunt|nigg|fag|retard|whore|slut|nazi|porn|sex)/i;
+async function cleanTags(tx, list){
+  const raw = (Array.isArray(list) ? list : []).map(t => String(t || '').replace(/\s+/g, ' ').trim()).filter(Boolean);
+  if (raw.length > 3) throw fail('Pick up to 3 tags.');
+  const existing = new Map(); for (const g of await tx.find('groups', {})) for (const t of (g.tags || [])) existing.set(t.toLowerCase(), t);
+  const out = [];
+  for (const t of raw){
+    if (t.length > 20) throw fail(`"${t.slice(0, 24)}" is too long. Tags can be up to 20 characters.`);
+    if (!/^[A-Za-z0-9 ]+$/.test(t)) throw fail(`"${t}" can only use letters, numbers and spaces.`);
+    if (TAG_BAN.test(t)) throw fail(`"${t}" can't be used: tags can't promise returns or suggest coordinated buying.`);
+    if (TAG_RUDE.test(t)) throw fail(`"${t}" isn't allowed as a tag.`);
+    const k = t.toLowerCase(), std = STD_TAGS.find(s => s.toLowerCase() === k), v = std || existing.get(k) || t;
+    if (!out.some(x => x.toLowerCase() === k)) out.push(v);
+  }
+  return out;
+}
+const tagsToCategory = tags => { const t = (tags || []).find(x => STD_TAGS.includes(x)); return t ? Object.keys(CAT_KEY).find(k => CAT_KEY[k] === t) : null; };
 A.createGroup = async (tx, ctx, a) => {
   await needProfile(tx, ctx);
   const name = str(a.name, 60).trim(); if (!name) throw fail('Give the group a name.');
   const id = tx.newId();
   await tx.set('groups', id, { name, description: str(a.description, 300), strategy: str(a.strategy, 120), membership: a.membership === 'invite' ? 'invite' : 'open',
     ownerPid: ctx.pid, leadPid: ctx.pid, groupPro: true, groupProSince: Date.now(), createdTs: Date.now(), riskLevel: ['conservative','balanced','growth','dividends'].includes(a.riskLevel) ? a.riskLevel : null,
-    inviteCode: tx.newId().slice(0, 8).toUpperCase(), category: ['growth','dividends','value','beginners','index','consumer'].includes(a.category) ? a.category : null, goals: str(a.goals, 300),
+    inviteCode: tx.newId().slice(0, 8).toUpperCase(), ...(await (async () => { const tags = Array.isArray(a.tags) ? await cleanTags(tx, a.tags) : (CAT_KEY[a.category] ? [CAT_KEY[a.category]] : []); return { tags, category: tagsToCategory(tags) }; })()), goals: str(a.goals, 300),
     template: TEMPLATES[a.template] ? a.template : 'custom', pooled: a.template === 'pool',
     rules: Object.assign({}, DEFAULT_RULES, TEMPLATES[a.template] || {}, ['open','request','invite'].includes(a.membership) ? { joinMode: a.membership } : {}) });
   await tx.set('memberships', id + '__' + ctx.pid, { gid: id, pid: ctx.pid, role: 'owner', copyPct: 1, joinedTs: Date.now() });
@@ -564,6 +585,7 @@ A.transferOwnership = async (tx, ctx, a) => {
 A.updateGroup = async (tx, ctx, a) => {
   if (!canManage(await roleIn(tx, a.gid, ctx.pid))) throw fail('Only Owners and Admins can change group settings.');
   const g = await tx.get('groups', a.gid); const r = Object.assign({}, rulesOf(g)); const n = a.rules || {};
+  if (Array.isArray(a.tags)){ const tags = await cleanTags(tx, a.tags); await tx.update('groups', a.gid, { tags, category: tagsToCategory(tags) }); }
   const pick = (k, ok) => { if (k in n){ if (!ok(n[k])) throw fail('Check the value for ' + k + '.'); r[k] = n[k]; } };
   const numOrNull = v => v === null || (Number.isFinite(v) && v >= 0);
   pick('joinMode', v => ['open','request','invite'].includes(v));
@@ -667,7 +689,7 @@ A.copyPortfolio = async (tx, ctx, a) => {
 };
 A.copyInvestor = async (tx, ctx, a) => { await needProfile(tx, ctx); if (!(await isPro(tx, ctx.pid))) throw fail('Copying investors is part of Pro.'); if (a.pid === ctx.pid) throw fail("You can't copy yourself."); await tx.set('copies', ctx.pid + '__' + a.pid, { from: ctx.pid, to: a.pid, copyPct: 1, ts: Date.now() }); };
 A.stopCopying = async (tx, ctx, a) => tx.del('copies', ctx.pid + '__' + a.pid);
-A.report = async (tx, ctx, a) => { await needProfile(tx, ctx); await tx.set('reports', tx.newId(), { gid: a.gid, reporterPid: ctx.pid, reason: str(a.reason, 40), details: str(a.details, 500), status: 'open', ts: Date.now() }); };
+A.report = async (tx, ctx, a) => { await needProfile(tx, ctx); await tx.set('reports', tx.newId(), { kind: a.kind === 'photo' ? 'photo' : 'group', pid: a.kind === 'photo' ? str(a.pid, 60) : null, gid: a.gid || null, reporterPid: ctx.pid, reason: str(a.reason, 40), details: str(a.details, 500), status: 'open', ts: Date.now() }); };
 A.requestJoin = async (tx, ctx, a) => {
   await needProfile(tx, ctx); const g = await tx.get('groups', a.gid); if (!g) throw fail('Group not found.'); const rules = rulesOf(g);
   await checkJoin(tx, g, ctx.pid, rules);

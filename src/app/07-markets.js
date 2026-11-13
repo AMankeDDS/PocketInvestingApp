@@ -4,25 +4,29 @@ function logo(sym, cls = ''){ return `<span class="logo ${cls}" style="backgroun
 
 /* Real news first; SEC filings only when specific (catch-all items like 'other company news' stay out of top headlines). */
 function topHeadlines(items){ const vague = /: (other company news|investor update|current report) \(Form/; return items.filter(n => !(n.source === 'SEC filing' && vague.test(n.headline || ''))).sort((a, b) => (a.source === 'SEC filing') - (b.source === 'SEC filing') || b.ts - a.ts).slice(0, 5); }
-function newsRows(items, max = 5){
-  return items.slice(0, max).map(n => { const syms = (n.symbols || []).filter(x => Market.MAP[x]).slice(0, 2);
+function newsRows(items, max = 5, pageSym = null){
+  return items.slice(0, max).map(n => { const syms = (n.symbols || []).filter(x => Market.MAP[x] && x !== pageSym).slice(0, 2), sinceOwn = pageSym ? sinceNews(pageSym, n.ts) : '';
     return `<div class="row news-row" style="align-items:flex-start;flex-wrap:wrap"><a class="grow" href="${esc(n.url || '#')}" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:none;min-width:0"><div style="font-weight:600;line-height:1.35">${esc(n.headline)} <span class="small muted" aria-hidden="true">↗</span></div>
-      <div class="small muted" style="margin-top:3px">${esc(n.source || 'News')}, ${agoText(n.ts)}</div></a>${syms.length ? `<div class="qchips">${syms.map(x => quoteChip(x, n.ts)).join('')}</div>` : ''}</div>`; }).join('');
+      <div class="small muted" style="margin-top:3px">${esc(n.source || 'News')}, ${agoText(n.ts)}${sinceOwn ? ` · ${sinceOwn} since` : ''}</div></a>${syms.length ? `<div class="qchips">${syms.map(x => quoteChip(x, n.ts)).join('')}</div>` : ''}</div>`; }).join('');
 }
-/* A stock's price, today's move, and its move since the news came out (when that history is available). */
+/* A stock's move since the news came out, colored; empty when that history isn't available. */
+function sinceNews(sym, ts){
+  if (!ts || Date.now() - ts < 15 * 60000) return ''; const age = Date.now() - ts;
+  needBars(sym, age < 1.4 * 86400000 ? '1d' : age < 6.5 * 86400000 ? '5d' : age < 30 * 86400000 ? '1m' : age < 90 * 86400000 ? '3m' : '1y');
+  if (Market.isReal(sym) && !Market.hasHist(sym, ts)) return ''; const a = Market.price(sym, ts); if (!(a > 0)) return '';
+  const m = Market.price(sym) / a - 1; return `<span class="${m >= 0 ? 'gain' : 'loss'}">${pct(m)}</span>`;
+}
+/* One line: the ticker, today's move, and the move since the news. Tapping opens the stock. */
 function quoteChip(sym, ts){
-  const p = Market.price(sym), c = Market.dayChange(sym); let since = '';
-  if (ts && Date.now() - ts > 15 * 60000){ const age = Date.now() - ts;
-    needBars(sym, age < 1.4 * 86400000 ? '1d' : age < 6.5 * 86400000 ? '5d' : age < 30 * 86400000 ? '1m' : age < 90 * 86400000 ? '3m' : '1y');
-    if (!Market.isReal(sym) || Market.hasHist(sym, ts)){ const a = Market.price(sym, ts); if (a > 0){ const m = p / a - 1; since = ` · <span class="${m >= 0 ? 'gain' : 'loss'}">${pct(m)}</span> since this news`; } } }
-  return `<a class="qchip" href="#/stock/${sym}" aria-label="${sym} stock page"><b>${sym}</b> ${usd(p)} <span class="${c >= 0 ? 'gain' : 'loss'}">${pct(c)}</span> today${since}</a>`;
+  const c = Market.dayChange(sym), since = sinceNews(sym, ts);
+  return `<a class="qchip" href="#/stock/${sym}" aria-label="${sym} stock page"><b>${sym}</b> <span class="${c >= 0 ? 'gain' : 'loss'}">${pct(c)}</span> today${since ? ` · ${since} since` : ''}</a>`;
 }
 
-function newsSection(title, symbols, max = 5){
+function newsSection(title, symbols, max = 5, o = {}){
   if (!Store.site.news) return '';
-  const items = Store.news(symbols, 10);
-  if (items === null) return `<section class="block"><header><h2>${title}</h2></header><div class="list"><div class="empty">Loading headlines…</div></div></section>`;
-  return items.length ? `<section class="block"><header><h2>${title}</h2></header><div class="list">${newsRows(items, max)}</div>${newsNote()}</section>` : '';
+  const items = Store.news(symbols, o.more ? 20 : 10), idA = o.id ? ` id="${o.id}"` : '';
+  if (items === null) return `<section class="block"${idA}><header><h2>${title}</h2></header><div class="list"><div class="empty">Loading headlines…</div></div></section>`;
+  return items.length ? `<section class="block"${idA}><header><h2>${title}</h2></header><div class="list">${newsRows(items, max, o.sym)}</div>${o.more && items.length > 5 ? `<button class="linkbtn small" data-act="exall" data-k="${o.more}" style="margin-top:8px">${(ui.exAll || {})[o.more] ? 'Show fewer' : 'See all'}</button>` : ''}${newsNote()}</section>` : '';
 }
 
 function marketBrief(){
@@ -111,7 +115,7 @@ function vStock(sym){
       if (E) bits.push(`Next earnings: around ${fmtDay(E.next)} <span class="muted">(estimated from past SEC filings)</span>`);
       return bits.length ? `<div class="small" style="margin-top:12px;display:grid;gap:4px">${bits.map(b => `<div>${b}</div>`).join('')}</div>` : ''; })()}</div>
   ${pos ? `<section class="block"><header><h2>Your position</h2></header><div class="panel kv"><div><span>Shares</span><b>${shs(pos.shares)}</b></div><div><span>Market value</span><b data-hv="${sym}" data-sh="${pos.shares}">${usd(pos.shares * px)}</b></div><div><span>Average cost</span><b>${usd(pos.cost / pos.shares)}</b></div><div><span>Return</span><b class="${sgn(pos.shares * px / pos.cost - 1)}">${pct(pos.shares * px / pos.cost - 1)}</b></div></div></section>` : ''}
-  ${newsSection('News', [sym], 5)}
+  ${newsSection('News', [sym], 5, { sym })}
   ${groupsHolding.length ? `<section class="block"><header><h2>Groups invested in ${sym}</h2></header><div class="list">${groupsHolding.slice(0, 4).map(groupRow).join('')}</div></section>` : ''}
   ${postsHtml}`;
 }

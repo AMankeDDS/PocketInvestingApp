@@ -65,6 +65,7 @@ const A = {
   /* accounts */
   createAccount: body => call('POST', '/v1/accounts', body),
   getAccount: id => call('GET', `/v1/accounts/${id}`),
+  closeAccount: id => call('POST', `/v1/accounts/${id}/actions/close`),
   tradingAccount: id => call('GET', `/v1/trading/accounts/${id}/account`),
   positions: id => call('GET', `/v1/trading/accounts/${id}/positions`),
   /* orders */
