@@ -75,6 +75,9 @@ app.disable('x-powered-by');
 app.use(require('compression')());
 const jsonSmall = express.json({ limit: '50kb' }), jsonLarge = express.json({ limit: '8mb' });
 app.use((req, res, next) => (/^\/api\/club\/[^/]+\/(submit|taxdoc)$/.test(req.path) || req.path === '/api/photo' ? jsonLarge : jsonSmall)(req, res, next));
+const visitSeen = new Map();
+/* Referral links: pocketinvesting.com/r/CODE */
+app.get('/r/:code', (req, res) => res.redirect(302, '/#/ref/' + String(req.params.code || '').replace(/[^A-Za-z0-9]/g, '').slice(0, 16)));
 app.get(['/j/:code', '/j/:code/:by'], (req, res) => {
   const code = String(req.params.code || '').replace(/[^A-Za-z0-9]/g, '').slice(0, 16), by = String(req.params.by || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 40);
   res.redirect(302, '/#/invite/' + code + (by ? '/' + by : ''));
@@ -177,7 +180,8 @@ app.post('/api/signup', authLimit, wrap(async (req, res) => {
   const src = req.body.source && typeof req.body.source === 'object' ? req.body.source : {};
   const source = ginv ? 'group-invite' : ['ad', 'campaign'].includes(src.kind) ? src.kind : code ? 'beta-code' : 'direct';
   const sourceDetail = ginv ? ginv.id : String(src.detail || '').slice(0, 120) || null;
-  if (inviteOnly && !ENV_ADMINS.includes(username) && !ginv){
+  const rcode = clean(req.body.ref).toUpperCase().slice(0, 16), refBy = rcode ? (await q('SELECT id FROM users WHERE ref_code = $1', [rcode]).catch(() => ({ rows: [] }))).rows[0] : null;
+  if (inviteOnly && !ENV_ADMINS.includes(username) && !ginv && !refBy){
     if (!code) return bad(res, 'The beta is invite only. Enter your invite code.');
     const ic = (await q('SELECT * FROM invite_codes WHERE code = $1', [code])).rows[0];
     if (!ic || !ic.active || (ic.max_uses && ic.uses >= ic.max_uses)) return bad(res, "That invite code isn't valid or has been used up.");
@@ -188,6 +192,7 @@ app.post('/api/signup', authLimit, wrap(async (req, res) => {
   const { changes } = await db.withTx(async tx => {
     await tx.query('INSERT INTO users (id, username, display_name, pass_hash, invite_code, terms_accepted_at, terms_version, signup_source, signup_detail) VALUES ($1, $2, $3, $4, $5, now(), $6, $7, $8)', [id, username, name, hash, useCode, TERMS_VERSION, source, sourceDetail]);
     if (useCode) await tx.query('UPDATE invite_codes SET uses = uses + 1 WHERE code = $1', [useCode]);
+    if (refBy) await tx.query('UPDATE users SET referred_by = $2 WHERE id = $1', [id, refBy.id]);
     await createAccount(tx, id, name, risk);
   });
   broadcast(changes); logEvent(id, 'signup', { source });
@@ -225,6 +230,7 @@ app.post('/api/login', authLimit, wrap(async (req, res) => {
 app.post('/api/logout', wrap(async (req, res) => { const t = readCookie(req); if (t) await q('DELETE FROM sessions WHERE token = $1', [t]); clearCookie(res); ok(res); }));
 app.get('/api/me', wrap(async (req, res) => {
   const u = await currentUser(req); const c = ctxFor(u);
+  if (u && !u.acting_admin){ const day = new Date().toISOString().slice(0, 10); if (visitSeen.get(u.id) !== day){ visitSeen.set(u.id, day); logEvent(u.id, 'visit', {}); db.withTx(async tx => { if (await tx.get('profiles', 'u_' + u.id)) await tx.update('profiles', 'u_' + u.id, { lastActiveTs: Date.now() }); }).then(r => broadcast(r.changes)).catch(() => {}); } }
   const tf = u ? (await q('SELECT totp_enabled FROM users WHERE id = $1', [u.id])).rows[0] : null;
   res.json({ signedIn: !!u, pid: c.pid, username: u && u.username, name: u && u.display_name, isAdmin: c.isAdmin, inviteOnly: (await setting('inviteOnly', true)) !== false, pushKey: push.publicKey,
     actingAs: u && u.acting_admin ? { admin: ((await q('SELECT display_name FROM users WHERE id = $1', [u.acting_admin])).rows[0] || {}).display_name || 'Admin', until: new Date(u.session_expires).getTime() } : null, isTest: !!(u && u.is_test),
@@ -518,6 +524,7 @@ const realDeps = { broadcastRaw: (...a) => broadcastRaw(...a), securityEvent: (.
   isPro: async pid => { const r = await q('SELECT data FROM doc_profiles WHERE id = $1', [pid]); const p = r.rows[0] && r.rows[0].data; return !!p && (p.kind === 'demo' || p.plan === 'pro'); } };
 real.mount(app, realDeps);
 realDeps.push = push; realDeps.pool = db.pool; require('./realcopy').mount(app, realDeps);
+require('./referrals').mount(app, { q, wrap, ok, bad, needUser, needAdmin, db, broadcast: (...x) => broadcast(...x), push, sendTo });
 require('./badges').mount(app, { wrap, ok, bad, needAdmin, db, broadcast: (...x) => broadcast(...x), q });
 require('./photos').mount(app, { q, wrap, ok, bad, needUser, needAdmin, db, broadcast: (...x) => broadcast(...x) });
 require('./alerts').mount(app, { q, wrap, ok, bad, needUser, sendTo, push, db, getSetting: setting, setSetting, broadcast: (...a) => broadcast(...a), logic: require('./logic') });
@@ -555,6 +562,7 @@ app.get('*', (req, res) => res.sendFile(path.join(pub, 'index.html')));
 /* ---------- boot ---------- */
 (async () => {
   await db.migrate();
+  await require('./referrals').migrate(q);
   await real.migrate(q); await require('./realcopy').migrate(q); await require('./alerts').migrate(q); await require('./photos').migrate(q);
   if (!config.demoTools) await q(`INSERT INTO settings (key, value) VALUES ('clock', '"live"') ON CONFLICT (key) DO UPDATE SET value = '"live"'`).catch(() => {}); /* without demo tools, the market follows real hours */
   await marketdata.migrate(q);

@@ -268,3 +268,5 @@ textarea.input{resize:vertical; min-height:84px}
 .lowprice{background:var(--ember-soft);color:var(--ember-ink);border-color:transparent}
 @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]) .btn:not(.ghost):not(.ember):not(.danger){background:#2f6fe4} }
 :root[data-theme="dark"] .btn:not(.ghost):not(.ember):not(.danger){background:#2f6fe4}
+.seg{max-width:100%;overflow-x:auto;scrollbar-width:none}.seg::-webkit-scrollbar{display:none}
+.shell{overflow-x:clip}

@@ -134,7 +134,7 @@ function memberBadges(p, extra = []){
   if (!p) return []; const out = [];
   if (p.kind === 'demo') out.push({ n: 'Sample investor', c: '', d: 'A sample account used to show how Pocket works.' });
   else { const f = Store.get('badges', 'founding') || {}; if (!f.cutoff || (p.createdTs || 0) < Date.parse(f.cutoff + 'T00:00:00Z')) out.push({ n: 'Founding member', c: 'ember', d: f.desc || 'Joined Pocket before its public launch.' }); }
-  extra.forEach(x => x && out.push(x));
+  extra.forEach(x => x && out.push(x)); { const lb = typeof leaderBadge === 'function' ? leaderBadge(p.id) : null; if (lb) out.push(lb); }
   (p.badges || []).map(id => Store.get('badges', id)).filter(b => b && !b.retired && !b.builtin).forEach(b => out.push({ n: b.name, c: b.color || 'blue', d: b.desc || '' }));
   return out;
 }

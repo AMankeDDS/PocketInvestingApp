@@ -66,8 +66,8 @@ function vNotifySettings(){
     ${Store.site.news ? tog('n-nw', n.news === true, 'News about stocks I own or watch', 'Up to 3 a day, never during quiet hours') : ''}</div></section>
   <section class="block"><header><h2>Quiet hours</h2></header><div class="list">
     ${tog('n-qon', !!q.on, 'Pause alerts overnight', '')}
-    <div class="row"><div class="grow muted">From</div><input class="input" id="n-qs" type="time" value="${esc(q.start)}" style="width:auto"></div>
-    <div class="row"><div class="grow muted">Until</div><input class="input" id="n-qe" type="time" value="${esc(q.end)}" style="width:auto"></div>
+    <div class="row"><div class="grow muted">From</div><input class="input" id="n-qs" aria-label="Quiet hours start" type="time" value="${esc(q.start)}" style="width:auto"></div>
+    <div class="row"><div class="grow muted">Until</div><input class="input" id="n-qe" aria-label="Quiet hours end" type="time" value="${esc(q.end)}" style="width:auto"></div>
     ${tog('n-aq', n.approvalsInQuiet !== false, 'Still alert me for approval requests', "Approvals expire, so we recommend keeping this on")}</div></section>
   ${Store.myGroups().length ? `<section class="block"><header><h2>Groups</h2></header><div class="list">${Store.myGroups().map(g => tog('n-g-' + g.id, !muted.has(g.id), esc(g.name), '')).join('')}</div></section>` : ''}
   <p style="margin-top:18px"><button class="btn" data-act="savenotif">Save settings</button></p>`;

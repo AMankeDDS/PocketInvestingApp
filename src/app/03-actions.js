@@ -240,6 +240,18 @@ async function act(el, ev){ /* eslint-disable-line */
     case 'badgeaward': return busy(async () => { const u = ($('#bd-u-' + el.dataset.id) || {}).value || ''; await Store.http('POST', '/api/admin/badges/award', { id: el.dataset.id, username: u, remove: el.dataset.k === 'remove' }); toast(el.dataset.k === 'remove' ? 'Badge removed.' : 'Badge awarded.'); });
     case 'badgebulk': return busy(async () => { const d = ($('#bd-b-' + el.dataset.id) || {}).value; const r = await Store.http('POST', '/api/admin/badges/bulk', { id: el.dataset.id, joinedBefore: d }); toast(`Awarded to ${r.awarded} member${r.awarded === 1 ? '' : 's'}.`); });
     case 'badgeretire': return busy(async () => { await Store.http('POST', '/api/admin/badges', { op: 'retire', id: el.dataset.id, retired: el.dataset.k === 'retire' }); });
+    case 'vacation': return vacationSheet(el.dataset.gid);
+    case 'vacationend': if (!confirm('End vacation mode now?')) return; return busy(async () => { await Store.http('POST', '/api/action/endVacation', { gid: el.dataset.gid }); toast('Vacation mode ended.'); });
+    case 'awaypropose': return awaySheet(el.dataset.gid, el.dataset.k);
+    case 'adminrole': return busy(async () => { const pid = ($('#ar-' + el.dataset.gid) || {}).value; await Store.http('POST', '/api/action/adminSetRole', { gid: el.dataset.gid, role: el.dataset.k, pid }); toast('Role updated.'); });
+    case 'leaderrule': return busy(async () => { await Store.http('POST', '/api/admin/badges', { op: 'leader', copiers: +$('#lr-c').value, members: +$('#lr-m').value }); toast('Milestone saved.'); });
+    case 'shareleader': { const url = location.origin + '/#/u/' + Store.myPid; if (navigator.share) return navigator.share({ title: 'Pocket Leader', text: "I'm a Pocket Leader on Pocket Investing.", url }).catch(() => {}); try { navigator.clipboard.writeText(url); toast('Profile link copied.'); } catch(e){} return; }
+    case 'sharelink': { const url = el.dataset.k; if (navigator.share) return navigator.share({ title: 'Join me on Pocket', url }).catch(() => {}); try { navigator.clipboard.writeText(url); toast('Invite link copied.'); } catch(e){} return; }
+    case 'ciscore': ui.ciScore = +el.dataset.k; return render();
+    case 'cisend': return busy(async () => { await Store.http('POST', '/api/checkin', { score: ui.ciScore, comment: ($('#ci-t') || {}).value || '' }); ui.checkinHidden = true; toast('Thanks for the feedback.'); render(); });
+    case 'ciskip': ui.checkinHidden = true; Store.http('POST', '/api/checkin', { skip: true }).catch(() => {}); return render();
+    case 'a2hs': if (a2hsEvent){ a2hsEvent.prompt(); a2hsEvent = null; } return render();
+    case 'a2hsoff': try { localStorage.setItem('pi_a2hs_off', '1'); } catch(e){} return render();
     case 'exall': ui.exAll = Object.assign({}, ui.exAll, { [el.dataset.k]: !(ui.exAll || {})[el.dataset.k] }); return render();
     case 'photo': return photoSheet({ target: el.dataset.k || 'me', gid: el.dataset.gid || null });
     case 'reportphoto': if (!confirm('Report this profile photo to the Pocket team?')) return; return busy(async () => { await Store.http('POST', '/api/action/report', { kind: 'photo', pid: el.dataset.id, reason: 'photo' }); toast('Thanks. The Pocket team will review it.'); });

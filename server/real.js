@@ -394,6 +394,7 @@ function startSync(d){
           await q('UPDATE real_transfers SET status = $1, updated_at = now() WHERE id = $2', [r.status, t.id]);
           sendTo(t.user_id, { type: 'real', what: 'transfer', status: r.status, direction: t.direction, amount: Number(t.amount) });
           await settleInstant(q, t, r.status, aid);
+          if (r.status === 'COMPLETE' && t.direction === 'INCOMING') require('./referrals').onDeposit(t.user_id, Number(t.amount)).catch(e => console.error('referral', e.message));
         }
       }
     } catch (e){}

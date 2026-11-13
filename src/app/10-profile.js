@@ -91,6 +91,7 @@ function vProfile(pid){
       <button class="btn sm ghost" data-act="copyonce" data-id="${pid}" ${Store.site.realMoney ? 'hidden' : ''}>Copy their portfolio</button>` : '')}</div></div>
   ${!self && Store.isCopying(pid) ? `<div class="banner ember" style="margin-top:16px">You copy ${esc(Store.displayName(pid))}. Each of their trades sends you an approval request sized to your capital.</div>` : ''}
   ${Store.site.realMoney ? '<section class="block"><header><h2>Track record</h2></header><div class="panel empty">Track record starts with your first real trade.</div></section>' : trackRecord('investor', pid)}
+  ${self && !Store.site.demoSite ? leaderCard(pid) + referralCard() : ''}
   ${self ? securityActivity() : ''}
   ${self ? `<section class="block"><header><h2>Practice tools</h2></header><div class="list">
       <a class="row" href="#/alerts"><div class="grow"><b>Price alerts</b><div class="small muted">Get notified when a stock crosses a price or makes a big move</div></div><span class="muted">›</span></a>

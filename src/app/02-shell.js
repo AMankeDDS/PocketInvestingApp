@@ -68,6 +68,7 @@ function render(){
     case 'admin': html = vAdmin(); break;
     case 'settings': html = vNotifySettings(); break;
     case 'invite': html = vInvite(r.a, r.b); break;
+    case 'ref': html = vRef(r.a); break;
     case 'signup': try { if (r.a) sessionStorage.setItem('pi_invite_code', r.a); } catch(e){} html = Store.signedIn ? vHome() : vOnboard(); break;
     case 'digest': html = vDigest(); break;
     case 'metrics': html = vMetrics(); break;

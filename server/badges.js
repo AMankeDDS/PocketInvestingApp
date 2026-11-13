@@ -8,6 +8,8 @@ function mount(app, d){
   app.post('/api/admin/badges', wrap(async (req, res) => { if (!(await needAdmin(req, res))) return; const b = req.body || {};
     if (b.op === 'founding'){ const c = b.cutoff ? String(b.cutoff).slice(0, 10) : null; if (c && !/^\d{4}-\d{2}-\d{2}$/.test(c)) return bad(res, 'Pick a date.');
       await tx(t => t.set('badges', 'founding', { builtin: true, name: 'Founding member', color: 'ember', desc: 'Joined Pocket before its public launch.', cutoff: c })); return ok(res); }
+    if (b.op === 'leader'){ const c = Math.max(1, Math.min(10000, Math.round(Number(b.copiers) || 25))), m = Math.max(2, Math.min(10000, Math.round(Number(b.members) || 10)));
+      await tx(t => t.set('badges', 'leaderRule', { builtin: true, name: 'Pocket Leader', copiers: c, members: m })); return ok(res); }
     const name = clean(b.name, 24), color = COLORS.includes(b.color) ? b.color : 'blue', desc = clean(b.desc, 120);
     if (b.op === 'create'){ if (!name) return bad(res, 'Give the badge a name.'); const id = await tx(async t => { const id = t.newId(); await t.set('badges', id, { name, color, desc, createdTs: Date.now(), retired: false }); return id; }); return ok(res, { id }); }
     const id = String(b.id || ''); if (!id || id === 'founding') return bad(res, 'Badge not found.');

@@ -44,7 +44,10 @@ function pv(pf, now = Date.now()){ if (!pf) return 0; let v = pf.cash || 0; for 
 function requestState(r, now = Date.now()){ if (r.status === 'pending' && now > r.expiresTs) return 'expired'; return r.status; }
 async function isPro(tx, pid){ const p = await tx.get('profiles', pid); return !!p && (p.kind === 'demo' || p.plan === 'pro'); }
 async function isDemo(tx, pid){ const p = await tx.get('profiles', pid); return !!p && p.kind === 'demo'; }
-async function roleIn(tx, gid, pid){ const m = await tx.get('memberships', gid + '__' + pid); return m && m.role; }
+async function roleIn(tx, gid, pid){ const m = await tx.get('memberships', gid + '__' + pid); if (!m) return m && m.role;
+  /* Vacation mode: the stand-in has the away Owner's powers until the return date. */
+  if (m.role !== 'owner'){ const g = await tx.get('groups', gid), v = g && g.vacation; if (v && v.role === 'owner' && v.standIn === pid && v.until > Date.now()) return 'owner'; }
+  return m.role; }
 async function needProfile(tx, ctx){ if (!ctx.pid) throw fail('Sign in first.'); const p = await tx.get('profiles', ctx.pid); if (!p) throw fail('Your account has no profile yet.'); return p; }
 const needAdmin = ctx => { if (!ctx.isAdmin) throw fail(ctx.adminPending ? 'Turn on two-step sign-in in your Profile to use admin tools.' : 'Only demo admins can do that.'); };
 
@@ -617,7 +620,13 @@ A.newInviteCode = async (tx, ctx, a) => { if (!canManage(await roleIn(tx, a.gid,
 A.setCopyPct = async (tx, ctx, a) => { if (!(await roleIn(tx, a.gid, ctx.pid))) throw fail('Join the group first.'); await tx.update('memberships', a.gid + '__' + ctx.pid, { copyPct: Math.max(0.1, Math.min(1, num(a.pct))) }); };
 A.propose = async (tx, ctx, a) => {
   const g = await tx.get('groups', a.gid); if (!g) throw fail('Group not found.'); const rules = rulesOf(g);
-  if (!canPropose(await roleIn(tx, a.gid, ctx.pid), rules)) throw fail("Your role can't create proposals in this group.");
+  const myRole = await roleIn(tx, a.gid, ctx.pid);
+  /* Away leader: after 30 days without activity from the Owner or Lead Trader, any voting member can propose a replacement. */
+  if (a.away){ if (!myRole || myRole === 'observer') throw fail('Join the group first.'); if (a.type !== 'role' || !['owner', 'lead'].includes(a.roleName)) throw fail('Pick the Owner or Lead Trader role.');
+    const holder = a.roleName === 'owner' ? g.ownerPid : g.leadPid, hp = await tx.get('profiles', holder) || {};
+    if (g.vacation && g.vacation.until > Date.now()) throw fail('The leader is on vacation with a stand-in in charge.');
+    if (Date.now() - (hp.lastActiveTs || hp.createdTs || Date.now()) < 30 * 86400000) throw fail('The leader has been active in the last 30 days.'); }
+  else if (!canPropose(myRole, rules)) throw fail("Your role can't create proposals in this group.");
   if (a.type === 'trade' && a.sym) checkAllowed(rules, a.sym);
   const title = str(a.title, 120).trim(); if (!title) throw fail('Give the proposal a title.');
   const now = Date.now(), type = ['trade','strategy','policy','role','windDown'].includes(a.type) ? a.type : 'trade';
@@ -628,7 +637,7 @@ A.propose = async (tx, ctx, a) => {
     const tm = await tx.get('memberships', a.gid + '__' + a.rolePid); if (!tm) throw fail('Pick a member of the group.');
     if (!ROLES.includes(a.roleName) || a.roleName === tm.role) throw fail('Pick a new role for them.');
     if (a.roleName !== 'observer' && !(await isPro(tx, a.rolePid))) throw fail('That person needs Pro for this role.');
-    extra = { rolePid: a.rolePid, roleName: a.roleName, roleFrom: tm.role };
+    extra = { rolePid: a.rolePid, roleName: a.roleName, roleFrom: tm.role, away: !!a.away };
   }
   const id = tx.newId();
   await tx.set('proposals', id, Object.assign({ gid: a.gid, authorPid: ctx.pid, type, title, details: str(a.details, 800), createdTs: now, deadlineTs: now + Math.max(1, Math.min(14, Number(a.days) || rules.votingDays)) * 86400000, status: 'open' }, extra));
@@ -642,9 +651,37 @@ A.closeProposal = async (tx, ctx, a) => {
   await tx.update('proposals', a.prid, { status: t.result, closedTs: Date.now() });
   await settleReviews(tx);
 };
+/* Vacation mode: the Owner or Lead Trader names a stand-in until a return date (up to 90 days). */
+A.startVacation = async (tx, ctx, a) => {
+  const g = await tx.get('groups', a.gid); if (!g) throw fail('Group not found.');
+  const role = a.role === 'lead' ? 'lead' : 'owner'; if ((role === 'owner' ? g.ownerPid : g.leadPid) !== ctx.pid) throw fail(role === 'owner' ? 'Only the Owner can do that.' : 'Only the Lead Trader can do that.');
+  if (g.vacation && g.vacation.until > Date.now()) throw fail('A vacation is already set. End it first.');
+  const sm = await tx.get('memberships', a.gid + '__' + a.standIn); if (!sm || sm.role === 'observer' || a.standIn === ctx.pid) throw fail('Pick another member of the group.');
+  if (role === 'lead' && !(await isPro(tx, a.standIn))) throw fail('That member needs Pro to be the stand-in Lead Trader.');
+  const until = Date.parse(String(a.until || '') + 'T23:59:00'); if (!(until > Date.now()) || until > Date.now() + 90 * 86400000) throw fail('Pick a return date within the next 90 days.');
+  const v = { role, byPid: ctx.pid, standIn: a.standIn, until, startedTs: Date.now(), prevLead: role === 'lead' ? g.leadPid : null };
+  await tx.update('groups', a.gid, Object.assign({ vacation: v }, role === 'lead' ? { leadPid: a.standIn } : {}));
+  const ms = (await tx.find('memberships', { gid: a.gid })).map(m => m.pid), who = ((await tx.get('profiles', ctx.pid)) || {}).name || 'The leader', st = ((await tx.get('profiles', a.standIn)) || {}).name || 'A member';
+  notify(tx, ms.filter(p => p !== ctx.pid), { title: `${who} is away until ${new Date(until).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`, body: `${st} is in charge of ${g.name} until then.`, url: '/#/group/' + a.gid, tag: 'vac-' + a.gid });
+};
+async function endVacation(tx, gid, why){
+  const g = await tx.get('groups', gid); const v = g && g.vacation; if (!v) return;
+  const patch = { vacation: null };
+  if (v.role === 'lead' && g.leadPid === v.standIn){ const back = v.prevLead && (await tx.get('memberships', gid + '__' + v.prevLead)) ? v.prevLead : g.ownerPid; patch.leadPid = back; }
+  await tx.update('groups', gid, patch);
+  notify(tx, (await tx.find('memberships', { gid })).map(m => m.pid), { title: `${((await tx.get('profiles', v.byPid)) || {}).name || 'The leader'} is back`, body: why || `Vacation mode for ${g.name} has ended.`, url: '/#/group/' + gid, tag: 'vac-' + gid });
+}
+A.endVacation = async (tx, ctx, a) => { const g = await tx.get('groups', a.gid); const v = g && g.vacation; if (!v) return; if (![v.byPid, v.standIn].includes(ctx.pid) && !ctx.isAdmin) throw fail('Only the leader or the stand-in can end vacation mode.'); await endVacation(tx, a.gid); };
+/* Pocket admins can hand the Owner or Lead Trader role to another member when a group can't vote. */
+A.adminSetRole = async (tx, ctx, a) => { needAdmin(ctx); const g = await tx.get('groups', a.gid); if (!g) throw fail('Group not found.'); const tm = await tx.get('memberships', a.gid + '__' + a.pid); if (!tm) throw fail('Pick a member of the group.');
+  if (a.role === 'owner'){ await tx.update('memberships', a.gid + '__' + g.ownerPid, { role: 'admin', roleChangedTs: Date.now() }); await tx.update('memberships', a.gid + '__' + a.pid, { role: 'owner', roleChangedTs: Date.now() }); await tx.update('groups', a.gid, { ownerPid: a.pid }); }
+  else if (a.role === 'lead'){ await tx.update('memberships', a.gid + '__' + a.pid, { role: 'lead', roleChangedTs: Date.now() }); await tx.update('groups', a.gid, { leadPid: a.pid }); }
+  else throw fail('Pick Owner or Lead Trader.');
+  notify(tx, (await tx.find('memberships', { gid: a.gid })).map(m => m.pid), { title: `New ${a.role === 'owner' ? 'Owner' : 'Lead Trader'} for ${g.name}`, body: `The Pocket team made ${((await tx.get('profiles', a.pid)) || {}).name || 'a member'} ${a.role === 'owner' ? 'Owner' : 'Lead Trader'} because the previous one was away.`, url: '/#/group/' + a.gid, tag: 'role-' + a.gid }); };
 A.executeProposal = async (tx, ctx, a) => {
   const pr = await tx.get('proposals', a.prid); if (!pr) throw fail('Proposal not found.');
-  if (!canTradeFor(await roleIn(tx, pr.gid, ctx.pid))) throw fail('Only Owners, Admins and Lead Traders can execute a decision.');
+  const r0 = await roleIn(tx, pr.gid, ctx.pid);
+  if (!(canTradeFor(r0) || (pr.away && r0 && r0 !== 'observer'))) throw fail('Only Owners, Admins and Lead Traders can execute a decision.');
   return executeProposal(tx, a.prid, ctx.pid);
 };
 A.post = async (tx, ctx, a) => {
@@ -878,6 +915,7 @@ A.resetAll = async (tx, ctx) => { needAdmin(ctx); return require('./seed').reset
 
 /* background job: expire stale requests and fill buy-at-open orders */
 async function housekeeping(tx){
+  for (const g of await tx.find('groups', {})) if (g.vacation && g.vacation.until <= Date.now()) await endVacation(tx, g.id, 'The return date has passed, so vacation mode ended.');
   const mode = await clockMode(tx), now = Date.now(); let n = 0;
   for (const r of await tx.find('copyRequests', { status: 'pending' })) if (requestState(r, now) === 'expired'){ await tx.update('copyRequests', r.id, { status: 'expired' }); n++; }
   for (const rv of await tx.find('reviews', { status: 'pending' })) if (now > rv.expiresTs){ await releaseReview(tx, rv, 'auto'); n++; }
