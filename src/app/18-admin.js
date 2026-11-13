@@ -62,7 +62,7 @@ function vAdmin(){
     <section class="panel" style="padding:18px 20px;margin-top:16px"><h2>Read-only mode</h2><p class="muted small">Blocks trades, transfers, approvals and other changes for everyone except admins, with a banner explaining why. Use it while fixing an issue.</p>
       ${(Store.maintenance || {}).on ? `<p><b>Read-only mode is on.</b></p><button class="btn" data-act="adm-ro" data-k="0">Turn it off</button>` : `<input class="input" id="adm-ro-m" aria-label="Read-only message" maxlength="300" placeholder="Optional message, e.g. We're fixing a delay with deposits."><p style="margin-top:10px"><button class="btn ghost" data-act="adm-ro" data-k="1">Turn on read-only mode</button></p>`}</section>`;
   return `<div class="pagehead"><div><h1>Beta admin</h1><p class="muted">Beta metrics, testers, invite codes, feedback and error reports.</p></div><button class="btn ghost sm" data-act="adm-refresh">Refresh</button></div>
-    <nav class="tabs">${T.map(([k, l]) => `<a href="#/admin" class="${tab === k ? 'on' : ''}" data-act="adm-tab" data-k="${k}">${l}</a>`).join('')}</nav>${body}${reportsPanel()}`;
+    <nav class="tabs">${T.map(([k, l]) => `<a href="#/admin" class="${tab === k ? 'on' : ''}" data-act="adm-tab" data-k="${k}">${l}</a>`).join('')}</nav>${body}${badgesPanel()}${reportsPanel()}`;
 }
 
 function adminLogView(){
@@ -217,4 +217,20 @@ function adminReplication(){
     ${X.map(t => { const n = t.followers.length, f = t.followers.filter(x => x.status === 'filled').length, bad = t.followers.filter(x => ['failed'].includes(x.status)).length;
       return `<section class="block"><header style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><h2>${esc(t.leader)} ${t.side === 'buy' ? 'bought' : 'sold'} ${shs(t.qty)} ${esc(t.sym)} at ${usd(t.price)}</h2><span class="small muted">${ago(t.ts)} ago · ${f} of ${n} filled${bad ? ` · <span class="loss">${bad} failed</span>` : ''}</span></header>
         <div class="panel mtable"><table><thead><tr><th>Follower</th><th>Status</th><th>Suggested</th><th>Filled</th><th>Fill price</th><th>Slippage</th><th>Note</th></tr></thead><tbody>${t.followers.map(x => `<tr><td>${esc(x.follower)}${x.gid ? ' <span class="small muted">(group)</span>' : ''}</td><td class="${x.status === 'failed' ? 'loss' : ''}">${S[x.status] || x.status}</td><td>${x.suggested ? shs(x.suggested) : ''}</td><td>${x.filledQty != null ? shs(x.filledQty) : ''}</td><td>${x.fillPrice ? usd(x.fillPrice) : ''}</td><td>${x.slip != null ? (x.slip * 100).toFixed(2) + '%' : ''}</td><td style="white-space:normal">${esc(x.reason || '')}</td></tr>`).join('')}</tbody></table></div></section>`; }).join('') || '<div class="panel empty">No copied real-money trades yet. Have a test account trade while others copy it.</div>'}`;
+}
+
+/* Badges the Pocket team manages. */
+function badgesPanel(){
+  const all = Store.all('badges').filter(b => !b.builtin).sort((x, y) => (x.retired ? 1 : 0) - (y.retired ? 1 : 0) || (y.createdTs || 0) - (x.createdTs || 0));
+  const f = Store.get('badges', 'founding') || {}, held = id => Store.all('profiles').filter(p => (p.badges || []).includes(id)).length;
+  const colors = [['blue', 'Blue'], ['ember', 'Orange'], ['green', 'Green'], ['purple', 'Purple'], ['gray', 'Gray']];
+  return `<section class="panel" style="padding:20px;margin-top:16px"><h2>Badges</h2><p class="muted small">Badges show on profiles and next to names in member lists. Stick to membership and roles; badges that suggest skill or results should be cleared with counsel first.</p>
+    <div class="row" style="flex-wrap:wrap;gap:10px"><div class="grow" style="min-width:200px"><span class="tag ember">Founding member</span><div class="small muted">${f.cutoff ? 'Accounts created before ' + esc(f.cutoff) : 'Every account, until you set a cutoff date'}</div></div>
+      <input class="input" type="date" id="bd-cut" value="${esc(f.cutoff || '')}" style="width:auto"><button class="btn sm" data-act="badgefounding">Save cutoff</button></div>
+    <h3 style="margin-top:16px">New badge</h3><div class="grid2"><div class="field"><label for="bd-n">Name</label><input class="input" id="bd-n" maxlength="24" placeholder="e.g. Beta tester"></div><div class="field"><label for="bd-c">Color</label><select class="input" id="bd-c">${colors.map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select></div></div>
+    <div class="field"><label for="bd-d">Description, shown when tapped</label><input class="input" id="bd-d" maxlength="120" placeholder="e.g. Helped test Pocket during the beta."></div><button class="btn sm" data-act="badgecreate">Create badge</button>
+    <div class="list" style="margin-top:14px">${all.map(b => `<div class="row" style="flex-wrap:wrap;gap:8px;${b.retired ? 'opacity:.6' : ''}"><div class="grow" style="min-width:180px"><span class="tag ${b.color || 'blue'}">${esc(b.name)}</span> <span class="small muted">${held(b.id)} member${held(b.id) === 1 ? '' : 's'}${b.retired ? ' · retired' : ''}</span><div class="small muted">${esc(b.desc || '')}</div></div>
+      <input class="input" id="bd-u-${b.id}" placeholder="username" style="width:130px"><button class="btn sm ghost" data-act="badgeaward" data-id="${b.id}">Award</button><button class="btn sm ghost" data-act="badgeaward" data-id="${b.id}" data-k="remove">Remove</button>
+      <input class="input" type="date" id="bd-b-${b.id}" style="width:auto" aria-label="Joined before"><button class="btn sm ghost" data-act="badgebulk" data-id="${b.id}">Award to all who joined before</button>
+      <button class="btn sm ghost" data-act="badgeretire" data-id="${b.id}" data-k="${b.retired ? 'restore' : 'retire'}">${b.retired ? 'Restore' : 'Retire'}</button></div>`).join('') || '<div class="empty">No badges yet.</div>'}</div></section>`;
 }

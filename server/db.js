@@ -4,7 +4,7 @@ const { Pool } = require('pg');
 const crypto = require('crypto');
 
 const COLS = ['profiles','portfolios','groups','memberships','posts','reactions','comments','follows','proposals','votes',
-  'copyRequests','trades','copies','reports','joinRequests','reviews','suggestions','dividends','meetings','groupWatch','studies','recurring'];
+  'copyRequests','trades','copies','reports','joinRequests','reviews','suggestions','dividends','meetings','groupWatch','studies','recurring','badges'];
 const LIMITED = { posts: 400, trades: 400, comments: 400, dividends: 400 };
 const table = col => 'doc_' + col.replace(/[A-Z]/g, c => '_' + c.toLowerCase());
 

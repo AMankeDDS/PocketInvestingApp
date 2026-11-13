@@ -37,11 +37,11 @@ function marketStatusLine(){
 function exploreMarket(){
   const D = exploreData(), sectorOf = s => (D.industries[s] || {}).sector || SECTOR[s] || null;
   const live = s => !Store.site.realPrices || Market.isReal(s);
-  const uni = Market.LIST.map(t => t.s).filter(s => !SMALL_CAPS.has(s) && !(Market.ETFS_UI || []).includes(s) && !INDEXES.some(i => i[0] === s) && Market.price(s) >= 1 && live(s));
+  const uni = Market.LIST.map(t => t.s).filter(s => !SMALL_CAPS.has(s) && !(Market.ETFS_UI || []).includes(s) && !INDEXES.some(i => i[0] === s) && Market.price(s) >= 5 && live(s)); /* the movers and On Pocket lists show stocks priced $5 and up */
   const chg = s => Market.dayChange(s), sec = (key, title, inner, extra = '') => inner ? `<section class="block" id="ex-${key}"><header style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h2>${title}</h2>${extra}</header>${inner}</section>` : '';
   /* market at a glance */
   const idx = INDEXES.filter(([s]) => Market.MAP[s]);
-  const glance = idx.length ? `${marketStatusLine() ? `<p class="small muted" style="margin:-4px 0 10px">${marketStatusLine()}</p>` : ''}<div class="exstrip">${idx.map(([s, n]) => `<a class="panel" href="#/stock/${s}"><div class="small muted">${n}</div><div style="display:flex;justify-content:space-between;align-items:flex-end;gap:8px"><div><b class="num">${usd(Market.price(s))}</b><div class="small num ${sgn(chg(s))}">${pct(chg(s))}</div></div>${mini(s)}</div></a>`).join('')}</div><p class="hint" style="margin:8px 0 0">Shown through each index's fund (${idx.map(i => i[0]).join(', ')}).</p>` : '';
+  const glance = idx.length ? `${marketStatusLine() ? `<p class="small muted" style="margin:-4px 0 10px;display:flex;align-items:center;gap:6px"><span class="dot" style="background:${/open ·/.test(marketStatusLine()) ? 'var(--gain)' : 'var(--loss)'}"></span>${marketStatusLine()}</p>` : ''}<div class="exstrip">${idx.map(([s, n]) => `<a class="panel" href="#/stock/${s}"><div class="small muted">${n}</div><div style="display:flex;justify-content:space-between;align-items:flex-end;gap:8px"><div><b class="num">${usd(Market.price(s))}</b><div class="small num ${sgn(chg(s))}">${pct(chg(s))}</div></div>${mini(s)}</div></a>`).join('')}</div><p class="hint" style="margin:8px 0 0">Shown through each index's fund (${idx.map(i => i[0]).join(', ')}).</p>` : '';
   /* movers */
   const tab = ui.exMovers || 'gainers', fs = ui.exSector || null, pool = uni.filter(s => !fs || sectorOf(s) === fs);
   const list = tab === 'losers' ? pool.filter(s => chg(s) < 0).sort((a, b) => chg(a) - chg(b)) : pool.filter(s => chg(s) > 0).sort((a, b) => chg(b) - chg(a));
@@ -50,20 +50,23 @@ function exploreMarket(){
     <div class="list">${list.slice(0, (ui.exAll || {}).movers ? 20 : 5).map(s => stockRow(s)).join('') || '<div class="empty">No moves to show yet today.</div>'}</div>${list.length > 5 ? `<button class="linkbtn small" data-act="exall" data-k="movers" style="margin-top:8px">${(ui.exAll || {}).movers ? 'Show fewer' : 'See all'}</button>` : ''}`;
   /* sectors */
   const by = {}; uni.forEach(s => { const k = sectorOf(s); if (!k) return; (by[k] = by[k] || []).push(chg(s)); });
-  const sectors = Object.entries(by).filter(([, v]) => v.length >= 2).map(([k, v]) => [k, v.reduce((a, b) => a + b, 0) / v.length, v.length]).sort((a, b) => b[1] - a[1]);
+  const FUNDS = [['Technology', 'XLK'], ['Financials', 'XLF'], ['Health care', 'XLV'], ['Energy', 'XLE'], ['Consumer', 'XLY'], ['Consumer staples', 'XLP'], ['Industrials', 'XLI'], ['Materials', 'XLB'], ['Utilities', 'XLU'], ['Real estate', 'XLRE'], ['Communication', 'XLC']].filter(([, f]) => Market.MAP[f] && Market.isReal(f));
+  const byFund = Store.site.realPrices && FUNDS.length >= 6;
+  const sectors = byFund ? FUNDS.map(([k, f]) => [k, chg(f), f]).sort((a, b) => b[1] - a[1]) : Object.entries(by).filter(([, v]) => v.length >= 2).map(([k, v]) => [k, v.reduce((a, b) => a + b, 0) / v.length, v.length]).sort((a, b) => b[1] - a[1]);
   const tiles = sectors.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px">${sectors.map(([k, a, n]) => { const t = Math.min(1, Math.abs(a) / 0.03);
-      return `<button class="panel" data-act="exsector" data-k="${esc(k)}" aria-pressed="${fs === k}" style="padding:12px 14px;text-align:left;cursor:pointer;border:${fs === k ? '2px solid var(--blue)' : '1px solid var(--line)'};background:color-mix(in srgb, ${a >= 0 ? 'var(--gain)' : 'var(--loss)'} ${Math.round(8 + t * 22)}%, var(--surface))"><b style="display:block">${esc(k)}</b><span class="num ${sgn(a)}">${pct(a)}</span> <span class="small muted">${n} stocks</span></button>`; }).join('')}</div><p class="hint" style="margin:8px 0 0">Average move of the stocks Pocket tracks in each sector, based on SEC industry codes. Tap one to filter the movers.</p>` : '';
+      return `<button class="panel" data-act="exsector" data-k="${esc(k)}" aria-pressed="${fs === k}" style="padding:12px 14px;text-align:left;cursor:pointer;border:${fs === k ? '2px solid var(--blue)' : '1px solid var(--line)'};background:color-mix(in srgb, ${a >= 0 ? 'var(--gain)' : 'var(--loss)'} ${Math.round(8 + t * 22)}%, var(--surface))"><b style="display:block">${esc(k)}</b><span class="num ${sgn(a)}">${pct(a)}</span> <span class="small muted">${typeof n === 'string' ? n : n + ' stocks'}</span></button>`; }).join('')}</div><p class="hint" style="margin:8px 0 0">${byFund ? 'Each sector\'s move today, measured by its sector fund (for example XLK for Technology). Tap one to filter the movers.' : 'Average move of the stocks Pocket tracks in each sector, based on SEC industry codes. Tap one to filter the movers.'}</p>` : '';
   /* on Pocket */
   const day = Date.now() - 86400000, week = Date.now() - 7 * 86400000, cnt = arr => Object.entries(arr.reduce((m, s) => (m[s] = (m[s] || 0) + 1, m), {})).filter(([s]) => Market.MAP[s]).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const floor = arr => arr.filter(([s]) => Market.price(s) >= 5);
   const bought = cnt(Store.all('trades').filter(t => t.ts > day && t.side === 'buy' && !t.copyOf).map(t => t.sym));
   const watched = cnt(Store.all('profiles').flatMap(p => p.watchlist || []));
   const talked = cnt(Store.all('posts').filter(p => p.ts > week).flatMap(p => [...new Set(((p.text || '').match(/\$([A-Z]{1,5})\b/g) || []).map(x => x.slice(1)))]));
-  const col = (title, rows, unit) => `<div class="panel" style="padding:14px 16px"><b>${title}</b><div class="list" style="margin-top:8px">${rows.map(([s, n]) => `<a class="row" href="#/stock/${s}" style="padding:8px 0"><div class="grow"><b class="sym">${s}</b></div><span class="small muted">${n} ${unit}${n === 1 ? '' : 's'}</span></a>`).join('') || '<div class="small muted">Nothing yet.</div>'}</div></div>`;
+  const col = (title, rows, unit) => { rows = floor(rows); return `<div class="panel" style="padding:14px 16px"><b>${title}</b>${rows.length ? `<div class="plainlist">${rows.map(([s, n]) => `<a class="prow" href="#/stock/${s}"><b class="sym" style="flex:1">${s}</b><span class="small muted">${n} ${unit}${n === 1 ? '' : 's'}</span></a>`).join('')}</div>` : '<p class="small muted" style="margin:8px 0 0">Nothing yet.</p>'}</div>`; };
   const onPocket = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">${col('Bought most today', bought, 'buy')}${col('Most watched', watched, 'watcher')}${col('Most discussed this week', talked, 'post')}</div>`;
   /* related to what you own */
   const R = D.related; let related = '';
   if (Store.signedIn && R){
-    if (!R.own.length) related = `<div class="panel empty">Make a practice trade or join a group, and companies related to what you own will show up here.</div>`;
+    if (!R.own.length) related = `<div class="panel empty">${Store.site.realMoney ? 'Make your first trade' : 'Make a practice trade'} or join a group, and companies related to what you own will show up here.</div>`;
     else { const chips = syms => syms.map(s => `<a class="tag" href="#/stock/${s}" style="text-decoration:none">${s}</a>`).join(' ');
       const peerRows = Object.entries(R.peers || {}).slice(0, 5).map(([s, p]) => `<div class="row" style="flex-wrap:wrap;gap:8px"><div class="grow" style="min-width:180px"><b>Same industry as ${s}</b><div class="small muted">${esc(p.industry)}${R.fromGroups.includes(s) ? ', held by your group' : ''}</div></div><div>${chips(p.syms)}</div></div>`).join('');
       related = `<div class="list">${peerRows}${R.alsoHeld.length ? `<div class="row" style="flex-wrap:wrap;gap:8px"><div class="grow" style="min-width:180px"><b>Members who own your stocks also hold</b><div class="small muted">Counted across members, at least 3 each</div></div><div>${chips(R.alsoHeld.map(x => x.sym))}</div></div>` : ''}${!peerRows && !R.alsoHeld.length ? '<div class="empty">No related companies found yet. Industry details fill in over the next day.</div>' : ''}</div>
@@ -76,9 +79,9 @@ function exploreMarket(){
   const events = (D.events || []).length ? `<div class="list">${D.events.map(e => `<div class="row" style="flex-wrap:wrap"><div class="grow" style="min-width:200px"><b>${esc(e.title)}</b>${e.note ? `<div class="small muted">${esc(e.note)}</div>` : ''}<div style="margin-top:4px">${(e.syms || []).map(s => `<a class="tag" href="#/stock/${s}" style="text-decoration:none">${s}</a>`).join(' ')}</div></div><span class="small">${fmtDay(e.date)}</span></div>`).join('')}</div>` : '';
   const newsSyms = [...new Set(list.slice(0, 6).concat((R && R.own) || []))].slice(0, 12);
   return `${sec('market', 'Market at a glance', glance)}
-    ${sec('movers', "Today's movers", movers, '<span class="small muted">Biggest moves today, not recommendations</span>')}
+    ${sec('movers', "Today's movers", movers, '<span class="small muted">Biggest moves today, not recommendations. Stocks priced $5 and up.</span>')}
     ${sec('sectors', 'Sectors today', tiles)}
-    ${sec('onpocket', 'On Pocket', onPocket)}
+    ${sec('onpocket', 'On Pocket', onPocket, '<span class="small muted">Stocks priced $5 and up</span>')}
     ${related ? sec('related', 'Related to what you own', related) : ''}
     ${sec('earnings', 'Earnings this week', earnings)}
     ${sec('events', 'Coming up', events, '<span class="small muted">Launches, conferences and other dates to know</span>')}

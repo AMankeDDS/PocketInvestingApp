@@ -6,7 +6,7 @@ function searchSheet(){
     <div id="sr" aria-live="polite"></div>`, sh => {
     const box = sh.querySelector('#sq'), out = sh.querySelector('#sr');
     const row = (href, title, sub, key) => `<a class="row" href="${href}" data-recent="${key || ''}"><div class="grow"><b>${title}</b><div class="small muted">${sub}</div></div><span class="muted">›</span></a>`;
-    const draw = () => {
+    let draw = () => {
       const t = box.value.trim().toLowerCase();
       if (!t){ out.innerHTML = recent.length ? `<p class="small muted" style="margin:6px 0">Recent</p><div class="list">${recent.filter(s => Market.MAP[s]).map(s => row('#/stock/' + s, s, esc(Market.MAP[s].n), s)).join('')}</div>` : '<p class="hint">Search by company name or ticker, a member\'s name, or a group.</p>'; return; }
       const stocks = Market.LIST.filter(x => x.s.toLowerCase().startsWith(t) || x.n.toLowerCase().includes(t)).sort((a, b) => (b.s.toLowerCase() === t) - (a.s.toLowerCase() === t) || (b.s.toLowerCase().startsWith(t)) - (a.s.toLowerCase().startsWith(t))).slice(0, 8);
@@ -17,6 +17,14 @@ function searchSheet(){
         + (groups.length ? `<p class="small muted" style="margin:10px 0 6px">Groups</p><div class="list">${groups.map(g => row('#/group/' + g.id, esc(g.name), esc(groupTags(g).join(' · ') || (g.tagline || g.goal || '').slice(0, 70)))).join('')}</div>` : '')
         || '<div class="panel empty">No matches. Try a ticker like AAPL, or part of a name.</div>';
     };
+    /* Stocks not yet on Pocket come from the full list of US-listed stocks; tapping one adds it. */
+    const remote = {}; let tmr = 0;
+    const fetchRemote = t => { if (!Store.site.marketData || !t || remote[t]) return; clearTimeout(tmr); tmr = setTimeout(() => { remote[t] = 'loading'; Store.searchStocks(t).then(r => { remote[t] = r || []; if (box.value.trim().toLowerCase() === t) draw(); }, () => { remote[t] = []; }); }, 250); };
+    const base = draw; draw = () => { base(); const t = box.value.trim().toLowerCase(); if (!t) return; fetchRemote(t);
+      const R = Array.isArray(remote[t]) ? remote[t].filter(x => !Market.MAP[x.s]).slice(0, 6) : [];
+      if (R.length){ const html = `<p class="small muted" style="margin:10px 0 6px">More US stocks</p><div class="list">${R.map(x => row('#/stock/' + x.s, x.s + ' <span class="muted" style="font-weight:400">' + esc(x.n) + '</span>', 'Tap to add it to Pocket', x.s)).join('')}</div>`;
+        if (out.querySelector('.panel.empty')) out.innerHTML = html; else out.insertAdjacentHTML('beforeend', html); }
+      else if (remote[t] === 'loading' && out.querySelector('.panel.empty')) out.innerHTML = '<div class="loading">Searching all US stocks…</div>'; };
     box.oninput = draw; draw(); setTimeout(() => box.focus(), 50);
     out.onclick = e => { const a = e.target.closest('a[data-recent]'); if (!a) return; const k = a.dataset.recent;
       if (k){ recent = [k].concat(recent.filter(x => x !== k)).slice(0, 6); try { localStorage.setItem('pi_recent', JSON.stringify(recent)); } catch(err){} } closeModal(); };
@@ -119,3 +127,15 @@ function photoSheet(o){
     draw();
   });
 }
+
+function lowPriceNote(sym){ const p = Market.price(sym); return p > 0 && p < 5 ? '<div class="banner text ember" style="margin:10px 0;font-size:14px"><b>Low-priced stock.</b> Stocks under $5 can be very volatile and easier to manipulate.</div>' : ''; }
+/* Badges: Founding member (accounts before the cutoff, or every account if no cutoff is set), automatic role badges, and badges the Pocket team awards. */
+function memberBadges(p, extra = []){
+  if (!p) return []; const out = [];
+  if (p.kind === 'demo') out.push({ n: 'Sample investor', c: '', d: 'A sample account used to show how Pocket works.' });
+  else { const f = Store.get('badges', 'founding') || {}; if (!f.cutoff || (p.createdTs || 0) < Date.parse(f.cutoff + 'T00:00:00Z')) out.push({ n: 'Founding member', c: 'ember', d: f.desc || 'Joined Pocket before its public launch.' }); }
+  extra.forEach(x => x && out.push(x));
+  (p.badges || []).map(id => Store.get('badges', id)).filter(b => b && !b.retired && !b.builtin).forEach(b => out.push({ n: b.name, c: b.color || 'blue', d: b.desc || '' }));
+  return out;
+}
+function badgeChips(pid, max = 2){ const b = memberBadges(Store.get('profiles', pid)).filter(x => x.n !== 'Sample investor'); if (!b.length) return ''; return ' ' + b.slice(0, max).map(x => `<span class="tag ${x.c}" style="font-size:11px;padding:1px 7px">${esc(x.n)}</span>`).join(' ') + (b.length > max ? ` <span class="small muted">+${b.length - max}</span>` : ''); }

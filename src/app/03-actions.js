@@ -234,6 +234,12 @@ async function act(el, ev){ /* eslint-disable-line */
     case 'theme': try { localStorage.setItem('pi_theme', el.dataset.k); } catch(e){} applyTheme(); return render();
     case 'exjump': { const k = el.dataset.k; if (k === 'feed'){ ui.exploreTab = 'feed'; render(); window.scrollTo({ top: 0 }); return; }
       const was = ui.exploreTab; ui.exploreTab = 'market'; ui.exActive = k; if (was === 'feed') render(); requestAnimationFrame(() => { const t = document.getElementById('ex-' + k); if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' }); exSpy(true); }); return; }
+    case 'badgeinfo': return toast(el.dataset.k);
+    case 'badgefounding': return busy(async () => { await Store.http('POST', '/api/admin/badges', { op: 'founding', cutoff: $('#bd-cut').value || null }); toast('Founding member cutoff saved.'); });
+    case 'badgecreate': return busy(async () => { await Store.http('POST', '/api/admin/badges', { op: 'create', name: $('#bd-n').value, color: $('#bd-c').value, desc: $('#bd-d').value }); toast('Badge created.'); });
+    case 'badgeaward': return busy(async () => { const u = ($('#bd-u-' + el.dataset.id) || {}).value || ''; await Store.http('POST', '/api/admin/badges/award', { id: el.dataset.id, username: u, remove: el.dataset.k === 'remove' }); toast(el.dataset.k === 'remove' ? 'Badge removed.' : 'Badge awarded.'); });
+    case 'badgebulk': return busy(async () => { const d = ($('#bd-b-' + el.dataset.id) || {}).value; const r = await Store.http('POST', '/api/admin/badges/bulk', { id: el.dataset.id, joinedBefore: d }); toast(`Awarded to ${r.awarded} member${r.awarded === 1 ? '' : 's'}.`); });
+    case 'badgeretire': return busy(async () => { await Store.http('POST', '/api/admin/badges', { op: 'retire', id: el.dataset.id, retired: el.dataset.k === 'retire' }); });
     case 'exall': ui.exAll = Object.assign({}, ui.exAll, { [el.dataset.k]: !(ui.exAll || {})[el.dataset.k] }); return render();
     case 'photo': return photoSheet({ target: el.dataset.k || 'me', gid: el.dataset.gid || null });
     case 'reportphoto': if (!confirm('Report this profile photo to the Pocket team?')) return; return busy(async () => { await Store.http('POST', '/api/action/report', { kind: 'photo', pid: el.dataset.id, reason: 'photo' }); toast('Thanks. The Pocket team will review it.'); });

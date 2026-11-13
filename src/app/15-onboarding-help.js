@@ -25,7 +25,7 @@ function gettingStarted(){
     ['Follow an investor', Store.all('follows').some(f => f.from === me), '#/discover'], ['Join or start a group', Store.myGroups().length > 0, '#/groups'], ['Turn on two-step sign-in', Store.twofa, '#/u/' + me]];
   const done = items.filter(i => i[1]).length; if (done === items.length) return '';
   return `<section class="block"><header style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h2>Getting started</h2><span class="small muted">${done} of ${items.length} done · <button class="linkbtn small" data-act="onboff">Hide</button></span></header>
-    <div class="list">${items.map(([t, ok, href]) => `<a class="row" href="${href}"><span aria-hidden="true" style="width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;${ok ? 'background:var(--gain);color:#fff' : 'border:1.5px solid var(--line)'}">${ok ? '✓' : ''}</span><div class="grow" style="${ok ? 'color:var(--muted);text-decoration:line-through' : ''}">${t}</div></a>`).join('')}</div>
+    <div class="list">${items.map(([t, ok, href]) => `<a class="row" href="${href}"><span aria-hidden="true" style="width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;${ok ? 'background:var(--gain);color:var(--surface)' : 'border:1.5px solid var(--line)'}">${ok ? '✓' : ''}</span><div class="grow" style="${ok ? 'color:var(--muted);text-decoration:line-through' : ''}">${t}</div></a>`).join('')}</div>
     <p class="hint">Questions? See <a href="#/help">Help</a>.</p></section>`;
 }
 

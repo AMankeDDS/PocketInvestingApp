@@ -74,7 +74,7 @@ app.set('trust proxy', 1);
 app.disable('x-powered-by');
 app.use(require('compression')());
 const jsonSmall = express.json({ limit: '50kb' }), jsonLarge = express.json({ limit: '8mb' });
-app.use((req, res, next) => (/^\/api\/club\/[^/]+\/(submit|taxdoc)$/.test(req.path) ? jsonLarge : jsonSmall)(req, res, next));
+app.use((req, res, next) => (/^\/api\/club\/[^/]+\/(submit|taxdoc)$/.test(req.path) || req.path === '/api/photo' ? jsonLarge : jsonSmall)(req, res, next));
 app.get(['/j/:code', '/j/:code/:by'], (req, res) => {
   const code = String(req.params.code || '').replace(/[^A-Za-z0-9]/g, '').slice(0, 16), by = String(req.params.by || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 40);
   res.redirect(302, '/#/invite/' + code + (by ? '/' + by : ''));
@@ -518,6 +518,7 @@ const realDeps = { broadcastRaw: (...a) => broadcastRaw(...a), securityEvent: (.
   isPro: async pid => { const r = await q('SELECT data FROM doc_profiles WHERE id = $1', [pid]); const p = r.rows[0] && r.rows[0].data; return !!p && (p.kind === 'demo' || p.plan === 'pro'); } };
 real.mount(app, realDeps);
 realDeps.push = push; realDeps.pool = db.pool; require('./realcopy').mount(app, realDeps);
+require('./badges').mount(app, { wrap, ok, bad, needAdmin, db, broadcast: (...x) => broadcast(...x), q });
 require('./photos').mount(app, { q, wrap, ok, bad, needUser, needAdmin, db, broadcast: (...x) => broadcast(...x) });
 require('./alerts').mount(app, { q, wrap, ok, bad, needUser, sendTo, push, db, getSetting: setting, setSetting, broadcast: (...a) => broadcast(...a), logic: require('./logic') });
 marketdata.mount(app, { q, wrap, ok, bad, needUser, needAdmin, getSetting: setting, setSetting, broadcastMsg: obj => broadcastRaw(obj), push, pool: db.pool });

@@ -75,7 +75,7 @@ ${sec('Holdings', `<div class="list">${hold.length ? hold.map(h => { const px = 
   ${recurringList()}
   ${dvTotal > 0 ? sec('Dividends', `<div class="list"><div class="row"><div class="grow"><b>${usd(dvTotal)}</b> received in the past year</div><span class="tag">Practice estimates</span></div></div>`) : ''}
   ${sec('Account', `<div class="list">${Store.accountNumber ? `<div class="row"><div class="grow"><b>Account number</b><div class="small muted">${esc(Store.accountNumber)}</div></div></div>` : ''}<a class="row" href="#/statements"><div class="grow"><b>Statements and tax documents</b><div class="small muted">Monthly statements, year-end summaries</div></div><span class="muted">›</span></a></div>`)}
-  <p class="hint" style="margin-top:22px">${DISCLOSE}</p>`;
+  <p class="hint" style="margin-top:22px">${disclose()}</p>`;
   }
   /* The Home tab: what's happening, with approvals and votes first. */
   const pfLine = Store.site.realMoney ? `<a class="panel" href="#/portfolio" style="display:flex;align-items:center;gap:12px;padding:16px 18px;margin-bottom:18px;color:var(--text)"><div class="grow"><div class="small muted">Your brokerage account</div><div style="font-size:22px;font-weight:700" class="num">${ui.real && ui.real.balances ? usd(ui.real.balances.equity) : 'Real money'}</div></div><div class="small muted">View ›</div></a>` : `<a class="panel" href="#/portfolio" style="display:flex;align-items:center;gap:12px;padding:16px 18px;margin-bottom:18px;color:var(--text)"><div class="grow"><div class="small muted">${Store.site.realMoney ? 'Practice portfolio' : 'Your portfolio'}</div><div style="font-size:24px;font-weight:700" class="num" data-pv="${me}">${usd(v)}</div></div><div style="text-align:right"><div class="num ${sgn(d)}">${pct(d)} today</div><div class="small muted">View portfolio ›</div></div></a>`;
@@ -91,7 +91,7 @@ ${sec('Holdings', `<div class="list">${hold.length ? hold.map(h => { const px = 
   ${!Store.isPro() ? `<div class="banner" style="margin-top:16px"><div style="flex:1"><b>Upgrade to Pro</b><div class="small">Join groups as a full member, copy investors, and see how you track your group. $9.99 a month.</div></div><button class="btn sm" data-act="upgrade">See Pro</button></div>` : ''}
   ${groups.length ? `<a class="panel" href="#/digest" style="display:flex;gap:14px;align-items:center;padding:16px 18px;margin-top:26px;color:var(--text)"><span class="avatar" style="background:var(--ember);color:#1b1206;border-radius:12px">7d</span><div class="grow"><b>Your weekly digest</b><div class="small muted">Group trades, your copy rate, open votes and how you track your groups</div></div><span class="small">Open</span></a>` : ''}
   ${sec('Markets', `<div class="list">${marketRows(3)}</div>`, '<a class="small" href="#/markets">All stocks</a>')}
-  <p class="hint" style="margin-top:22px">${DISCLOSE}</p>`;
+  <p class="hint" style="margin-top:22px">${disclose()}</p>`;
 }
 
 function vReadOnlyHome(){

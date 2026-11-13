@@ -8,7 +8,7 @@ const alpaca = require('./alpaca');
 const Market = require('./market');
 
 const EXCHANGES = new Set(['NYSE', 'NASDAQ', 'ARCA', 'AMEX', 'BATS']); /* no over-the-counter stocks */
-const MIN_PRICE = 5;                                                   /* no penny stocks */
+const MIN_PRICE = 0.01;                                                /* any price; stocks under $5 are labeled in the app */
 let deps = null;
 /* what happened last time each job ran, shown in Beta admin → Market data */
 const status = { assets: null, news: null, quotes: null, sec: null, anchors: null };
@@ -72,7 +72,7 @@ async function ensure(symIn){
   if (!a) throw userErr("That stock isn't available on Pocket. Only stocks listed on major US exchanges are supported.");
   const snap = (await alpaca.snapshots([sym])) || {};
   const p = snapPrice(snap[sym]);
-  if (!(p >= MIN_PRICE)) throw userErr(`Pocket supports stocks priced $${MIN_PRICE} and up during the beta.`);
+  if (!(p >= MIN_PRICE)) throw userErr("We couldn't get a price for that stock right now. Try again later.");
   await deps.q('UPDATE assets SET in_use = true, ref_price = $2, ref_ts = now() WHERE sym = $1', [sym, p]);
   Market.add(sym, a.name, p);
   if (config.realPrices) Market.setQuotes({ [sym]: { p, prev: snapPrev(snap[sym]) } });
@@ -352,10 +352,14 @@ async function start(){
   const n = (await q('SELECT count(*)::int AS n, max(updated_at) AS t FROM assets')).rows[0];
   if (!n.n || Date.now() - new Date(n.t).getTime() > 86400000) await run(async () => console.log('Stock list synced:', await syncAssets()), 'asset sync');
   setInterval(() => run(syncAssets, 'asset sync'), 24 * 3600000);
+  await run(async () => { const n = await ensureSectorFunds(); if (n) console.log('Sector funds ready:', n); }, 'sector funds');
   await run(pullNews, 'news'); setInterval(() => run(pullNews, 'news'), 5 * 60000);
   if (config.realPrices){ await run(refreshQuotes, 'quotes'); setInterval(() => run(refreshQuotes, 'quotes'), 30000); }
   setInterval(() => run(autoAnchor, 'price anchors'), 60 * 60000); run(autoAnchor, 'price anchors');
 }
 /* Before creating sample people on a real-price site: real quotes and a year of daily closes for the sample stocks. */
 async function warmForSeed(){ if (!config.realPrices) return; await refreshQuotes().catch(() => {}); for (const t of Market.LIST.slice(0, 40)){ await bars(t.s, '1y').catch(() => {}); } }
-module.exports = { warmForSeed, sectorOf, pullIndustries, pullEarnings, migrate, mount, start, loadExtras, extras, bases: () => anchors.bases || {}, anchorPrices, pullFilings, filingHeadline, ensure, search, pullNews, listNews, newsAlerts, syncAssets, refreshQuotes, MIN_PRICE };
+/* The 11 standard sector funds, so Explore can show every sector's move. */
+const SECTOR_FUNDS = ['XLK', 'XLF', 'XLV', 'XLE', 'XLY', 'XLP', 'XLI', 'XLB', 'XLU', 'XLRE', 'XLC'];
+async function ensureSectorFunds(){ if (!config.marketData) return 0; let n = 0; for (const s of SECTOR_FUNDS){ try { await ensure(s); n++; } catch (e){} } return n; }
+module.exports = { ensureSectorFunds, warmForSeed, sectorOf, pullIndustries, pullEarnings, migrate, mount, start, loadExtras, extras, bases: () => anchors.bases || {}, anchorPrices, pullFilings, filingHeadline, ensure, search, pullNews, listNews, newsAlerts, syncAssets, refreshQuotes, MIN_PRICE };

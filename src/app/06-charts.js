@@ -69,6 +69,7 @@ function ichEnd(e){
   const el = ichState.el; clearTimeout(ichState.timer); if (!el) return;
   const id = el.dataset.ich, s = ui.ichSel[id];
   if (ichState.selecting && (!s || s[0] === s[1])) delete ui.ichSel[id];
+  else if (!ichState.selecting && !ichState.moved && ichState.pointer !== 'mouse' && s) delete ui.ichSel[id]; /* a quick tap clears a selection */
   ichState.el = null; ichState.selecting = false;
   ichPaint(el, ichState.pointer === 'mouse' ? ichIndex(el, e.clientX) : null);
 }

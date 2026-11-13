@@ -43,7 +43,7 @@ function vDigest(){
       ${decided.map(p => `<div class="row"><div class="grow"><b>Decided: ${p.status === 'passed' ? 'passed' : 'did not pass'}</b><div class="small muted ellip">${esc(p.title)}</div></div></div>`).join('')}
     </div></section>`; }).join('') || '<div class="panel empty" style="margin-top:16px">Join a group to see its weekly summary here.</div>'}
   ${top.length ? `<section class="block"><header><h2>Top posts from people you follow</h2></header><div class="list">${top.map(([p]) => postCard(p)).join('')}</div></section>` : ''}
-  <p class="hint" style="margin-top:22px">${DISCLOSE}</p>`;
+  <p class="hint" style="margin-top:22px">${disclose()}</p>`;
 }
 
 function vNotifySettings(){

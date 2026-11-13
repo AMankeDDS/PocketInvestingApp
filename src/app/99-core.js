@@ -83,7 +83,7 @@ const Clock = (() => {
    on the server, which prices trades and enforces permissions.
    ===================================================================== */
 const Store = (() => {
-  const COLS = ['profiles','portfolios','groups','memberships','posts','reactions','comments','follows','proposals','votes','copyRequests','trades','copies','reports','joinRequests','reviews','suggestions','dividends','meetings','groupWatch','studies','recurring'];
+  const COLS = ['profiles','portfolios','groups','memberships','posts','reactions','comments','follows','proposals','votes','copyRequests','trades','copies','reports','joinRequests','reviews','suggestions','dividends','meetings','groupWatch','studies','badges','recurring'];
   const cache = Object.fromEntries(COLS.map(c => [c, new Map()]));
   const listeners = new Set(), realListeners = new Set(), newsCache = new Map();
   let settings = { announcement:null, inviteOnly:true }, me = { signedIn:false }, myPid = null, canWrite = false, canEdit = false, ready = false, hasDb = false, viewSaved = null, ws = null;
@@ -131,19 +131,23 @@ const Store = (() => {
     try { await Promise.all([loadMe(), loadState()]); hasDb = true; } catch(e){ console.error(e); hasDb = false; }
     ready = true; emit(); if (hasDb) connect();
   }
+  /* A real message for a refused request; "Connection problem" is only for no connection at all. */
+  const errFor = (r, j) => fail((j && j.error) || (r.status === 413 ? "That's too large to upload. Try a smaller photo or file." : r.status === 429 ? 'Too many requests. Wait a moment and try again.' : r.status >= 500 ? `Something went wrong on our side (error ${r.status}). Try again in a minute.` : `Something went wrong (error ${r.status}). Try again.`));
   async function api(name, args = {}){
     let r, j;
-    try { r = await fetch('/api/action/' + name, { method:'POST', credentials:'same-origin', headers:{ 'content-type':'application/json' }, body: JSON.stringify(args) }); j = await r.json(); }
+    try { r = await fetch('/api/action/' + name, { method:'POST', credentials:'same-origin', headers:{ 'content-type':'application/json' }, body: JSON.stringify(args) }); }
     catch(e){ throw fail('Connection problem. Check your internet and try again.'); }
-    if (!r.ok) throw fail(j.error || 'Something went wrong. Try again.');
+    j = await r.json().catch(() => ({}));
+    if (!r.ok) throw errFor(r, j);
     applyChanges(j.changes);
     return j.result;
   }
   async function auth(path, body){
     let r, j;
-    try { r = await fetch(path, { method:'POST', credentials:'same-origin', headers:{ 'content-type':'application/json' }, body: JSON.stringify(body || {}) }); j = await r.json(); }
+    try { r = await fetch(path, { method:'POST', credentials:'same-origin', headers:{ 'content-type':'application/json' }, body: JSON.stringify(body || {}) }); }
     catch(e){ throw fail('Connection problem. Check your internet and try again.'); }
-    if (!r.ok){ const e = fail(j.error || 'Something went wrong. Try again.'); e.need2fa = !!j.need2fa; throw e; }
+    j = await r.json().catch(() => ({}));
+    if (!r.ok){ const e = errFor(r, j); e.need2fa = !!j.need2fa; throw e; }
     await loadMe(); await loadState(); emit(); reconnect();
   }
   /* Tour: render the app as a sample member, read-only, without touching data. */
@@ -280,9 +284,10 @@ const Store = (() => {
 
   async function http(method, path, body){
     let r, j;
-    try { r = await fetch(path, { method, credentials:'same-origin', headers:{ 'content-type':'application/json' }, body: body ? JSON.stringify(body) : undefined }); j = await r.json(); }
+    try { r = await fetch(path, { method, credentials:'same-origin', headers:{ 'content-type':'application/json' }, body: body ? JSON.stringify(body) : undefined }); }
     catch(e){ throw fail('Connection problem. Check your internet and try again.'); }
-    if (!r.ok) throw fail(j.error || 'Something went wrong. Try again.');
+    j = await r.json().catch(() => ({}));
+    if (!r.ok) throw errFor(r, j);
     return j;
   }
   /* ---------- actions (all run on the server) ---------- */
@@ -431,6 +436,8 @@ const sampleTag = pid => isSample(pid) ? ' <span class="tag" style="font-size:10
 const newsNote = () => Store.site.realPrices ? '' : '<p class="hint" style="margin:8px 2px 0">Prices are simulated. News is real.</p>';
 
 const DISCLOSE = "Copying a trade doesn't guarantee the same price or result. Investing involves risk, including loss of principal. Practice results don't reflect real trading.";
+/* The real-money site has no practice results, so its disclosure drops that sentence. */
+function disclose(){ return Store.site.realMoney ? DISCLOSE.replace(/ Practice results don't reflect real trading\.$/, '') : DISCLOSE; }
 
 const fracWord = f => f >= 0.995 ? 'all' : Math.abs(f - 0.5) < 0.02 ? 'half' : Math.abs(f - 0.25) < 0.02 ? 'a quarter' : Math.abs(f - 0.75) < 0.02 ? 'three-quarters' : Math.round(f * 100) + '%';
 
@@ -470,6 +477,9 @@ document.addEventListener('pointermove', e => {
 });
 
 document.addEventListener('pointerup', ichEnd);
+/* Phones: while a period is being selected the page doesn't scroll, and a long press never opens the copy menu or magnifier on a chart. */
+document.addEventListener('touchmove', e => { if (ichState.selecting && ichState.el) e.preventDefault(); }, { passive: false });
+document.addEventListener('contextmenu', e => { if (e.target.closest && e.target.closest('.ich')) e.preventDefault(); });
 
 document.addEventListener('pointercancel', ichEnd);
 

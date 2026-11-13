@@ -37,7 +37,7 @@ function copyOnceSheet(o){
     ${g || Store.isCopying(src) ? '' : `<label class="small" style="display:flex;gap:8px;align-items:flex-start;margin:10px 0"><input type="checkbox" id="co-f" checked style="margin-top:3px"> <span>Also copy their new trades. Each one asks for your approval.</span></label>`}
     ${!Clock.canFillNow() ? '<div class="banner" style="margin-bottom:10px">Markets are closed. You can review this now and buy during market hours.</div>' : ''}
     <button class="btn" id="co-go" style="width:100%">Approve and buy</button>
-    <p class="hint" style="text-align:center;margin-top:10px">${esc(DISCLOSE)}</p>`, sh => {
+    <p class="hint" style="text-align:center;margin-top:10px">${esc(disclose())}</p>`, sh => {
     const draw = () => { const amt = Number(sh.querySelector('#co-a').value) || 0;
       sh.querySelector('#co-list').innerHTML = held.map(([s, v]) => { const d = amt * v / tot; return `<div class="row">${logo(s)}<div class="grow"><b>${s}</b> <span class="small muted">${(v / tot * 100).toFixed(1)}%</span></div><b class="num">${d < 1 ? '<span class="small muted">under $1, skipped</span>' : usd(d)}</b></div>`; }).join(''); };
     sh.querySelector('#co-a').oninput = draw; draw();
@@ -74,7 +74,7 @@ function tradeSheet({ sym = 'AAPL', side = 'buy', gid = null } = {}){
         ${tradeGroups.length ? `<div class="field"><label for="t-acct">Account</label><select class="input" id="t-acct"><option value="me">Personal</option>${tradeGroups.map(g => `<option value="${g.id}" ${st.acct === g.id ? 'selected' : ''}>Trade for ${esc(g.name)}</option>`).join('')}</select></div>` : ''}
         <div class="field"><label for="t-q">Stock</label>
           <div style="display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--surface-2)"><span class="sym">${st.sym}</span><span class="grow muted ellip" style="flex:1">${esc(T.n)}</span><b class="num" data-px="${st.sym}">${usd(Market.price(st.sym))}</b></div>
-          <input class="input" id="t-q" data-nofocus placeholder="Search another stock, e.g. Apple or MSFT" autocomplete="off" value="${esc(st.q)}" style="margin-top:8px"><div id="t-res" class="list" style="display:none;margin-top:6px"></div></div>
+          ${lowPriceNote(st.sym)}<input class="input" id="t-q" data-nofocus placeholder="Search another stock, e.g. Apple or MSFT" autocomplete="off" value="${esc(st.q)}" style="margin-top:8px"><div id="t-res" class="list" style="display:none;margin-top:6px"></div></div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px"><div class="seg" id="t-side"><button data-k="buy" class="${st.side === 'buy' ? 'on' : ''}">Buy</button><button data-k="sell" class="${st.side === 'sell' ? 'on' : ''}">Sell</button></div>
           <div class="seg" id="t-by"><button data-k="dollars" class="${st.by === 'dollars' ? 'on' : ''}">Dollars</button><button data-k="shares" class="${st.by === 'shares' ? 'on' : ''}">Shares</button></div></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px" id="t-chips">${chips().map(([k, l]) => `<button class="btn sm ${st.chip === k ? '' : 'ghost'}" data-k="${k}" ${st.side === 'sell' && !held() ? `disabled title="You don't own any ${st.sym} to sell"` : ''}>${l}</button>`).join('')}</div>
@@ -140,7 +140,7 @@ function tradeSheet({ sym = 'AAPL', side = 'buy', gid = null } = {}){
       root.innerHTML = `<header><h2>Review order</h2><button class="x" data-close aria-label="Close">×</button></header>
         <div class="list">${rows.map(([a, b]) => `<div class="row"><div class="grow muted">${a}</div><b class="num">${b}</b></div>`).join('')}</div>
         ${who ? `<div class="banner ember" style="margin:14px 0 0">${who}</div>` : ''}
-        <p class="hint" style="margin:14px 0">The price may move slightly before the order fills. ${DISCLOSE}</p>
+        <p class="hint" style="margin:14px 0">The price may move slightly before the order fills. ${disclose()}</p>
         <div style="display:flex;gap:10px"><button class="btn ghost" id="t-back">Back</button><button class="btn ${grp() ? 'ember' : ''}" id="t-place" style="flex:1">${grp() ? 'Place group trade' : 'Place order'}</button></div>`;
       root.querySelectorAll('[data-close]').forEach(b => b.onclick = closeModal);
       q('t-back').onclick = () => drawEdit();
