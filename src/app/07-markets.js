@@ -2,6 +2,8 @@
 
 function logo(sym, cls = ''){ return `<span class="logo ${cls}" style="background:${SECTOR_COLOR[SECTOR[sym]] || AV[Market.hash(sym) % AV.length]}" aria-hidden="true">${esc(String(sym).slice(0, 4))}</span>`; }
 
+/* Real news first; SEC filings only when specific (catch-all items like 'other company news' stay out of top headlines). */
+function topHeadlines(items){ const vague = /: (other company news|investor update|current report) \(Form/; return items.filter(n => !(n.source === 'SEC filing' && vague.test(n.headline || ''))).sort((a, b) => (a.source === 'SEC filing') - (b.source === 'SEC filing') || b.ts - a.ts).slice(0, 5); }
 function newsRows(items, max = 5){
   return items.slice(0, max).map(n => { const syms = (n.symbols || []).filter(x => Market.MAP[x]).slice(0, 2);
     return `<div class="row news-row" style="align-items:flex-start;flex-wrap:wrap"><a class="grow" href="${esc(n.url || '#')}" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:none;min-width:0"><div style="font-weight:600;line-height:1.35">${esc(n.headline)} <span class="small muted" aria-hidden="true">↗</span></div>
@@ -26,7 +28,7 @@ function newsSection(title, symbols, max = 5){
 function marketBrief(){
   const ch = s => Market.dayChange(s), word = v => v >= 0 ? 'up' : 'down', p = v => Math.abs(v * 100).toFixed(1) + '%';
   const movers = Market.LIST.map(t => t.s).filter(s => !['SPY','QQQ','SCHD'].includes(s)).sort((a, b) => Math.abs(ch(b)) - Math.abs(ch(a))).slice(0, 3);
-  const heads = Store.site.news ? (Store.news([], 5) || []) : [];
+  const heads = Store.site.news ? topHeadlines(Store.news([], 12) || []) : [];
   const srcNote = !heads.length ? '' : heads.every(h => h.source === 'SEC filing') ? ' Headlines are company filings from SEC EDGAR.' : heads.some(h => h.source === 'SEC filing') ? ' Headlines are real: news from Benzinga via Alpaca, and SEC filings.' : ' Headlines are real, from Benzinga via Alpaca.';
   const d = new Date().toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric' });
   return `<section class="block"><header><h2>Market brief</h2><span class="muted small">${d}</span></header><div class="panel" style="padding:16px 18px">
@@ -78,16 +80,19 @@ function vStock(sym){
   }
   const px = Market.price(sym), c = Market.dayChange(sym);
   let pts = seriesPts(t => Market.price(sym, t), ui.chartSpan);
-  if (Market.isReal(sym)){ const k = sym + ':' + ui.chartSpan; if (!ui.bars[k]){ ui.bars[k] = 'loading'; Store.bars(sym, ui.chartSpan).then(b => { Market.addHist(sym, b); ui.bars[k] = b; render(); }, () => { ui.bars[k] = []; }); }
+  if (Market.isReal(sym)){ const k = sym + ':' + ui.chartSpan; if (!ui.bars[k]){ ui.bars[k] = 'loading'; Store.bars(sym, ui.chartSpan).then(b => { Market.addHist(sym, b, ['1m', '3m', '1y'].includes(ui.chartSpan)); ui.bars[k] = b; render(); }, () => { ui.bars[k] = []; }); }
     if (Array.isArray(ui.bars[k]) && ui.bars[k].length > 2) pts = ui.bars[k].map(b => ({ t: b.t, v: b.c })).concat([{ t: Date.now(), v: px }]); }
-  /* 1D with real prices: today's session, measured from the previous close, so the chart matches "% today". */
-  let dayLabel = null;
+  /* 1D with real prices: today's regular session from the open, with a dotted line at yesterday's close, so the chart matches "% today". */
+  let dayOpt = null;
   if (ui.chartSpan === '1d' && Market.isReal(sym) && c){
-    const prev = px / (1 + c), B = Array.isArray(ui.bars[sym + ':1d']) ? ui.bars[sym + ':1d'] : [];
-    let i = B.length - 1; while (i > 0 && B[i].t - B[i - 1].t < 2 * 3600000) i--;
-    const sess = B.slice(i).map(b => ({ t: b.t, v: b.c }));
-    pts = sess.length >= 2 ? [{ t: sess[0].t - 60000, v: prev }].concat(sess, [{ t: Date.now(), v: px }]) : (pts.length ? [{ t: pts[0].t, v: prev }].concat(pts.slice(1)) : pts);
-    dayLabel = 'Today';
+    const prev = px / (1 + c), sess = Market.sessionPts(sym).map(b => ({ t: b.t, v: b.c }));
+    if (sess.length >= 2){ pts = sess.concat([{ t: Date.now(), v: px }]);
+      const etMin = t => { const p = Object.fromEntries(ET_FMT.formatToParts(new Date(t)).map(x => [x.type, x.value])); return (+p.hour) * 60 + (+p.minute); };
+      const at = m => { const k = sess.findIndex(b => etMin(b.t) >= m); return k < 0 ? null : k; };
+      const ticks = [[570, '9:30'], [720, '12:00'], [945, '4:00']].map(([m, l]) => ({ i: at(m), label: l })).filter(k => k.i != null);
+      const open = etMin(Date.now()) >= 570 && etMin(Date.now()) < 960 && ![0, 6].includes(new Date().getDay());
+      dayOpt = { label: 'Today', base: prev, minPct: 0.01, ticks, note: open ? '' : 'The last point includes after-hours trading. Dotted line: yesterday\'s close.' };
+    } else dayOpt = { label: 'Today', base: prev, minPct: 0.01 };
   }
   const pf = Store.get('portfolios', Store.myPid); const pos = pf && (pf.positions || {})[sym];
   const postsHtml = stockPosts(sym);
@@ -98,7 +103,7 @@ function vStock(sym){
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><span class="tag">${esc(SECTOR[sym] || 'Stock')}</span>${holders ? `<span class="tag">${holders} Pocket member${holders === 1 ? '' : 's'} own it</span>` : ''}</div></div>
     ${Store.canWrite && Store.get('profiles', Store.myPid) ? `<button class="btn ${watching ? 'ghost' : ''} sm" data-act="watch" data-k="${sym}" aria-pressed="${watching}">${watching ? '★ Watching' : '☆ Watch'}</button> <button class="btn ghost sm" data-act="alertsheet" data-k="${sym}">Set alert</button>` : ''}</div>
   <div class="panel hero"><div class="value" data-px="${sym}">${usd(px)}</div><div class="num ${sgn(c)}" data-chg="${sym}">${pct(c)} <span class="muted">today</span></div>
-    ${ichart('stock:' + sym, pts, ui.chartSpan, { aria: sym + ' price chart', label: dayLabel || undefined })}
+    ${ichart('stock:' + sym, pts, ui.chartSpan, Object.assign({ aria: sym + ' price chart' }, dayOpt || {}))}
     <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:10px"><div class="seg" role="tablist">${Object.keys(SPANS).map(k => `<button class="${ui.chartSpan === k ? 'on' : ''}" data-act="span" data-k="${k}">${k.toUpperCase()}</button>`).join('')}</div>
     ${pf ? `<div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn" data-act="trade" data-sym="${sym}" data-side="buy">Buy</button>${pos ? `<button class="btn ghost" data-act="trade" data-sym="${sym}" data-side="sell">Sell</button>` : ''}${Store.canWrite ? `<button class="btn ghost" data-act="recurring" data-k="${sym}" ${Store.site.realMoney ? 'hidden' : ''}>Invest automatically</button>` : ''}</div>` : ''}</div>
     ${(() => { const nd = nextDividend(sym), E = earnings()[sym], bits = [];

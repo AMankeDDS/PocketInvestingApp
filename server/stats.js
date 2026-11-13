@@ -20,7 +20,7 @@ async function compute(q, pid, sinceTs){
   else (await q(`SELECT gid, data FROM club_entries WHERE data->>'pid' = $1`, [pid]).catch(() => ({ rows: [] }))).rows.filter(r => pooled.has(r.gid) && !r.data.voided && r.data.kind !== 'valuation').forEach(r => flows.push({ side: 'flow', ts: r.data.ts, flow: r.data.kind === 'payment' ? -r.data.amount : r.data.amount }));
   const events = trades.concat(divs, flows).sort((a, b) => a.ts - b.ts);
   const now = Date.now(), first = trades.length ? trades[0].ts : now;
-  const born = Math.max(Math.min(prof.createdTs || first, first), pf.data.resetTs || 0); /* a practice reset restarts the track record */
+  const born = Math.max(pf.data.kind === 'club' || !trades.length ? Math.min(prof.createdTs || first, first) : first, pf.data.resetTs || 0); /* starts at the first trade (no flat stretch before it); a practice reset restarts it */
   const start = Math.max(born, sinceTs || 0, now - 365 * DAY);
   /* Walk backwards from today's actual holdings, undoing each trade, so today's value is always exact. */
   let cash = pf.data.cash || 0; const pos = {}; Object.entries(pf.data.positions || {}).forEach(([s, p]) => { pos[s] = p.shares; });
@@ -35,6 +35,7 @@ async function compute(q, pid, sinceTs){
     pts[k] = { t, v: value(t) };
   }
   const atBirth = pf.data.kind !== 'club' && start === born && trades.length && trades[0].ts >= start;
+  { const sv = pf.data.startValue || 100000; if (pts.length && Math.abs(pts[0].v - sv) < 0.5) pts[0].v = sv; } /* no $99,999.99 from cent rounding */
   const approximate = negative || cash < -1 || (atBirth && Math.abs(pts[0].v - (pf.data.startValue || 100000)) / (pf.data.startValue || 100000) > 0.01);
   const last = pts[pts.length - 1].v;
   /* Time-weighted daily returns: each day's transfers are taken out before measuring the change. */

@@ -16,7 +16,7 @@ function timeLeft(ts){ const d = ts - Date.now(); if (d <= 0) return 'Voting clo
 
 function avatar(pid, cls = ''){ const n = Store.displayName(pid); const ini = n.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '·'; return `<span class="avatar ${cls}" style="background:${AV[Market.hash(pid) % AV.length]}" aria-hidden="true">${esc(ini)}</span>`; }
 
-function mini(sym){ needBars(sym, '1d'); const v = Market.series(sym, 86400000, 24); /* start from the previous close, so the line agrees with "% today" */ if (Market.isReal(sym)){ const c = Market.dayChange(sym); if (c) v[0] = Market.price(sym) / (1 + c); } const mn = Math.min(...v), mx = Math.max(...v), rg = mx - mn || 1, up = v[v.length - 1] >= v[0];
+function mini(sym){ needBars(sym, '1d'); let v = Market.series(sym, 86400000, 24); /* real prices: the latest session from yesterday's close, so the line agrees with "% today" */ if (Market.isReal(sym)){ const c = Market.dayChange(sym), px = Market.price(sym), S = Market.sessionPts(sym); if (S.length >= 2){ const st = Math.max(1, Math.ceil(S.length / 40)); v = [px / (1 + (c || 0))].concat(S.filter((_, i) => i % st === 0).map(b => b.c), [px]); } else if (c) v[0] = px / (1 + c); } const mn = Math.min(...v), mx = Math.max(...v), rg = mx - mn || 1, up = v[v.length - 1] >= v[0];
   return `<svg class="mini" viewBox="0 0 64 22" preserveAspectRatio="none" aria-hidden="true"><polyline fill="none" stroke="${up ? 'var(--gain)' : 'var(--loss)'}" stroke-width="1.6" points="${v.map((x, i) => (i / (v.length - 1) * 64).toFixed(1) + ',' + (20 - (x - mn) / rg * 18).toFixed(1)).join(' ')}"/></svg>`; }
 
 function stackOf(pids, max = 3){ const show = pids.slice(0, max); const names = show.map(p => Store.displayName(p).split(' ')[0]);

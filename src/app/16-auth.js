@@ -8,7 +8,7 @@ function authSheet(mode){
   const signup = mode === 'signup', reset = mode === 'reset';
   const inviteFromLink = (() => { try { return sessionStorage.getItem('pi_invite_code') || ''; } catch(e){ return ''; } })();
   openModal(`<header><h2>${signup ? 'Create your account' : reset ? 'Reset your password' : 'Sign in'}</h2><button class="x" data-close aria-label="Close">×</button></header>
-    ${signup ? `<p class="muted" style="margin-top:0">${Store.site.realMoney ? `You'll start with a ${usd(Store.START_CASH, 0)} practice portfolio. You can open a real brokerage account whenever you're ready.` : `You'll start with ${usd(Store.START_CASH, 0)} in simulated cash. No real money is involved.`}</p>
+    ${signup ? `<p class="muted" style="margin-top:0">${Store.site.realMoney ? `After you sign up, you'll open your brokerage account and add money when you're ready. Your account starts at $0.` : `You'll start with ${usd(Store.START_CASH, 0)} in simulated cash. No real money is involved.`}</p>
       <div class="field"><label for="a-n">Your name</label><input class="input" id="a-n" maxlength="40" autocomplete="name" placeholder="How others will see you"></div>` : ''}
     ${reset ? '<p class="muted" style="margin-top:0">Ask the Pocket team for a reset code, then choose a new password.</p>' : ''}
     <div class="field"><label for="a-u">Username</label><input class="input" id="a-u" maxlength="24" autocomplete="username" autocapitalize="none" spellcheck="false"></div>
@@ -28,7 +28,7 @@ function authSheet(mode){
         if (signup) await Store.signupFull({ username: v('a-u'), password: v('a-p'), name: v('a-n'), risk: ui.risk, invite: v('a-i'), terms: sh.querySelector('#a-t').checked, groupInvite: ui.inviteFor ? ui.inviteCode : undefined, source: signupSource() });
         else if (reset) await Store.resetPassword(v('a-u'), v('a-c'), v('a-p'));
         else await Store.login(v('a-u'), v('a-p'), v('a-2fa'));
-        closeModal(); ui.seenReqs = null; toast(signup ? `Your account is ready with $100,000 in practice ${Store.site.realPrices ? 'money' : 'cash'}.` : reset ? 'Password updated. You are signed in.' : 'Welcome back.');
+        closeModal(); ui.seenReqs = null; toast(signup ? (Store.site.realMoney ? 'You\'re signed up. Next, open your brokerage account from Portfolio.' : `Your account is ready with $100,000 in practice ${Store.site.realPrices ? 'money' : 'cash'}.`) : reset ? 'Password updated. You are signed in.' : 'Welcome back.');
         const back = (() => { try { return sessionStorage.getItem('pi_after_auth'); } catch(e){ return null; } })();
         try { sessionStorage.removeItem('pi_after_auth'); } catch(e){}
         location.hash = back || '#/home'; render();

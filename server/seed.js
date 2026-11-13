@@ -243,7 +243,8 @@ async function merge(tx){
 async function createAccount(tx, userId, name, risk){
   const pid = 'u_' + userId;
   await tx.set('profiles', pid, { kind: 'real', userId, name, bio: '', plan: 'free', riskProfile: risk || 'balanced', createdTs: Date.now() });
-  await tx.set('portfolios', pid, { cash: START_CASH, startValue: START_CASH, positions: {}, updatedTs: Date.now() });
+  const cash0 = (process.env.SITE_MODE || '').toLowerCase() === 'live' ? 0 : START_CASH; /* the real-money site never shows practice money */
+  await tx.set('portfolios', pid, { cash: cash0, startValue: cash0, positions: {}, updatedTs: Date.now() });
   return pid;
 }
 /* One-time repair for databases where "Add new sample data" left sample trade histories that

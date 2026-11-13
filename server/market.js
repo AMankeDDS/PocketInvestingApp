@@ -19,9 +19,10 @@ function setBases(map){ for (const [s, b] of Object.entries(map || {})) if (MAP[
 function setQuotes(q){ const now = Date.now(); for (const [s, v] of Object.entries(q || {})) if (v && v.p > 0) QUOTES[s] = { p: v.p, prev: v.prev || null, t: v.t || now }; }
 const liveQuote = s => { const q = QUOTES[s]; return q && Date.now() - q.t < 15 * 60000 ? q : null; };
 /* Real price history (bars from the market data feed), used for past prices when quotes are real. */
-const HIST = {};
-function addHist(sym, bars){ if (!bars || !bars.length) return; const m = new Map((HIST[sym] || []).map(b => [b.t, b.c])); for (const b of bars) if (b && b.t && b.c > 0) m.set(b.t, b.c); HIST[sym] = [...m.entries()].sort((a, b) => a[0] - b[0]).map(([t, c]) => ({ t, c })); }
-function histAt(sym, ms){ const h = HIST[sym]; if (!h || !h.length || ms < h[0].t - 3 * 86400000) return null; let lo = 0, hi = h.length - 1, ans = null; while (lo <= hi){ const mid = (lo + hi) >> 1; if (h[mid].t <= ms){ ans = h[mid].c; lo = mid + 1; } else hi = mid - 1; } return ans != null ? ans : h[0].c; }
+const HIST = {}, HISTI = {};
+function addHist(sym, bars, daily){ if (!bars || !bars.length) return; const H = daily === false || (daily == null && bars.length > 1 && bars[bars.length - 1].t - bars[0].t < 3 * 86400000 && bars.length > 20) ? HISTI : HIST; const m = new Map((H[sym] || []).map(b => [b.t, b.c])); for (const b of bars) if (b && b.t && b.c > 0) m.set(b.t, b.c); H[sym] = [...m.entries()].sort((a, b) => a[0] - b[0]).map(([t, c]) => ({ t, c })); }
+function lookup(h, ms){ if (!h || !h.length || ms < h[0].t - 3 * 86400000) return null; let lo = 0, hi = h.length - 1, ans = null; while (lo <= hi){ const mid = (lo + hi) >> 1; if (h[mid].t <= ms){ ans = h[mid].c; lo = mid + 1; } else hi = mid - 1; } return ans != null ? ans : h[0].c; }
+function histAt(sym, ms){ const recent = Date.now() - ms < 36 * 3600000; return (recent ? lookup(HISTI[sym], ms) : null) ?? lookup(HIST[sym], ms) ?? (recent ? null : lookup(HISTI[sym], ms)); }
 function price(sym, ms = Date.now()){
   const q = liveQuote(sym);
   /* With real quotes, the past comes from real bars; with no history loaded yet, the previous close or the current price (never a simulated path). */

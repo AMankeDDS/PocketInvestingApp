@@ -34,9 +34,12 @@ const Market = (() => {
   function setQuotes(q){ const now = Date.now(); for (const [s, v] of Object.entries(q || {})) if (v && v.p > 0) QUOTES[s] = { p: v.p, prev: v.prev || null, t: v.t || now }; }
   const liveQuote = s => { const q = QUOTES[s]; return q && Date.now() - q.t < 15 * 60000 ? q : null; };
   /* Real price history (bars from the market data feed), used for past prices when quotes are real. */
-  const HIST = {};
-  function addHist(sym, bars){ if (!bars || !bars.length) return; const m = new Map((HIST[sym] || []).map(b => [b.t, b.c])); for (const b of bars) if (b && b.t && b.c > 0) m.set(b.t, b.c); HIST[sym] = [...m.entries()].sort((a, b) => a[0] - b[0]).map(([t, c]) => ({ t, c })); }
-  function histAt(sym, ms){ const h = HIST[sym]; if (!h || !h.length || ms < h[0].t - 3 * 86400000) return null; let lo = 0, hi = h.length - 1, ans = null; while (lo <= hi){ const mid = (lo + hi) >> 1; if (h[mid].t <= ms){ ans = h[mid].c; lo = mid + 1; } else hi = mid - 1; } return ans != null ? ans : h[0].c; }
+  const HIST = {}, HISTI = {};
+  function addHist(sym, bars, daily){ if (!bars || !bars.length) return; const H = daily === false || (daily == null && bars.length > 20 && bars[bars.length - 1].t - bars[0].t < 3 * 86400000) ? HISTI : HIST; const m = new Map((H[sym] || []).map(b => [b.t, b.c])); for (const b of bars) if (b && b.t && b.c > 0) m.set(b.t, b.c); H[sym] = [...m.entries()].sort((a, b) => a[0] - b[0]).map(([t, c]) => ({ t, c })); }
+  function lookup(h, ms){ if (!h || !h.length || ms < h[0].t - 3 * 86400000) return null; let lo = 0, hi = h.length - 1, ans = null; while (lo <= hi){ const mid = (lo + hi) >> 1; if (h[mid].t <= ms){ ans = h[mid].c; lo = mid + 1; } else hi = mid - 1; } return ans != null ? ans : h[0].c; }
+  function histAt(sym, ms){ const recent = Date.now() - ms < 36 * 3600000; return (recent ? lookup(HISTI[sym], ms) : null) ?? lookup(HIST[sym], ms) ?? (recent ? null : lookup(HISTI[sym], ms)); }
+  /* The latest trading session's intraday bars (regular hours). */
+  function sessionPts(sym){ const B = HISTI[sym] || []; if (B.length < 2) return []; let i = B.length - 1; while (i > 0 && B[i].t - B[i - 1].t < 2 * 3600000) i--; return B.slice(i); }
   function price(sym, ms = Date.now()){
     const q = liveQuote(sym);
     if (q){ if (Math.abs(ms - Date.now()) < 180000) return q.p; const h = histAt(sym, ms); if (h) return h; return q.prev && ms < Date.now() - 6 * 3600000 ? q.prev : q.p; }
@@ -47,8 +50,8 @@ const Market = (() => {
     const out = []; for (let i = points - 1; i >= 0; i--) out.push(price(sym, now - spanMs * i / (points - 1))); return out;
   }
   const isReal = s => !!liveQuote(s);
-  const hasHist = (s, ms) => !!(HIST[s] && HIST[s].length && HIST[s][0].t <= ms + 3600000);
-  return { hasHist, addHist, LIST, MAP, ETFS_UI: ['SPY','QQQ','SCHD'], price, dayChange, series, hash, add, setBases, setQuotes, isReal };
+  const hasHist = (s, ms) => [HIST[s], HISTI[s]].some(h => h && h.length && h[0].t <= ms + 3600000);
+  return { sessionPts, hasHist, addHist, LIST, MAP, ETFS_UI: ['SPY','QQQ','SCHD'], price, dayChange, series, hash, add, setBases, setQuotes, isReal };
 })();
 
 
@@ -368,6 +371,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&l
 
 const usd = (n, d = 2) => (n < 0 ? '-' : '') + '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
 
+const ET_FMT = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: 'numeric', hourCycle: 'h23' });
 const pct = (n, d = 2) => (n > 0 ? '+' : n < 0 ? '−' : '') + Math.abs(n * 100).toFixed(d) + '%';
 
 const sgn = n => n > 0.00005 ? 'gain' : n < -0.00005 ? 'loss' : 'muted';

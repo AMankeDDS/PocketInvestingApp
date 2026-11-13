@@ -236,4 +236,8 @@ textarea.input{resize:vertical; min-height:84px}
 .qchips{flex-basis:100%;display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
 .qchip{display:inline-flex;gap:5px;align-items:center;flex-wrap:wrap;padding:5px 11px;border:1px solid var(--line);border-radius:999px;background:var(--bg);color:var(--ink);font-size:13px;text-decoration:none;line-height:1.3;min-height:32px}
 .qchip:hover{border-color:var(--blue)}
-@media (max-width:480px){.topbar .session .sess-label,.topbar .session .sess-x{display:none}}
+.sess-short{display:none}
+@media (max-width:480px){.topbar .session .sess-label,.topbar .session .sess-x{display:none}.topbar .session .sess-short{display:inline}.topbar .tb-right{gap:6px!important}.topbar .tb-right>.btn.sm,.topbar .tb-right>button{min-width:40px;width:40px;height:40px;padding:0;justify-content:center}}
+@media (max-width:379px){.topbar .brand-word{display:none}}
+.ich-ticks{position:relative;height:16px;margin-top:4px;font-size:11px;color:var(--muted)}.ich-ticks span{position:absolute;top:0;transform:translateX(-50%);white-space:nowrap}.ich-ticks span:first-child{transform:none}.ich-ticks span:last-child{transform:translateX(-100%)}
+.row[hidden]{display:none!important}

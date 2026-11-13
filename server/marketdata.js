@@ -92,12 +92,19 @@ async function refreshQuotes(){
   if (Object.keys(out).length) deps.broadcastMsg({ type: 'market', quotes: out });
 }
 const barCache = new Map();
+let sipOk = null;
+const ET = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: 'numeric', hourCycle: 'h23', weekday: 'short' });
+function regularHours(ms){ const p = Object.fromEntries(ET.formatToParts(new Date(ms)).map(x => [x.type, x.value])); if (p.weekday === 'Sat' || p.weekday === 'Sun') return false; const m = (+p.hour) * 60 + (+p.minute); return m >= 570 && m < 960; }
 async function bars(sym, span){
   const key = sym + ':' + span, c = barCache.get(key); if (c && Date.now() - c.t < 5 * 60000) return c.v;
   const cfg = { '1d': ['5Min', 1.5], '5d': ['30Min', 7], '1m': ['1Day', 32], '3m': ['1Day', 95], '1y': ['1Day', 370] }[span] || ['5Min', 1.5];
-  const r = await alpaca.bars(sym, cfg[0], new Date(Date.now() - cfg[1] * 86400000).toISOString());
-  const v = ((r && r.bars) || []).map(b => ({ t: Date.parse(b.t), c: b.c }));
-  barCache.set(key, { t: Date.now(), v }); Market.addHist(sym, v); return v;
+  /* Consolidated (SIP) data, which the free plan allows when it's over 15 minutes old; falls back to IEX if the plan refuses. */
+  const start = new Date(Date.now() - cfg[1] * 86400000).toISOString(); let r = null;
+  if (sipOk !== false){ try { r = await alpaca.bars(sym, cfg[0], start, 1000, 'sip', new Date(Date.now() - 16 * 60000).toISOString()); sipOk = true; } catch (e){ if ([401, 403, 422].includes(e.status)) sipOk = false; r = null; } }
+  if (!r) r = await alpaca.bars(sym, cfg[0], start, 1000);
+  let v = ((r && r.bars) || []).map(b => ({ t: Date.parse(b.t), c: b.c }));
+  if (cfg[0] !== '1Day') v = v.filter(b => regularHours(b.t)); /* intraday charts: regular hours only (9:30 to 4:00 Eastern) */
+  barCache.set(key, { t: Date.now(), v }); Market.addHist(sym, v, cfg[0] === '1Day'); return v;
 }
 /* A year of real daily closes for every tracked or held stock, so past valuations (statements, track records, group performance) use real prices. */
 async function loadHistory(){

@@ -85,7 +85,7 @@ const A = {
   downloadDocument: async (id, docId) => fetch(`${config.alpaca.baseUrl}/v1/accounts/${id}/documents/${docId}/download`, { headers: { Authorization: await auth() }, redirect: 'follow', signal: AbortSignal.timeout(20000) }),
   /* market data and reference data */
   snapshots: symbols => call('GET', `/v2/stocks/snapshots?symbols=${encodeURIComponent(symbols.join(','))}`, null, { data: true }),
-  bars: (sym, timeframe, startIso, limit = 400) => call('GET', `/v2/stocks/${encodeURIComponent(sym)}/bars?timeframe=${timeframe}&start=${encodeURIComponent(startIso)}&limit=${limit}&adjustment=split`, null, { data: true }),
+  bars: (sym, timeframe, startIso, limit = 400, feed = null, endIso = null) => call('GET', `/v2/stocks/${encodeURIComponent(sym)}/bars?timeframe=${timeframe}&start=${encodeURIComponent(startIso)}&limit=${limit}&adjustment=split${feed ? '&feed=' + feed : ''}${endIso ? '&end=' + encodeURIComponent(endIso) : ''}`, null, { data: true }),
   news: (symbols, limit = 50) => call('GET', `/v1beta1/news?limit=${limit}&sort=desc${symbols && symbols.length ? '&symbols=' + encodeURIComponent(symbols.join(',')) : ''}`, null, { data: true }),
   assets: () => call('GET', '/v1/assets?status=active&asset_class=us_equity', null, { timeout: 60000 }),
   asset: sym => call('GET', `/v1/assets/${encodeURIComponent(sym)}`)

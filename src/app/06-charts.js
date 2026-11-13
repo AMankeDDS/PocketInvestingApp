@@ -4,7 +4,7 @@
 function needBars(sym, span = '1d'){
   if (!Market.isReal(sym)) return; const k = sym + ':' + span; ui.barsReq = ui.barsReq || {};
   if (ui.barsReq[k] && Date.now() - ui.barsReq[k] < 600000) return; ui.barsReq[k] = Date.now();
-  Store.bars(sym, span).then(b => { if (b && b.length){ Market.addHist(sym, b); schedule(); } }).catch(() => {});
+  Store.bars(sym, span).then(b => { if (b && b.length){ Market.addHist(sym, b, ['1m', '3m', '1y'].includes(span)); schedule(); } }).catch(() => {});
 }
 function seriesPts(fn, spanKey){ const [span, , n] = SPANS[spanKey], now = Date.now(), out = []; for (let i = n - 1; i >= 0; i--){ const t = now - span * i / (n - 1); out.push({ t, v: fn(t) }); } return out; }
 
@@ -18,18 +18,21 @@ function ichDate(t, spanKey){
 
 function ichart(id, pts, spanKey, opt = {}){
   if (!pts || pts.length < 2) return '';
-  const w = 600, h = opt.h || 180, vals = pts.map(p => p.v), min = Math.min(...vals), max = Math.max(...vals), rng = max - min || 1;
-  const up = vals[vals.length - 1] >= vals[0], color = opt.color || (up ? 'var(--gain)' : 'var(--loss)');
+  const w = 600, h = opt.h || 180, vals = pts.map(p => p.v), base = opt.base > 0 ? opt.base : null;
+  let min = Math.min(...vals, base ?? Infinity), max = Math.max(...vals, base ?? -Infinity);
+  if (opt.minPct){ const half = (base ?? vals[0]) * opt.minPct, mid = (min + max) / 2; if (max - min < 2 * half){ min = mid - half; max = mid + half; } }
+  const rng = max - min || 1;
+  const up = vals[vals.length - 1] >= (base ?? vals[0]), color = opt.color || (up ? 'var(--gain)' : 'var(--loss)'), by = base != null ? h - 8 - (base - min) / rng * (h - 16) : null;
   const xy = pts.map((p, i) => [i / (pts.length - 1) * w, h - 8 - (p.v - min) / rng * (h - 16)]);
   const d = xy.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ');
-  ICH[id] = { pts, xy, w, h, spanKey, label: opt.label || SPANS[spanKey][1], color, what: opt.what || 'value' };
+  ICH[id] = { pts, xy, w, h, spanKey, base, label: opt.label || SPANS[spanKey][1], color, what: opt.what || 'value' };
   return `<div class="ich" data-ich="${esc(id)}"><div class="ich-head" data-ich-head aria-live="polite">${ichSummary(id)}</div>
     <svg class="ich-svg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="height:${h}px" role="img" aria-label="${esc(opt.aria || 'Chart')}">
       <rect class="ich-sel" x="0" y="0" width="0" height="${h}" style="display:none"/>
-      <path d="${d} L ${w} ${h} L 0 ${h} Z" fill="${color}" opacity=".08"/><path d="${d}" fill="none" stroke="${color}" stroke-width="2.2" vector-effect="non-scaling-stroke"/>
+      ${by != null ? `<line x1="0" x2="${w}" y1="${by.toFixed(1)}" y2="${by.toFixed(1)}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="4 4" vector-effect="non-scaling-stroke" opacity=".7"/>` : ''}<path d="${d} L ${w} ${h} L 0 ${h} Z" fill="${color}" opacity=".08"/><path d="${d}" fill="none" stroke="${color}" stroke-width="2.2" vector-effect="non-scaling-stroke"/>
       <line class="ich-x" x1="0" x2="0" y1="0" y2="${h}" vector-effect="non-scaling-stroke" style="display:none"/>
       <circle class="ich-dot" r="4" stroke="${color}" vector-effect="non-scaling-stroke" style="display:none"/>
-    </svg><div class="ich-tip" style="display:none"></div></div>`;
+    </svg>${opt.ticks && opt.ticks.length ? `<div class="ich-ticks" aria-hidden="true">${opt.ticks.map(k => `<span style="left:${(k.i / (pts.length - 1) * 100).toFixed(1)}%">${esc(k.label)}</span>`).join('')}</div>` : ''}${opt.note ? `<div class="small muted" style="margin-top:4px">${esc(opt.note)}</div>` : ''}<div class="ich-tip" style="display:none"></div></div>`;
 }
 
 function ichChange(a, b){ const ch = b - a, p = a ? ch / a : 0; return `<span class="${sgn(ch)}"><b class="${sgn(ch)}">${ch >= 0 ? '+' : '−'}${usd(Math.abs(ch))}</b> (${pct(p)})</span>`; }
@@ -41,8 +44,8 @@ function ichSummary(id){
     const [i, j] = sel[0] < sel[1] ? sel : [sel[1], sel[0]], A = C.pts[i], B = C.pts[j];
     return `<span>${esc(ichDate(A.t, C.spanKey))} → ${esc(ichDate(B.t, C.spanKey))}:</span> <b>${usd(A.v)}</b> → <b>${usd(B.v)}</b> ${ichChange(A.v, B.v)} <button class="linkbtn small" data-act="ichclear" data-k="${esc(id)}">Clear</button>`;
   }
-  const A = C.pts[0], B = C.pts[C.pts.length - 1];
-  return `<span>${esc(C.label)}:</span> <b>${usd(A.v)}</b> → <b>${usd(B.v)}</b> ${ichChange(A.v, B.v)}`;
+  const a = C.base != null ? C.base : C.pts[0].v, B = C.pts[C.pts.length - 1];
+  return `<span>${esc(C.label)}:</span> <b>${usd(a)}</b> → <b>${usd(B.v)}</b> ${ichChange(a, B.v)}`;
 }
 
 function ichPaint(el, hoverIdx){
