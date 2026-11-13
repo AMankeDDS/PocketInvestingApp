@@ -136,6 +136,6 @@ function memberBadges(p, extra = []){
   else { const f = Store.get('badges', 'founding') || {}; if (!f.cutoff || (p.createdTs || 0) < Date.parse(f.cutoff + 'T00:00:00Z')) out.push({ n: 'Founding member', c: 'ember', d: f.desc || 'Joined Pocket before its public launch.' }); }
   extra.forEach(x => x && out.push(x)); { const lb = typeof leaderBadge === 'function' ? leaderBadge(p.id) : null; if (lb) out.push(lb); }
   (p.badges || []).map(id => Store.get('badges', id)).filter(b => b && !b.retired && !b.builtin).forEach(b => out.push({ n: b.name, c: b.color || 'blue', d: b.desc || '' }));
+  if (typeof autoBadges === 'function') autoBadges(p).forEach(b => out.push(b));
   return out;
 }
-function badgeChips(pid, max = 2){ const b = memberBadges(Store.get('profiles', pid)).filter(x => x.n !== 'Sample investor'); if (!b.length) return ''; return ' ' + b.slice(0, max).map(x => `<span class="tag ${x.c}" style="font-size:11px;padding:1px 7px">${esc(x.n)}</span>`).join(' ') + (b.length > max ? ` <span class="small muted">+${b.length - max}</span>` : ''); }

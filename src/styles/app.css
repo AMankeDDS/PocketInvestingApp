@@ -270,3 +270,5 @@ textarea.input{resize:vertical; min-height:84px}
 :root[data-theme="dark"] .btn:not(.ghost):not(.ember):not(.danger){background:#2f6fe4}
 .seg{max-width:100%;overflow-x:auto;scrollbar-width:none}.seg::-webkit-scrollbar{display:none}
 .shell{overflow-x:clip}
+.bpop{position:absolute;z-index:60;width:260px;padding:12px 14px;border-radius:12px;background:var(--surface);color:var(--text);border:1px solid var(--line);box-shadow:0 8px 24px rgba(0,0,0,.18)}.bchips{display:inline-flex;gap:4px;vertical-align:middle;flex-wrap:nowrap;max-width:60%;overflow:hidden}
+@media (max-width:400px){.bchips .tag:nth-child(2){display:none}}

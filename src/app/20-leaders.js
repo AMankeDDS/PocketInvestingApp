@@ -1,6 +1,6 @@
 /* Vacation mode, away leaders, the Pocket Leader milestone, referrals, the one-week check-in and the home-screen prompt. */
 const DAY = 86400000, fmtDate = ts => new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-const isAway = pid => { const p = Store.get('profiles', pid); return !!p && p.kind !== 'demo' && Date.now() - (p.lastActiveTs || p.createdTs || Date.now()) >= 30 * DAY; };
+const isAway = pid => { const p = Store.get('profiles', pid); return !!p && !!p.away; }; /* the server works this out, so activity times stay private */
 function groupLeaderPanel(g){
   const v = g.vacation && g.vacation.until > Date.now() ? g.vacation : null, me = Store.myPid, my = Store.membership(g.id);
   if (v) return `<div class="banner text" style="margin-top:12px;font-size:14px"><b>${esc(Store.displayName(v.byPid))} is away until ${fmtDate(v.until)}.</b> ${esc(Store.displayName(v.standIn))} is in charge as ${v.role === 'owner' ? 'Owner' : 'Lead Trader'} until then.${[v.byPid, v.standIn].includes(me) ? ` <button class="linkbtn small" data-act="vacationend" data-gid="${g.id}">End vacation mode</button>` : ''}</div>`;
@@ -82,3 +82,45 @@ function installCard(){
     ${ios ? '' : '<button class="btn sm" data-act="a2hs" style="margin-top:8px">Install Pocket</button>'}</div><button class="x" data-act="a2hsoff" aria-label="Dismiss">×</button></section>`;
 }
 try { const k = 'pi_visit_day', d = new Date().toISOString().slice(0, 10); if (localStorage.getItem(k) !== d){ localStorage.setItem(k, d); localStorage.setItem('pi_visits', String(+(localStorage.getItem('pi_visits') || 0) + 1)); } } catch(e){}
+
+/* Members who joined before the 18+ question confirm once. */
+function adultSheet(){
+  openModal(`<header><h2>One quick confirmation</h2></header><p class="muted" style="margin-top:0">Pocket is for adults. Please confirm your age to keep using it.</p>
+    <label style="display:flex;gap:10px;align-items:flex-start;margin:6px 0 14px"><input type="checkbox" id="ad-k" style="margin-top:4px"><span>I'm 18 or older.</span></label>
+    <div class="hint" id="ad-e" style="color:var(--loss);min-height:1.2em"></div><button class="btn" id="ad-go" style="width:100%" disabled>Continue</button>
+    <p class="small muted" style="margin:12px 0 0">If you're under 18, please <a href="#/u/me" data-act="adultno">contact us</a> and we'll close your account.</p>`, sh => {
+    sh.querySelector('#ad-k').onchange = e => { sh.querySelector('#ad-go').disabled = !e.target.checked; };
+    sh.querySelector('#ad-go').onclick = async () => { try { await Store.http('POST', '/api/confirm-adult', { adult: true }); closeModal(); toast('Thanks.'); } catch(e){ sh.querySelector('#ad-e').textContent = e.message; } };
+  });
+}
+
+/* Blocking and reporting. */
+const iBlocked = pid => !!Store.signedIn && Store.all('blocks').some(b => b.from === Store.myPid && b.to === pid);
+const REPORT_REASONS = { post: [['spam', 'Spam'], ['hype', 'Misleading or hype'], ['harassment', 'Harassment'], ['other', 'Something else']], comment: [['spam', 'Spam'], ['hype', 'Misleading or hype'], ['harassment', 'Harassment'], ['other', 'Something else']], member: [['impersonation', 'Pretending to be someone else'], ['harassment', 'Harassment'], ['fake', 'Fake or spam account'], ['other', 'Something else']] };
+function reportSheet(kind, id){
+  const what = kind === 'member' ? 'this member' : kind === 'comment' ? 'this comment' : 'this post';
+  openModal(`<header><h2>Report ${what}</h2><button class="x" data-close aria-label="Close">×</button></header>
+    <p class="muted" style="margin-top:0">The Pocket team reviews every report. ${kind === 'member' ? 'They won\'t know who reported them.' : 'The author won\'t know who reported it.'} <a href="/site/guidelines.html" target="_blank">Community guidelines</a></p>
+    <div class="field" role="radiogroup" aria-label="Reason">${REPORT_REASONS[kind].map(([k, l], i) => `<label style="display:flex;gap:10px;align-items:center;margin:6px 0"><input type="radio" name="rp-r" value="${k}" ${i === 0 ? 'checked' : ''}> ${l}</label>`).join('')}</div>
+    <div class="field"><label for="rp-d">Anything else we should know? <span class="muted">(optional)</span></label><textarea class="input" id="rp-d" maxlength="500" rows="3"></textarea></div>
+    <div class="hint" id="rp-e" style="color:var(--loss);min-height:1.2em"></div><button class="btn" id="rp-go" style="width:100%">Send report</button>`, sh => {
+    sh.querySelector('#rp-go').onclick = async () => { const b = sh.querySelector('#rp-go'); b.disabled = true;
+      const body = { kind, reason: (sh.querySelector('input[name=rp-r]:checked') || {}).value, details: sh.querySelector('#rp-d').value };
+      if (kind === 'post') body.postId = id; else if (kind === 'comment') body.commentId = id; else body.pid = id;
+      try { await Store.http('POST', '/api/action/report', body); closeModal(); toast('Thanks. The Pocket team will review it.'); } catch(e){ sh.querySelector('#rp-e').textContent = e.message; b.disabled = false; } };
+  });
+}
+function blockedList(){ const bl = Store.all('blocks').filter(b => b.from === Store.myPid); if (!bl.length) return '';
+  return `<section class="block"><header><h2>Blocked members</h2></header><div class="list">${bl.map(b => `<div class="row">${avatar(b.to, 'sm')}<div class="grow">${esc(Store.displayName(b.to))}</div><button class="btn sm ghost" data-act="unblock" data-id="${b.to}">Unblock</button></div>`).join('')}</div></section>`; }
+
+/* Two-step backup codes. */
+function backupRow(){ if (ui.bkLeft == null){ ui.bkLeft = '…'; Store.http('GET', '/api/2fa/backup').then(r => { ui.bkLeft = r.left; render(); }, () => {}); }
+  return `<div class="panel" style="padding:12px 14px;margin:10px 0;background:var(--surface-2)"><b>Backup codes</b><div class="small muted" style="margin:4px 0 8px">${ui.bkLeft} unused. Each works once to sign in if you lose your phone.</div><div class="field" style="margin:0 0 8px"><label for="tf-bk">Current code from your app</label><input class="input num" id="tf-bk" inputmode="numeric" maxlength="6"></div><button class="btn sm ghost" data-act="tfbackup">Get new backup codes</button></div>`; }
+function backupCodesSheet(codes, first){
+  openModal(`<header><h2>${first ? 'Two-step sign-in is on' : 'New backup codes'}</h2></header><p class="muted" style="margin-top:0">Save these somewhere safe, like a password manager. If you lose your phone, each code lets you sign in once. ${first ? '' : 'Your old codes no longer work.'}</p>
+    <div class="panel num" style="padding:14px;display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:16px;letter-spacing:1px">${codes.map(c => `<span>${esc(c)}</span>`).join('')}</div>
+    <div style="display:flex;gap:8px;margin-top:12px"><button class="btn ghost" id="bk-copy" style="flex:1">Copy codes</button><button class="btn" id="bk-done" style="flex:1">I've saved them</button></div>`, sh => {
+    sh.querySelector('#bk-copy').onclick = () => { try { navigator.clipboard.writeText(codes.join('\n')); toast('Copied.'); } catch(e){} };
+    sh.querySelector('#bk-done').onclick = () => closeModal();
+  });
+}

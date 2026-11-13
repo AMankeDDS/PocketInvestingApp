@@ -678,23 +678,45 @@ A.adminSetRole = async (tx, ctx, a) => { needAdmin(ctx); const g = await tx.get(
   else if (a.role === 'lead'){ await tx.update('memberships', a.gid + '__' + a.pid, { role: 'lead', roleChangedTs: Date.now() }); await tx.update('groups', a.gid, { leadPid: a.pid }); }
   else throw fail('Pick Owner or Lead Trader.');
   notify(tx, (await tx.find('memberships', { gid: a.gid })).map(m => m.pid), { title: `New ${a.role === 'owner' ? 'Owner' : 'Lead Trader'} for ${g.name}`, body: `The Pocket team made ${((await tx.get('profiles', a.pid)) || {}).name || 'a member'} ${a.role === 'owner' ? 'Owner' : 'Lead Trader'} because the previous one was away.`, url: '/#/group/' + a.gid, tag: 'role-' + a.gid }); };
+/* Block: hides their posts and comments from you, and stops them following, copying or replying to you. They aren't told. */
+A.setFeaturedBadges = async (tx, ctx, a) => { await needProfile(tx, ctx); const names = (Array.isArray(a.names) ? a.names : []).map(x => str(x, 40)).filter(Boolean).slice(0, 2); await tx.update('profiles', ctx.pid, { featuredBadges: names }); };
+A.block = async (tx, ctx, a) => { await needProfile(tx, ctx); const t = str(a.pid, 60); if (!t || t === ctx.pid) throw fail('Pick another member.'); if (!(await tx.get('profiles', t))) throw fail('Member not found.');
+  await tx.set('blocks', ctx.pid + '__' + t, { from: ctx.pid, to: t, ts: Date.now() });
+  if (await tx.get('follows', t + '__' + ctx.pid)) await tx.del('follows', t + '__' + ctx.pid);
+  if (await tx.get('copies', t + '__' + ctx.pid)) await tx.del('copies', t + '__' + ctx.pid); };
+A.unblock = async (tx, ctx, a) => { await needProfile(tx, ctx); const id = ctx.pid + '__' + str(a.pid, 60); if (await tx.get('blocks', id)) await tx.del('blocks', id); };
+/* Moderation (Pocket admins): remove, keep, warn or mute, and close the report. */
+A.moderate = async (tx, ctx, a) => { needAdmin(ctx); const r = a.reportId ? await tx.get('reports', a.reportId) : null; const kind = (r && r.kind) || a.kind;
+  let author = null;
+  if (kind === 'post'){ const p = await tx.get('posts', (r && r.postId) || a.id); if (p) author = p.pid; if (p && a.action === 'remove') await tx.update('posts', p.id, { removed: true, removedTs: Date.now() }); }
+  else if (kind === 'comment'){ const c = await tx.get('comments', (r && r.commentId) || a.id); if (c) author = c.pid; if (c && a.action === 'remove') await tx.update('comments', c.id, { removed: true, removedTs: Date.now() }); }
+  else author = (r && r.pid) || a.pid;
+  const note = str(a.note, 200).trim();
+  if (author && a.action === 'remove') notify(tx, [author], { title: 'Your ' + (kind === 'comment' ? 'comment' : 'post') + ' was removed', body: 'It broke the community rules' + (note ? ': ' + note : '.') + ' See the community guidelines for details.', url: '/site/guidelines.html', tag: 'mod-' + Date.now() });
+  if (author && a.action === 'warn') notify(tx, [author], { title: 'A note from the Pocket team', body: (note || 'Something you shared came close to breaking the community rules.') + ' Please review the community guidelines.', url: '/site/guidelines.html', tag: 'mod-' + Date.now() });
+  if (author && ['mute7', 'mute30'].includes(a.action)){ const until = Date.now() + (a.action === 'mute7' ? 7 : 30) * 86400000; await tx.update('profiles', author, { mutedUntil: until, mutedReason: note || 'Community rules' });
+    notify(tx, [author], { title: "You can't post for a while", body: `Posting and comments are paused until ${new Date(until).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} because of a community rules violation.`, url: '/site/guidelines.html', tag: 'mod-' + Date.now() }); }
+  if (r){ await tx.update('reports', r.id, { status: 'resolved', outcome: a.action, resolvedTs: Date.now() }); if (r.reporterPid) notify(tx, [r.reporterPid], { title: 'Your report was reviewed', body: 'Thanks for helping keep Pocket a good place to invest.', url: '/#/home', tag: 'rep-' + r.id }); }
+};
 A.executeProposal = async (tx, ctx, a) => {
   const pr = await tx.get('proposals', a.prid); if (!pr) throw fail('Proposal not found.');
   const r0 = await roleIn(tx, pr.gid, ctx.pid);
   if (!(canTradeFor(r0) || (pr.away && r0 && r0 !== 'observer'))) throw fail('Only Owners, Admins and Lead Traders can execute a decision.');
   return executeProposal(tx, a.prid, ctx.pid);
 };
+async function notMuted(tx, pid){ const p = await tx.get('profiles', pid); if (p && p.mutedUntil > Date.now()) throw fail(`You can't post until ${new Date(p.mutedUntil).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} because of a community rules violation.`); }
+async function blockedBy(tx, owner, actor){ return !!(await tx.get('blocks', owner + '__' + actor)); }
 A.post = async (tx, ctx, a) => {
-  await needProfile(tx, ctx);
+  await needProfile(tx, ctx); await notMuted(tx, ctx.pid);
   const text = str(a.text, 500).trim(); if (!text) throw fail('Write something first.');
   if (a.groupId && !(await roleIn(tx, a.groupId, ctx.pid))) throw fail('Join the group to post there.');
   await tx.set('posts', tx.newId(), { pid: ctx.pid, text, ts: Date.now(), groupId: a.groupId || null });
 };
 A.toggleLike = async (tx, ctx, a) => { await needProfile(tx, ctx); const id = a.postId + '__' + ctx.pid; if (await tx.get('reactions', id)) await tx.del('reactions', id); else await tx.set('reactions', id, { postId: a.postId, pid: ctx.pid, ts: Date.now() }); };
-A.comment = async (tx, ctx, a) => { await needProfile(tx, ctx); const text = str(a.text, 400).trim(); if (!text) throw fail('Write a comment first.'); if (!(await tx.get('posts', a.postId))) throw fail('Post not found.'); await tx.set('comments', tx.newId(), { postId: a.postId, pid: ctx.pid, text, ts: Date.now() }); };
+A.comment = async (tx, ctx, a) => { await needProfile(tx, ctx); await notMuted(tx, ctx.pid); const text = str(a.text, 400).trim(); if (!text) throw fail('Write a comment first.'); const post0 = await tx.get('posts', a.postId); if (!post0) throw fail('Post not found.'); if (await blockedBy(tx, post0.pid, ctx.pid)) throw fail("You can't interact with this member."); await tx.set('comments', tx.newId(), { postId: a.postId, pid: ctx.pid, text, ts: Date.now() }); };
 A.deletePost = async (tx, ctx, a) => { const p = await tx.get('posts', a.id); if (!p) return; if (p.pid !== ctx.pid && !ctx.isAdmin && !(p.groupId && canModerate(await roleIn(tx, p.groupId, ctx.pid)))) throw fail('You can only delete your own posts.'); await tx.del('posts', a.id); for (const c of await tx.find('comments', { postId: a.id })) await tx.del('comments', c.id); };
 A.deleteComment = async (tx, ctx, a) => { const c = await tx.get('comments', a.id); if (!c) return; const p = await tx.get('posts', c.postId); if (c.pid !== ctx.pid && !ctx.isAdmin && !(p && p.groupId && canModerate(await roleIn(tx, p.groupId, ctx.pid)))) throw fail('You can only delete your own comments.'); await tx.del('comments', a.id); };
-A.follow = async (tx, ctx, a) => { await needProfile(tx, ctx); if (a.pid === ctx.pid) return; await tx.set('follows', ctx.pid + '__' + a.pid, { from: ctx.pid, to: a.pid, ts: Date.now() }); };
+A.follow = async (tx, ctx, a) => { await needProfile(tx, ctx); if (a.pid === ctx.pid) return; if (await blockedBy(tx, a.pid, ctx.pid)) throw fail("You can't interact with this member."); await tx.set('follows', ctx.pid + '__' + a.pid, { from: ctx.pid, to: a.pid, ts: Date.now() }); };
 A.unfollow = async (tx, ctx, a) => tx.del('follows', ctx.pid + '__' + a.pid);
 A.upgradePro = async (tx, ctx, a) => { await needProfile(tx, ctx); const patch = { plan: 'pro', proSince: Date.now() }; if (a && ['yes','maybe','no'].includes(a.wouldPay)){ patch.wouldPay = a.wouldPay; patch.wouldPayTs = Date.now(); } await tx.update('profiles', ctx.pid, patch); };
 A.cancelPro = async (tx, ctx) => {
@@ -724,9 +746,11 @@ A.copyPortfolio = async (tx, ctx, a) => {
   if (a.follow && !gid) await tx.set('copies', ctx.pid + '__' + src, { from: ctx.pid, to: src, copyPct: 1, ts: Date.now() });
   return { filled, skipped };
 };
-A.copyInvestor = async (tx, ctx, a) => { await needProfile(tx, ctx); if (!(await isPro(tx, ctx.pid))) throw fail('Copying investors is part of Pro.'); if (a.pid === ctx.pid) throw fail("You can't copy yourself."); await tx.set('copies', ctx.pid + '__' + a.pid, { from: ctx.pid, to: a.pid, copyPct: 1, ts: Date.now() }); };
+A.copyInvestor = async (tx, ctx, a) => { await needProfile(tx, ctx); if (await blockedBy(tx, a.pid, ctx.pid)) throw fail("You can't interact with this member."); if (!(await isPro(tx, ctx.pid))) throw fail('Copying investors is part of Pro.'); if (a.pid === ctx.pid) throw fail("You can't copy yourself."); await tx.set('copies', ctx.pid + '__' + a.pid, { from: ctx.pid, to: a.pid, copyPct: 1, ts: Date.now() }); };
 A.stopCopying = async (tx, ctx, a) => tx.del('copies', ctx.pid + '__' + a.pid);
-A.report = async (tx, ctx, a) => { await needProfile(tx, ctx); await tx.set('reports', tx.newId(), { kind: a.kind === 'photo' ? 'photo' : 'group', pid: a.kind === 'photo' ? str(a.pid, 60) : null, gid: a.gid || null, reporterPid: ctx.pid, reason: str(a.reason, 40), details: str(a.details, 500), status: 'open', ts: Date.now() }); };
+A.report = async (tx, ctx, a) => { await needProfile(tx, ctx); const kind = ['photo', 'post', 'comment', 'member'].includes(a.kind) ? a.kind : 'group';
+  if (kind === 'post' && !(await tx.get('posts', a.postId))) throw fail('Post not found.'); if (kind === 'comment' && !(await tx.get('comments', a.commentId))) throw fail('Comment not found.');
+  await tx.set('reports', tx.newId(), { kind, postId: kind === 'post' ? str(a.postId, 60) : null, commentId: kind === 'comment' ? str(a.commentId, 60) : null, pid: ['photo', 'member'].includes(kind) ? str(a.pid, 60) : null, gid: a.gid || null, reporterPid: ctx.pid, reason: str(a.reason, 40), details: str(a.details, 500), status: 'open', ts: Date.now() }); };
 A.requestJoin = async (tx, ctx, a) => {
   await needProfile(tx, ctx); const g = await tx.get('groups', a.gid); if (!g) throw fail('Group not found.'); const rules = rulesOf(g);
   await checkJoin(tx, g, ctx.pid, rules);

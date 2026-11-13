@@ -5,7 +5,7 @@ function exploreData(){
     Store.http('GET', '/api/explore').then(r => { ui.explore = r; ui.exploreTs = Date.now(); }, () => { ui.explore = ui.explore || { industries: {}, earnings: [], events: [], related: null }; }).finally(() => { ui.exploreLoading = false; render(); }); } }
   return ui.explore || { industries: {}, earnings: [], events: [], related: null };
 }
-const EX_CHIPS = [['market', 'Market'], ['movers', 'Movers'], ['sectors', 'Sectors'], ['onpocket', 'On Pocket'], ['earnings', 'Earnings'], ['news', 'News'], ['feed', 'Feed']];
+const EX_CHIPS = [['market', 'Market'], ['movers', 'Movers'], ['sectors', 'Sectors'], ['onpocket', 'On Pocket'], ['earnings', 'Earnings'], ['outlook', 'Outlook'], ['news', 'News'], ['feed', 'Feed']];
 function vExplore(){
   const tab = ui.exploreTab || 'market', act = tab === 'feed' ? 'feed' : (ui.exActive || 'market');
   const body = tab === 'feed' ? vFeed() : exploreMarket(), has = k => k === 'feed' || k === 'market' || tab === 'feed' || body.includes(`id="ex-${k}"`);
@@ -84,6 +84,7 @@ function exploreMarket(){
     ${sec('onpocket', 'On Pocket', onPocket, '<span class="small muted">Stocks priced $5 and up</span>')}
     ${related ? sec('related', 'Related to what you own', related) : ''}
     ${sec('earnings', 'Earnings this week', earnings)}
+    ${sec('outlook', 'Pocket outlook', exploreOutlook())}
     ${sec('events', 'Coming up', events, '<span class="small muted">Launches, conferences and other dates to know</span>')}
     <div id="ex-news-wrap">${newsSyms.length ? newsSection('Market news', newsSyms, (ui.exAll || {}).news ? 15 : 5, { id: 'ex-news', more: 'news' }) : ''}</div>
     <p class="hint" style="margin-top:22px">${Store.site.realPrices ? 'Prices from the market.' : 'Prices are simulated.'} For information only, not investment advice.</p>`;

@@ -8,6 +8,8 @@ function mount(app, d){
   app.post('/api/admin/badges', wrap(async (req, res) => { if (!(await needAdmin(req, res))) return; const b = req.body || {};
     if (b.op === 'founding'){ const c = b.cutoff ? String(b.cutoff).slice(0, 10) : null; if (c && !/^\d{4}-\d{2}-\d{2}$/.test(c)) return bad(res, 'Pick a date.');
       await tx(t => t.set('badges', 'founding', { builtin: true, name: 'Founding member', color: 'ember', desc: 'Joined Pocket before its public launch.', cutoff: c })); return ok(res); }
+    if (b.op === 'outlook'){ const n = (k, def, lo, hi) => Math.max(lo, Math.min(hi, Math.round(Number(b[k]) || def)));
+      await tx(t => t.set('badges', 'outlookRule', { builtin: true, name: 'Outlook rules', accuracyOn: b.accuracyOn !== false, weeklyRun: n('weeklyRun', 4, 1, 52), regular: n('regular', 12, 1, 13), groupCalls: n('groupCalls', 10, 1, 500), streak: n('streak', 5, 2, 50), sharpPct: n('sharpPct', 70, 50, 100), sharpMin: n('sharpMin', 20, 5, 500), sectorPct: n('sectorPct', 70, 50, 100), sectorMin: n('sectorMin', 10, 3, 500), sectorRegular: n('sectorRegular', 8, 1, 10) })); return ok(res); }
     if (b.op === 'leader'){ const c = Math.max(1, Math.min(10000, Math.round(Number(b.copiers) || 25))), m = Math.max(2, Math.min(10000, Math.round(Number(b.members) || 10)));
       await tx(t => t.set('badges', 'leaderRule', { builtin: true, name: 'Pocket Leader', copiers: c, members: m })); return ok(res); }
     const name = clean(b.name, 24), color = COLORS.includes(b.color) ? b.color : 'blue', desc = clean(b.desc, 120);

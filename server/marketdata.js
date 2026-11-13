@@ -362,4 +362,4 @@ async function warmForSeed(){ if (!config.realPrices) return; await refreshQuote
 /* The 11 standard sector funds, so Explore can show every sector's move. */
 const SECTOR_FUNDS = ['XLK', 'XLF', 'XLV', 'XLE', 'XLY', 'XLP', 'XLI', 'XLB', 'XLU', 'XLRE', 'XLC'];
 async function ensureSectorFunds(){ if (!config.marketData) return 0; let n = 0; for (const s of SECTOR_FUNDS){ try { await ensure(s); n++; } catch (e){} } return n; }
-module.exports = { ensureSectorFunds, warmForSeed, sectorOf, pullIndustries, pullEarnings, migrate, mount, start, loadExtras, extras, bases: () => anchors.bases || {}, anchorPrices, pullFilings, filingHeadline, ensure, search, pullNews, listNews, newsAlerts, syncAssets, refreshQuotes, MIN_PRICE };
+module.exports = { bars, ensureSectorFunds, warmForSeed, sectorOf, pullIndustries, pullEarnings, migrate, mount, start, loadExtras, extras, bases: () => anchors.bases || {}, anchorPrices, pullFilings, filingHeadline, ensure, search, pullNews, listNews, newsAlerts, syncAssets, refreshQuotes, MIN_PRICE };

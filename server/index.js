@@ -74,7 +74,7 @@ app.set('trust proxy', 1);
 app.disable('x-powered-by');
 app.use(require('compression')());
 const jsonSmall = express.json({ limit: '50kb' }), jsonLarge = express.json({ limit: '8mb' });
-app.use((req, res, next) => (/^\/api\/club\/[^/]+\/(submit|taxdoc)$/.test(req.path) || req.path === '/api/photo' ? jsonLarge : jsonSmall)(req, res, next));
+app.use((req, res, next) => (/^\/api\/club\/[^/]+\/(submit|taxdoc)$/.test(req.path) || req.path === '/api/photo' || req.path === '/api/support' ? jsonLarge : jsonSmall)(req, res, next));
 const visitSeen = new Map();
 /* Referral links: pocketinvesting.com/r/CODE */
 app.get('/r/:code', (req, res) => res.redirect(302, '/#/ref/' + String(req.params.code || '').replace(/[^A-Za-z0-9]/g, '').slice(0, 16)));
@@ -125,15 +125,15 @@ function broadcastRaw(obj){ const msg = JSON.stringify(obj); for (const c of wss
 /* Live updates are filtered per person. When memberships or groups change, each open app's
    access is recomputed, and anyone whose groups changed reloads to pick up what they can now see. */
 const lookupDoc = async (col, id) => { const t = { posts: 'doc_posts', proposals: 'doc_proposals' }[col]; if (!t || !id) return null; const r = await q(`SELECT id, data FROM ${t} WHERE id = $1`, [id]); return r.rows[0] ? Object.assign({ id: r.rows[0].id }, r.rows[0].data) : null; };
-async function sharedForVis(){ const ms = (await q('SELECT data FROM doc_memberships')).rows.map(r => r.data); const gs = (await q('SELECT id, data FROM doc_groups')).rows.map(r => Object.assign({ id: r.id }, r.data)); return { ms, gs }; }
-async function visCtx(userId, admin, shared){ shared = shared || await sharedForVis(); return vis.makeCtx({ pid: userId ? 'u_' + userId : null, isAdmin: !!admin }, shared.ms, shared.gs, config.sampleData); }
+async function sharedForVis(){ const ms = (await q('SELECT data FROM doc_memberships')).rows.map(r => r.data); const gs = (await q('SELECT id, data FROM doc_groups')).rows.map(r => Object.assign({ id: r.id }, r.data)); const bl = (await q('SELECT data FROM doc_blocks').catch(() => ({ rows: [] }))).rows.map(r => r.data); return { bl, ms, gs }; }
+async function visCtx(userId, admin, shared){ shared = shared || await sharedForVis(); return vis.makeCtx({ pid: userId ? 'u_' + userId : null, isAdmin: !!admin }, shared.ms, shared.gs, config.sampleData, shared.bl || []); }
 async function broadcast(changes){
   if (!changes || !changes.length) return;
   for (const n of changes.filter(c => c.col === '_notify')) push.send(db.pool, n.pids, n.payload).catch(() => {});
   changes = changes.filter(c => c.col !== '_notify'); if (!changes.length) return;
   push.fromChanges(db.pool, changes).catch(e => console.error('push', e.message));
   try {
-    const structural = changes.some(c => c.wipe || c.col === 'memberships' || c.col === 'groups');
+    const structural = changes.some(c => c.wipe || c.col === 'memberships' || c.col === 'groups' || c.col === 'blocks');
     const shared = structural || [...wss.clients].some(c => !c.ctx) ? await sharedForVis() : null;
     for (const c of wss.clients){
       if (c.readyState !== 1) continue;
@@ -171,6 +171,7 @@ app.post('/api/signup', authLimit, wrap(async (req, res) => {
   if (!validPassword(password)) return bad(res, 'Use a password of at least 8 characters.');
   if (!name) return bad(res, 'Add the name others will see.');
   if (!req.body.terms) return bad(res, 'Please accept the terms and privacy policy to continue.');
+  if (req.body.adult !== true) return bad(res, 'Please confirm you are 18 or older to use Pocket.');
   if ((await q('SELECT 1 FROM users WHERE username = $1', [username])).rows.length) return bad(res, 'That username is taken.');
   const inviteOnly = (await setting('inviteOnly', true)) !== false;
   let useCode = null;
@@ -193,6 +194,7 @@ app.post('/api/signup', authLimit, wrap(async (req, res) => {
     await tx.query('INSERT INTO users (id, username, display_name, pass_hash, invite_code, terms_accepted_at, terms_version, signup_source, signup_detail) VALUES ($1, $2, $3, $4, $5, now(), $6, $7, $8)', [id, username, name, hash, useCode, TERMS_VERSION, source, sourceDetail]);
     if (useCode) await tx.query('UPDATE invite_codes SET uses = uses + 1 WHERE code = $1', [useCode]);
     if (refBy) await tx.query('UPDATE users SET referred_by = $2 WHERE id = $1', [id, refBy.id]);
+    await tx.query('UPDATE users SET adult_confirmed_at = now() WHERE id = $1', [id]);
     await createAccount(tx, id, name, risk);
   });
   broadcast(changes); logEvent(id, 'signup', { source });
@@ -219,7 +221,9 @@ app.post('/api/login', authLimit, wrap(async (req, res) => {
   if (u.totp_enabled){
     if (!req.body.code) return res.status(400).json({ error: 'Enter the 6-digit code from your authenticator app.', need2fa: true });
     const secret = totp.open(u.totp_secret, config.appSecret);
-    if (!secret || !totp.verify(secret, req.body.code)){ recent.push(Date.now()); failedLogins.set(username, recent); return res.status(400).json({ error: "That code didn't match. Try the newest code.", need2fa: true }); }
+    if (!secret || !totp.verify(secret, req.body.code)){
+      if (await require('./backup').use(q, u.id, req.body.code)) securityEvent(req, u.id, 'two-step', 'Backup code used to sign in', 'A two-step backup code was used to sign in. Each code works once. If this wasn\'t you, change your password now.');
+      else { recent.push(Date.now()); failedLogins.set(username, recent); return res.status(400).json({ error: "That code didn't match. Try the newest code, or a backup code.", need2fa: true }); } }
   }
   failedLogins.delete(username);
   if (!(await q('SELECT 1 FROM doc_profiles WHERE id = $1', ['u_' + u.id])).rows.length){ const { changes } = await db.withTx(tx => createAccount(tx, u.id, u.display_name)); broadcast(changes); }
@@ -228,11 +232,14 @@ app.post('/api/login', authLimit, wrap(async (req, res) => {
   ok(res);
 }));
 app.post('/api/logout', wrap(async (req, res) => { const t = readCookie(req); if (t) await q('DELETE FROM sessions WHERE token = $1', [t]); clearCookie(res); ok(res); }));
+/* Members who joined before the 18+ question confirm once. */
+app.post('/api/confirm-adult', wrap(async (req, res) => { const u = await needUser(req, res); if (!u) return; if (req.body.adult !== true) return bad(res, 'Please confirm you are 18 or older.'); await q('UPDATE users SET adult_confirmed_at = now() WHERE id = $1 AND adult_confirmed_at IS NULL', [u.id]); ok(res); }));
 app.get('/api/me', wrap(async (req, res) => {
   const u = await currentUser(req); const c = ctxFor(u);
   if (u && !u.acting_admin){ const day = new Date().toISOString().slice(0, 10); if (visitSeen.get(u.id) !== day){ visitSeen.set(u.id, day); logEvent(u.id, 'visit', {}); db.withTx(async tx => { if (await tx.get('profiles', 'u_' + u.id)) await tx.update('profiles', 'u_' + u.id, { lastActiveTs: Date.now() }); }).then(r => broadcast(r.changes)).catch(() => {}); } }
   const tf = u ? (await q('SELECT totp_enabled FROM users WHERE id = $1', [u.id])).rows[0] : null;
-  res.json({ signedIn: !!u, pid: c.pid, username: u && u.username, name: u && u.display_name, isAdmin: c.isAdmin, inviteOnly: (await setting('inviteOnly', true)) !== false, pushKey: push.publicKey,
+  const needsAdult = u && !u.acting_admin ? !(await q('SELECT adult_confirmed_at FROM users WHERE id = $1', [u.id])).rows[0].adult_confirmed_at : false;
+  res.json({ needsAdult, signedIn: !!u, pid: c.pid, username: u && u.username, name: u && u.display_name, isAdmin: c.isAdmin, inviteOnly: (await setting('inviteOnly', true)) !== false, pushKey: push.publicKey,
     actingAs: u && u.acting_admin ? { admin: ((await q('SELECT display_name FROM users WHERE id = $1', [u.acting_admin])).rows[0] || {}).display_name || 'Admin', until: new Date(u.session_expires).getTime() } : null, isTest: !!(u && u.is_test),
     twofa: !!(tf && tf.totp_enabled), adminAccount: isAdminAccount(u), adminNeeds2fa: isAdminAccount(u) && !isAdmin(u), maintenance: await setting('maintenance', null), site: config.publicInfo(), accountNumber: u ? await require('./accounts').personal('u_' + u.id).catch(() => null) : null });
 }));
@@ -300,7 +307,7 @@ app.post('/api/delete-account', authLimit, wrap(async (req, res) => {
 /* ---------- data and actions ---------- */
 app.get('/api/state', wrap(async (req, res) => { res.set('Cache-Control', 'no-store'); const snap = await db.snapshot();
   { const u = await currentUser(req), C = snap.collections || {};
-    const ctx = vis.makeCtx({ pid: u ? 'u_' + u.id : null, isAdmin: isAdmin(u) }, C.memberships || [], C.groups || [], config.sampleData);
+    const ctx = vis.makeCtx({ pid: u ? 'u_' + u.id : null, isAdmin: isAdmin(u) }, C.memberships || [], C.groups || [], config.sampleData, C.blocks || []);
     snap.collections = await vis.filterCollections(ctx, C, lookupDoc); } snap.market = { extras: marketdata.extras(), bases: marketdata.bases(), quotes: config.realPrices ? Market.QUOTES : {} }; res.json(snap); }));
 app.get('/api/admin/log', wrap(async (req, res) => { if (!(await needAdmin(req, res))) return; ok(res, { log: (await q(`SELECT l.action, l.detail, l.status, l.ts, u.username FROM admin_log l LEFT JOIN users u ON u.id = l.user_id ORDER BY l.id DESC LIMIT 200`)).rows }); }));
 /* Site notice (a banner for everyone) and read-only mode (blocks changes while an issue is fixed). */
@@ -311,7 +318,7 @@ const errorTimes = []; let lastErrorAlert = 0;
 function noteError(){
   const now = Date.now(); errorTimes.push(now); while (errorTimes.length && now - errorTimes[0] > 10 * 60000) errorTimes.shift();
   if (errorTimes.length >= 10 && now - lastErrorAlert > 3600000){ lastErrorAlert = now;
-    q(`SELECT id FROM users WHERE is_admin OR lower(username) = ANY($1)`, [ENV_ADMINS]).then(r => push.send(db.pool, r.rows.map(x => 'u_' + x.id), { title: 'Pocket Investing: errors spiking', body: errorTimes.length + ' errors in the last 10 minutes. Check Beta admin, Errors.', url: '/#/admin', tag: 'errors' })).catch(() => {}); }
+    q(`SELECT id FROM users WHERE is_admin OR lower(username) = ANY($1)`, [ENV_ADMINS]).then(r => push.send(db.pool, r.rows.map(x => 'u_' + x.id), { title: 'Pocket Investing: errors spiking', body: errorTimes.length + ' errors in the last 10 minutes. Check Beta admin, Errors, and consider posting a status update.', url: '/#/admin', tag: 'errors' })).catch(() => {}); }
 }
 app.get('/api/security-events', wrap(async (req, res) => { const u = await needUser(req, res); if (!u) return; ok(res, { events: (await q('SELECT kind, detail, ts FROM security_events WHERE user_id = $1 ORDER BY id DESC LIMIT 15', [u.id])).rows }); }));
 /* ---------- test accounts and "Act as" (sandbox only) ---------- */
@@ -325,7 +332,7 @@ app.post('/api/admin/test-accounts', wrap(async (req, res) => {
   for (let i = 0; i < count; i++){
     n++; const id = db.newId(), username = 'test' + n + '_' + crypto.randomBytes(2).toString('hex'), name = 'Test User ' + n;
     const { changes } = await db.withTx(async tx => {
-      await tx.query('INSERT INTO users (id, username, display_name, pass_hash, terms_accepted_at, terms_version, signup_source, signup_detail, is_test) VALUES ($1, $2, $3, $4, now(), $5, $6, $7, true)', [id, username, name, await bcrypt.hash(crypto.randomBytes(16).toString('hex'), 10), TERMS_VERSION, 'test', 'made by ' + a.username]);
+      await tx.query('INSERT INTO users (id, username, display_name, pass_hash, terms_accepted_at, terms_version, signup_source, signup_detail, is_test) VALUES ($1, $2, $3, $4, now(), $5, $6, $7, true)', [id, username, name, await bcrypt.hash(crypto.randomBytes(16).toString('hex'), 10), TERMS_VERSION, 'test', 'made by ' + a.username]); await tx.query('UPDATE users SET adult_confirmed_at = now() WHERE id = $1', [id]);
       await createAccount(tx, id, name, 'balanced');
     });
     broadcast(changes);
@@ -430,7 +437,7 @@ app.get('/api/export/trades.csv', wrap(async (req, res) => {
 /* ---------- feedback, errors, usage events ---------- */
 app.post('/api/feedback', lightLimit, wrap(async (req, res) => {
   const u = await currentUser(req); const body = clean(req.body.text).slice(0, 4000); if (!body) return bad(res, 'Write a little about what you saw.');
-  await q('INSERT INTO feedback (id, user_id, screen, body, ua) VALUES ($1, $2, $3, $4, $5)', [db.newId(), u && u.id, clean(req.body.screen).slice(0, 200), body, clean(req.headers['user-agent']).slice(0, 300)]);
+  await q(`INSERT INTO feedback (id, user_id, screen, body, ua, kind, status) VALUES ($1, $2, $3, $4, $5, $6, 'received')`, [db.newId(), u && u.id, clean(req.body.screen).slice(0, 200), body, clean(req.headers['user-agent']).slice(0, 300), req.body.kind === 'bug' ? 'bug' : 'feedback']);
   ok(res);
 }));
 app.post('/api/client-error', lightLimit, wrap(async (req, res) => {
@@ -479,6 +486,10 @@ app.post('/api/admin/user', wrap(async (req, res) => {
     return ok(res, { code });
   }
   if (u.id === me.id && ['unadmin','disable'].includes(op)) return bad(res, "You can't do that to your own account.");
+  if (op === 'reset2fa'){ /* after checking who they are: two-step off, backup codes cleared, money moves held 48 hours */
+    await q("UPDATE users SET totp_enabled = false, totp_secret = NULL, totp_pending = NULL, money_hold_until = now() + interval '48 hours' WHERE id = $1", [u.id]); await q('DELETE FROM totp_backup WHERE user_id = $1', [u.id]).catch(() => {});
+    securityEvent(req, u.id, 'two-step', 'Two-step sign-in was reset by the Pocket team', 'Two-step sign-in was reset for your account. Set it up again at your next sign-in. Withdrawals and bank changes are paused for 48 hours. If you didn\'t ask for this, contact us right away.');
+    return ok(res); }
   if (op === 'admin') await q('UPDATE users SET is_admin = true WHERE id = $1', [u.id]);
   else if (op === 'unadmin') await q('UPDATE users SET is_admin = false WHERE id = $1', [u.id]);
   else if (op === 'disable'){ await q('UPDATE users SET disabled = true WHERE id = $1', [u.id]); await q('DELETE FROM sessions WHERE user_id = $1', [u.id]); }
@@ -524,6 +535,8 @@ const realDeps = { broadcastRaw: (...a) => broadcastRaw(...a), securityEvent: (.
   isPro: async pid => { const r = await q('SELECT data FROM doc_profiles WHERE id = $1', [pid]); const p = r.rows[0] && r.rows[0].data; return !!p && (p.kind === 'demo' || p.plan === 'pro'); } };
 real.mount(app, realDeps);
 realDeps.push = push; realDeps.pool = db.pool; require('./realcopy').mount(app, realDeps);
+require('./outlook').mount(app, { q, wrap, ok, bad, needUser, db, broadcast: (...x) => broadcast(...x) });
+require('./community').mount(app, { q, wrap, ok, bad, needUser, needAdmin, push, db, sendTo, broadcastAll: m => { for (const c of wss.clients) try { c.send(JSON.stringify(m)); } catch (e){} }, onContribution: (...a) => (global.__contrib ? global.__contrib(...a) : Promise.resolve()) });
 require('./referrals').mount(app, { q, wrap, ok, bad, needUser, needAdmin, db, broadcast: (...x) => broadcast(...x), push, sendTo });
 require('./badges').mount(app, { wrap, ok, bad, needAdmin, db, broadcast: (...x) => broadcast(...x), q });
 require('./photos').mount(app, { q, wrap, ok, bad, needUser, needAdmin, db, broadcast: (...x) => broadcast(...x) });
@@ -562,7 +575,7 @@ app.get('*', (req, res) => res.sendFile(path.join(pub, 'index.html')));
 /* ---------- boot ---------- */
 (async () => {
   await db.migrate();
-  await require('./referrals').migrate(q);
+  await require('./referrals').migrate(q); await require('./community').migrate(q); await require('./outlook').migrate(q);
   await real.migrate(q); await require('./realcopy').migrate(q); await require('./alerts').migrate(q); await require('./photos').migrate(q);
   if (!config.demoTools) await q(`INSERT INTO settings (key, value) VALUES ('clock', '"live"') ON CONFLICT (key) DO UPDATE SET value = '"live"'`).catch(() => {}); /* without demo tools, the market follows real hours */
   await marketdata.migrate(q);

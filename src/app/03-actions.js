@@ -43,7 +43,8 @@ async function act(el, ev){ /* eslint-disable-line */
     case 'ofsubmit': return busy(async () => { const f = readOpenForm(); if (!f.agree){ $('#o-err').textContent = 'Please accept the agreements to continue.'; return; }
       const r = await Store.real.open(f); ui.openForm = null; ui.openStep = 0; ui.real = null; ui.homeTab = 'real'; toast('Application submitted: ' + r.label + '.'); location.hash = '#/portfolio'; });
     case 'tfsetup': return busy(async () => { ui.sec = await Store.twofaSetup(); render(); });
-    case 'tfenable': return busy(async () => { await Store.twofaEnable($('#tf-code').value); ui.sec = null; ui.real = null; toast('Two-step sign-in is on.'); render(); });
+    case 'tfenable': return busy(async () => { const r = await Store.twofaEnable($('#tf-code').value); ui.sec = null; ui.real = null; render(); if (r && r.backupCodes) backupCodesSheet(r.backupCodes, true); else toast('Two-step sign-in is on.'); });
+    case 'tfbackup': return busy(async () => { const r = await Store.http('POST', '/api/2fa/backup', { code: ($('#tf-bk') || {}).value }); backupCodesSheet(r.backupCodes, false); ui.bkLeft = null; });
     case 'tfoff': return busy(async () => { await Store.twofaDisable($('#tf-off').value); toast('Two-step sign-in is off.'); render(); });
     case 'amdreload': ui.amd = null; return render();
     case 'amdcheck': ui.amdCheck = 'loading'; render(); return Store.http('POST', '/api/admin/marketdata/check').then(r => { ui.amdCheck = r.steps; ui.amd = null; render(); }, e => { ui.amdCheck = [{ name: 'Check', ok: false, ms: 0, detail: e.message }]; render(); });
@@ -83,9 +84,10 @@ async function act(el, ev){ /* eslint-disable-line */
     case 'adm': return busy(async () => {
       const op = el.dataset.op;
       if (op === 'disable' && !confirm('Turn off this account? They will be signed out and unable to sign in.')) return;
+      if (op === 'reset2fa' && !confirm(`Reset two-step sign-in for @${el.dataset.n}?\n\nFirst confirm it's really them: a video call, or matching their name, email and account details, through a channel you already know is theirs.\n\nTheir withdrawals and bank changes will be paused for 48 hours, and they'll get a security alert.`)) return;
       const r = await Store.http('POST', '/api/admin/user', { userId: id, op });
       if (op === 'reset'){ openModal(`<header><h2>Reset code</h2><button class="x" data-close aria-label="Close">×</button></header><p>Give this code to <b>@${esc(el.dataset.n)}</b>. It works once, for 24 hours. They choose "Forgot your password?" on the sign-in screen.</p><div class="est"><b class="num" style="font-size:24px;letter-spacing:2px">${esc(r.code)}</b></div>`); }
-      else toast('Updated.');
+      else toast(op === 'reset2fa' ? 'Two-step reset. They set it up again at next sign-in; money moves are paused 48 hours.' : 'Updated.');
       await loadAdmin();
     });
     case 'adm-newinv': return newInviteSheet();
@@ -252,6 +254,26 @@ async function act(el, ev){ /* eslint-disable-line */
     case 'ciskip': ui.checkinHidden = true; Store.http('POST', '/api/checkin', { skip: true }).catch(() => {}); return render();
     case 'a2hs': if (a2hsEvent){ a2hsEvent.prompt(); a2hsEvent = null; } return render();
     case 'a2hsoff': try { localStorage.setItem('pi_a2hs_off', '1'); } catch(e){} return render();
+    case 'reportsheet': return reportSheet(el.dataset.k, el.dataset.id);
+    case 'showblocked': ui.showBlocked = ui.showBlocked || new Set(); ui.showBlocked.add(el.dataset.id); return render();
+    case 'block': if (!confirm(`Block ${Store.displayName(el.dataset.id)}? Their posts and comments will be hidden from you, and they won't be able to follow, copy or reply to you. They won't be told.`)) return; return busy(async () => { await Store.http('POST', '/api/action/block', { pid: el.dataset.id }); toast('Blocked.'); });
+    case 'unblock': return busy(async () => { await Store.http('POST', '/api/action/unblock', { pid: el.dataset.id }); toast('Unblocked.'); });
+    case 'modact': { const a = el.dataset.k; if (a === 'remove' && !confirm('Remove this content? The author will be told why.')) return; const note = ['remove', 'warn', 'mute7', 'mute30'].includes(a) ? (prompt('Short note for the author (optional):') || '') : ''; return busy(async () => { await Store.http('POST', '/api/action/moderate', { reportId: el.dataset.id, action: a, note }); toast('Done.'); }); }
+    case 'badgepop': return badgePop(el);
+    case 'featuredbadges': return featuredSheet();
+    case 'badgeidea': return busy(async () => { try { await Store.http('POST', '/api/badge-ideas', { name: $('#bi-n').value, why: $('#bi-w').value, earn: $('#bi-e').value }); ['#bi-n', '#bi-w', '#bi-e'].forEach(s => $(s).value = ''); $('#bi-x').textContent = ''; ui.myIdeas = null; toast('Thanks. The Pocket team will review it.'); } catch(e){ $('#bi-x').textContent = e.message; } });
+    case 'ovote': return busy(async () => { await Store.http('POST', '/api/outlook/' + el.dataset.k, { dir: el.dataset.d, gid: el.dataset.gid || '' }); delete ui.outlook[el.dataset.k + ':' + (el.dataset.gid || '')]; render(); });
+    case 'opeek': if (!confirm(`See results? You won't be able to vote on ${el.dataset.k} this week.`)) return; return busy(async () => { await Store.http('POST', '/api/outlook/' + el.dataset.k + '/peek', { gid: el.dataset.gid || '' }); delete ui.outlook[el.dataset.k + ':' + (el.dataset.gid || '')]; render(); });
+    case 'opublic': return busy(async () => { await Store.http('POST', '/api/outlook-public', { on: el.checked }); delete ui.outlook['rec:' + Store.myPid]; render(); });
+    case 'support': return supportSheet();
+    case 'supreply': return busy(async () => { const v = ($('#sr-' + el.dataset.id) || {}).value || ''; await Store.http('POST', '/api/support/' + el.dataset.id + '/reply', { body: v }); ui.mySupport = null; toast('Sent.'); render(); });
+    case 'walkthrough': return walkthrough();
+    case 'admsup': return busy(async () => { const id = el.dataset.id; await Store.http('POST', '/api/admin/support/' + id, { reply: ($('#as-r-' + id) || {}).value || '', status: el.dataset.k, complaint: !!($('#as-c-' + id) || {}).checked, outcome: ($('#as-o-' + id) || {}).value || '' }); ui.admSupport = null; toast('Saved.'); render(); });
+    case 'inccreate': return busy(async () => { await Store.http('POST', '/api/admin/incident', { op: 'create', title: $('#in-t').value, body: $('#in-b').value }); ui.admStatus = undefined; ui.status = undefined; toast('Posted.'); render(); });
+    case 'incupdate': return busy(async () => { const id = el.dataset.id; await Store.http('POST', '/api/admin/incident', { op: 'update', id, status: $('#in-s-' + id).value, body: $('#in-b-' + id).value }); ui.admStatus = undefined; ui.status = undefined; toast('Updated.'); render(); });
+    case 'ideastatus': return busy(async () => { const id = el.dataset.id; await Store.http('POST', '/api/admin/idea-status', { id, status: $('#fs-' + id).value, note: $('#fn-' + id).value }); await loadAdmin(); toast('Saved. The member was notified.'); });
+    case 'ideatobadge': { const f = ((ui.admin || {}).feedback || []).find(x => x.id === el.dataset.id); try { const b = JSON.parse(f.body); $('#bd-n').value = b.name; $('#bd-d').value = b.why; $('#bd-n').scrollIntoView({ behavior: 'smooth', block: 'center' }); toast('Badge form filled in. Pick a color and create it.'); } catch(e){} return; }
+    case 'outlookrule': return busy(async () => { const v = id => +$('#' + id).value; await Store.http('POST', '/api/admin/badges', { op: 'outlook', weeklyRun: v('ob-wr'), regular: v('ob-rg'), groupCalls: v('ob-gc'), streak: v('ob-st'), sharpPct: v('ob-sp'), sharpMin: v('ob-sm'), sectorPct: v('ob-xp'), sectorMin: v('ob-xm'), sectorRegular: v('ob-xr'), accuracyOn: $('#ob-acc').checked }); toast('Saved.'); });
     case 'exall': ui.exAll = Object.assign({}, ui.exAll, { [el.dataset.k]: !(ui.exAll || {})[el.dataset.k] }); return render();
     case 'photo': return photoSheet({ target: el.dataset.k || 'me', gid: el.dataset.gid || null });
     case 'reportphoto': if (!confirm('Report this profile photo to the Pocket team?')) return; return busy(async () => { await Store.http('POST', '/api/action/report', { kind: 'photo', pid: el.dataset.id, reason: 'photo' }); toast('Thanks. The Pocket team will review it.'); });

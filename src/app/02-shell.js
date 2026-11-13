@@ -60,6 +60,7 @@ function render(){
     case 'help': html = vHelp(); break;
     case 'portfolio': html = vPortfolio(); break;
     case 'alerts': html = vAlerts(); break;
+    case 'badges': html = vBadges(); break;
     case 'explore': html = vExplore(); break;
     case 'documents': html = vStatements(); break;
     case 'join': html = Store.signedIn ? vHome() : vOnboard(); break;
@@ -83,7 +84,7 @@ function render(){
   html = strip + html;
   const ac = Store.actingAs; if (ac) html = `<div class="banner ember" style="margin-bottom:16px" role="status"><div style="flex:1"><b>Acting as ${esc(Store.get('profiles', Store.myPid) ? Store.displayName(Store.myPid) : 'a test account')}</b> <span class="small">(test account)</span><div class="small">Everything you do here is real in the sandbox and recorded in the admin log under ${esc(ac.admin)}. Ends ${new Date(ac.until).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.</div></div><button class="btn sm" data-act="actstop">Return to your account</button></div>` + html;
   const mt = Store.maintenance; if (mt && mt.on) html = `<div class="banner ember" style="margin-bottom:16px" role="status"><div style="flex:1"><b>Pocket is read-only for a few minutes</b><div class="small">${esc(mt.message || "We're fixing an issue. Your account and money are safe; you can look around, and changes will work again shortly.")}</div></div></div>` + html;
-  view.innerHTML = html;
+  view.innerHTML = (Store.signedIn ? statusBanner() : '') + html; maybeWalkthrough();
   try { ichRestore(); } catch(e){}
   renderFeedbackButton();
   if (demoVals) for (const [id, v] of Object.entries(demoVals)){ const e = document.getElementById(id); if (e) e.value = v; }

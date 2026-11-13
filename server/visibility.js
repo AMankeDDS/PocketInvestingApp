@@ -4,12 +4,13 @@
    their owner. Admins see everything. On the demo site, sample groups stay public so the tour works. */
 const GROUP_COLS = { proposals: 'gid', reviews: 'gid', suggestions: 'gid', meetings: 'gid', groupWatch: 'gid', studies: 'gid' };
 const MANAGE = ['owner', 'admin'];
-function makeCtx({ pid, isAdmin }, memberships, groups, sampleOn){
+function makeCtx({ pid, isAdmin }, memberships, groups, sampleOn, blocks = []){
+  const blockedBy = new Set(blocks.filter(b => b.to === pid).map(b => b.from));
   const role = {}, gmap = {}; groups.forEach(g => { gmap[g.id] = g; });
   memberships.forEach(m => { if (m.pid === pid) role[m.gid] = m.role; });
   const sample = new Set(sampleOn ? groups.filter(g => String(g.ownerPid || '').startsWith('demo_')).map(g => g.id) : []);
   const openGroup = gid => { const g = gmap[gid]; return !!g && !g.pooled && !((g.rules || {}).hidden) && ((g.rules || {}).joinMode || 'open') !== 'invite' && g.membership !== 'invite'; };
-  return { pid, isAdmin, role, gmap, sample, openGroup,
+  return { pid, isAdmin, role, gmap, sample, openGroup, blockedBy,
     seeGroup: gid => isAdmin || !!role[gid] || sample.has(gid),
     seeMoney: gid => isAdmin || (!!role[gid] && role[gid] !== 'observer') || sample.has(gid),
     manages: gid => isAdmin || MANAGE.includes(role[gid]),
@@ -17,11 +18,16 @@ function makeCtx({ pid, isAdmin }, memberships, groups, sampleOn){
     postGid: {}, propGid: {} };
 }
 /* Returns the document as this viewer may see it, or null. lookup(col, id) fetches a document the context doesn't know. */
+const PRIVATE_PROFILE = ['notif', 'wouldPay', 'wouldPayTs', 'proCreditMonths', 'referralsRewarded', 'lastActiveTs', 'checkinTs', 'mutedUntil', 'mutedReason', 'adultConfirmedTs', 'introSeen'];
 async function view(ctx, col, d, lookup){
   if (!d) return d;
   const me = ctx.pid, A = ctx.isAdmin;
   switch (col){
-    case 'profiles': { if (A || d.id === me) return d; const x = Object.assign({}, d); delete x.notif; delete x.wouldPay; delete x.wouldPayTs; return x; }
+    case 'profiles': { const away = d.kind !== 'demo' && Date.now() - (d.lastActiveTs || d.createdTs || Date.now()) >= 30 * 86400000;
+      if (A || d.id === me) return Object.assign({}, d, { away });
+      /* private to the member (and admins): settings, survey answers, credits, activity times, moderation state */
+      const x = Object.assign({}, d); for (const k of PRIVATE_PROFILE) delete x[k]; x.away = away; if (ctx.blockedBy && ctx.blockedBy.has(d.id)) x.blockedYou = true; return x; }
+    case 'blocks': return A || d.from === me ? d : null;
     case 'portfolios': return d.kind === 'club' ? (ctx.seeMoney(d.gid) ? d : null) : d;
     case 'groups': { if (!ctx.listsGroup(d.id)) return null; if (A || ctx.role[d.id]) return d; const x = Object.assign({}, d); delete x.inviteCode; return x; }
     case 'memberships': return d.pid === me || ctx.seeGroup(d.gid) || ctx.openGroup(d.gid) ? d : null;

@@ -83,7 +83,7 @@ const Clock = (() => {
    on the server, which prices trades and enforces permissions.
    ===================================================================== */
 const Store = (() => {
-  const COLS = ['profiles','portfolios','groups','memberships','posts','reactions','comments','follows','proposals','votes','copyRequests','trades','copies','reports','joinRequests','reviews','suggestions','dividends','meetings','groupWatch','studies','badges','recurring'];
+  const COLS = ['blocks', 'profiles','portfolios','groups','memberships','posts','reactions','comments','follows','proposals','votes','copyRequests','trades','copies','reports','joinRequests','reviews','suggestions','dividends','meetings','groupWatch','studies','badges','recurring'];
   const cache = Object.fromEntries(COLS.map(c => [c, new Map()]));
   const listeners = new Set(), realListeners = new Set(), newsCache = new Map();
   let settings = { announcement:null, inviteOnly:true }, me = { signedIn:false }, myPid = null, canWrite = false, canEdit = false, ready = false, hasDb = false, viewSaved = null, ws = null;
@@ -110,12 +110,13 @@ const Store = (() => {
   }
   async function loadMe(){
     me = await fetch('/api/me', { cache:'no-store', credentials:'same-origin' }).then(r => r.json());
+    if (me.needsAdult) setTimeout(() => { if (typeof adultSheet === 'function') adultSheet(); }, 900);
     if (!viewSaved){ myPid = me.signedIn ? me.pid : null; canWrite = !!me.signedIn; canEdit = !!me.isAdmin; }
     else viewSaved = { myPid: me.signedIn ? me.pid : null, canWrite: !!me.signedIn, canEdit: !!me.isAdmin };
   }
   function connect(){
     try { ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws'); } catch(e){ return; }
-    ws.onmessage = e => { try { const m = JSON.parse(e.data); if (m.type === 'changes') applyChanges(m.changes); else if (m.type === 'real' && m.what === 'copyreq'){ ui.realReq = null; emit(); } else if (m.type === 'real' && m.what === 'paused'){ ui.real = null; emit(); } else if (m.type === 'explore'){ ui.exploreTs = 0; emit(); } else if (m.type === 'alert'){ ui.alerts = null; toast(m.text, { ms: 8000 }); } else if (m.type === 'notice'){ loadMe().then(emit, () => {}); } else if (m.type === 'resync'){ loadState().then(emit, () => {}); } else if (m.type === 'real') realListeners.forEach(fn => { try { fn(m); } catch(x){} });
+    ws.onmessage = e => { try { const m = JSON.parse(e.data); if (m.type === 'changes') applyChanges(m.changes); else if (m.type === 'real' && m.what === 'copyreq'){ ui.realReq = null; emit(); } else if (m.type === 'real' && m.what === 'paused'){ ui.real = null; emit(); } else if (m.type === 'explore'){ ui.exploreTs = 0; emit(); } else if (m.type === 'alert'){ ui.alerts = null; toast(m.text, { ms: 8000 }); } else if (m.type === 'status'){ ui.status = undefined; emit(); } else if (m.type === 'notice'){ loadMe().then(emit, () => {}); } else if (m.type === 'resync'){ loadState().then(emit, () => {}); } else if (m.type === 'real') realListeners.forEach(fn => { try { fn(m); } catch(x){} });
       else if (m.type === 'market'){ (m.extras || []).forEach(x => Market.add(x.s, x.n, x.b)); if (m.bases) Market.setBases(m.bases); if (m.quotes) Market.setQuotes(m.quotes); if (m.extras || m.bases) emit(); }
       else if (m.type === 'news'){ newsCache.clear(); emit(); } } catch(err){} };
     ws.onclose = () => setTimeout(async () => { try { await loadState(); emit(); } catch(e){} connect(); }, 2000 + Math.random() * 2000);
@@ -330,7 +331,7 @@ const Store = (() => {
     get site(){ return me.site || { mode:'demo', realMoney:false, demoTools:true, instantDeposits:{ enabled:false } }; }, get twofa(){ return !!me.twofa; }, get adminAccount(){ return !!me.adminAccount; }, get actingAs(){ return me.actingAs || null; }, get isTest(){ return !!me.isTest; }, get adminNeeds2fa(){ return !!me.adminNeeds2fa; }, get maintenance(){ return me.maintenance || null; }, get accountNumber(){ return me.accountNumber || null; },
     onReal: fn => (realListeners.add(fn), () => realListeners.delete(fn)),
     twofaSetup: () => http('POST', '/api/2fa/setup'),
-    twofaEnable: async code => { await http('POST', '/api/2fa/enable', { code }); await loadMe(); emit(); },
+    twofaEnable: async code => { const r = await http('POST', '/api/2fa/enable', { code }); await loadMe(); emit(); return r; },
     twofaDisable: async code => { await http('POST', '/api/2fa/disable', { code }); await loadMe(); emit(); },
     real: {
       copyRequests: () => http('GET', '/api/real/copy-requests'), decideCopy: (id, decision, fraction) => http('POST', `/api/real/copy/${id}/decide`, { decision, fraction }),

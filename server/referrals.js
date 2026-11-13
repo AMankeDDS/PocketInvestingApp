@@ -4,6 +4,8 @@ const crypto = require('crypto');
 let D = null;
 async function migrate(q){
   await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS ref_code text UNIQUE, ADD COLUMN IF NOT EXISTS referred_by text`);
+  await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS adult_confirmed_at timestamptz, ADD COLUMN IF NOT EXISTS money_hold_until timestamptz`);
+  await q(`CREATE TABLE IF NOT EXISTS totp_backup (user_id text NOT NULL, code_hash text NOT NULL, used boolean NOT NULL DEFAULT false, PRIMARY KEY (user_id, code_hash))`);
   await q(`CREATE TABLE IF NOT EXISTS referrals (referred_user text PRIMARY KEY, referrer_user text NOT NULL, status text NOT NULL, amount numeric, reason text, created_at timestamptz NOT NULL DEFAULT now())`);
   await q(`CREATE TABLE IF NOT EXISTS checkins (user_id text PRIMARY KEY, score int, comment text, skipped boolean NOT NULL DEFAULT false, ts timestamptz NOT NULL DEFAULT now())`);
 }

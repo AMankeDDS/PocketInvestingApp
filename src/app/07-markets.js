@@ -115,6 +115,7 @@ function vStock(sym){
       if (E) bits.push(`Next earnings: around ${fmtDay(E.next)} <span class="muted">(estimated from past SEC filings)</span>`);
       return bits.length ? `<div class="small" style="margin-top:12px;display:grid;gap:4px">${bits.map(b => `<div>${b}</div>`).join('')}</div>` : ''; })()}</div>
   ${pos ? `<section class="block"><header><h2>Your position</h2></header><div class="panel kv"><div><span>Shares</span><b>${shs(pos.shares)}</b></div><div><span>Market value</span><b data-hv="${sym}" data-sh="${pos.shares}">${usd(pos.shares * px)}</b></div><div><span>Average cost</span><b>${usd(pos.cost / pos.shares)}</b></div><div><span>Return</span><b class="${sgn(pos.shares * px / pos.cost - 1)}">${pct(pos.shares * px / pos.cost - 1)}</b></div></div></section>` : ''}
+  ${outlookCard(sym)}
   ${newsSection('News', [sym], 5, { sym })}
   ${groupsHolding.length ? `<section class="block"><header><h2>Groups invested in ${sym}</h2></header><div class="list">${groupsHolding.slice(0, 4).map(groupRow).join('')}</div></section>` : ''}
   ${postsHtml}`;

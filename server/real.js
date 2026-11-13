@@ -27,6 +27,9 @@ async function migrate(q){
 function mount(app, d){
   /* Sensitive money actions need a fresh code from the authenticator app, even when already signed in. */
   async function stepUp(req, res, userId){
+    /* After an admin resets two-step, withdrawals and bank changes wait 48 hours. */
+    const hold = (await q('SELECT money_hold_until FROM users WHERE id = $1', [userId])).rows[0];
+    if (hold && hold.money_hold_until && new Date(hold.money_hold_until) > new Date()){ bad(res, `For your security, withdrawals and bank changes are paused until ${new Date(hold.money_hold_until).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} because your two-step sign-in was reset.`); return false; }
     if (config.alpaca.env === 'sandbox' && (await d.q('SELECT is_test FROM users WHERE id = $1', [userId])).rows.some(r => r.is_test)) return true; /* sandbox test accounts used through Act as */
     const row = (await d.q('SELECT totp_enabled, totp_secret FROM users WHERE id = $1', [userId])).rows[0];
     if (!row || !row.totp_enabled){ res.status(403).json({ error: 'Turn on two-step sign-in first.' }); return false; }
@@ -54,8 +57,15 @@ function mount(app, d){
     if (!totp.verify(secret, req.body.code)) return bad(res, "That code didn't match. Check the time on your phone and try the newest code.");
     await q('UPDATE users SET totp_secret = totp_pending, totp_pending = NULL, totp_enabled = true WHERE id = $1', [u.id]);
     if (d.securityEvent) d.securityEvent(req, u.id, 'two-step', 'Two-step sign-in turned on', 'Two-step sign-in was turned on for your account.');
-    ok(res);
+    ok(res, { backupCodes: await require('./backup').issue(q, u.id) });
   }));
+  /* New backup codes (needs a current code from the app). */
+  app.post('/api/2fa/backup', wrap(async (req, res) => { const u = await needUser(req, res); if (!u) return;
+    const row = (await q('SELECT totp_secret, totp_enabled FROM users WHERE id = $1', [u.id])).rows[0]; const secret = row && row.totp_enabled && totp.open(row.totp_secret, config.appSecret);
+    if (!secret) return bad(res, 'Turn on two-step sign-in first.'); if (!totp.verify(secret, req.body.code)) return bad(res, "That code didn't match. Try the newest code.");
+    if (d.securityEvent) d.securityEvent(req, u.id, 'two-step', 'New backup codes created', 'New two-step backup codes were created. Your old ones no longer work.');
+    ok(res, { backupCodes: await require('./backup').issue(q, u.id) }); }));
+  app.get('/api/2fa/backup', wrap(async (req, res) => { const u = await needUser(req, res); if (!u) return; ok(res, { left: await require('./backup').left(q, u.id) }); }));
   app.post('/api/2fa/disable', wrap(async (req, res) => {
     const u = await needUser(req, res); if (!u) return;
     if (config.require2fa) return bad(res, 'Two-step sign-in is required on this site.');
