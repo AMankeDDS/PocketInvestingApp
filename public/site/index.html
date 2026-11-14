@@ -46,7 +46,7 @@ header.top .btn{ min-height:40px; padding:0 16px; font-size:15px }
 .hero h1{ max-width:13ch }
 .hero p.lede{ font-size:20px; color:var(--muted); max-width:34ch; margin-top:22px }
 .hero .ctas{ display:flex; gap:12px; flex-wrap:wrap; margin-top:32px }
-.hero .fine{ margin-top:18px; font-size:14px; color:var(--muted) } .hero .fine.soon{ margin-top:6px }
+.hero .fine{ margin-top:18px; font-size:14px; color:var(--muted) } .hero .fine.fine-next{ margin-top:6px }
 @media (max-width:900px){ .hero{ padding:40px 0 64px } .hero .wrap{ grid-template-columns:1fr; gap:44px } }
 /* the phone: one approval request arriving */
 .phone{ justify-self:center; width:min(330px, 100%); aspect-ratio:9/18.5; background:var(--navy); border-radius:44px; padding:14px; box-shadow:0 30px 60px -30px rgba(20,33,61,.55); position:relative }
@@ -117,9 +117,9 @@ footer .legal{ margin-top:22px; max-width:820px; line-height:1.55 }
 .howstep{margin:0;background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:14px;position:relative}
 .howstep img{width:100%;height:auto;border-radius:12px;border:1px solid var(--line);display:block;aspect-ratio:390/760;object-fit:cover;object-position:top}
 .howstep figcaption{margin-top:12px;font-size:15px;line-height:1.5;color:var(--text)}.howstep figcaption a{display:inline-block;margin-top:6px;font-weight:600}
-.hownum{position:absolute;top:22px;left:22px;width:30px;height:30px;border-radius:50%;background:var(--navy);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;box-shadow:0 2px 6px rgba(0,0,0,.2)}
+.hownum{display:inline-flex;vertical-align:-6px;margin-right:10px;width:26px;height:26px;font-size:14px;border-radius:50%;background:var(--navy);color:#fff;align-items:center;justify-content:center;font-weight:700}
 .soon{display:inline-block;font-size:12px;padding:1px 8px;border-radius:999px;background:color-mix(in srgb,var(--ember) 20%,transparent);color:var(--ember-ink);font-weight:600}
-@media (prefers-color-scheme: dark){.soon{color:var(--ember)}}
+@media (prefers-color-scheme: dark){.soon{color:var(--ember)} .hownum{background:var(--blue)}}
 .howlabel{color:var(--muted);font-size:14px;margin-top:12px}
 .footlinks{display:flex;flex-wrap:wrap;gap:6px 16px;margin:14px 0 4px;font-size:14px}.footlinks a{color:inherit;opacity:.85}
 </style>
@@ -139,7 +139,7 @@ footer .legal{ margin-top:22px; max-width:820px; line-height:1.55 }
     <p class="lede">Pocket Investing is a social investing app. Every copied trade waits for your approval, and groups can vote, pool money and keep their books in one place.</p>
     <div class="ctas"><a class="btn primary" href="#invite">Request a beta invite</a><a class="btn secondary" href="https://demo.pocketinvesting.com">Try the demo</a></div>
     <p class="fine">Free during the beta. Beta accounts use practice money.</p>
-    <p class="fine soon">iPhone and Android apps coming soon. Connecting your existing brokerage account is coming soon too.</p>
+    <p class="fine fine-next">iPhone and Android apps coming soon. Connecting your existing brokerage account is coming soon too.</p>
   </div>
   <div class="phone" role="img" aria-label="The Pocket Investing app showing a trade request waiting for approval">
     <div class="screen">
@@ -161,14 +161,14 @@ footer .legal{ margin-top:22px; max-width:820px; line-height:1.55 }
 <section class="band" id="how-it-works"><div class="wrap">
   <h2>How it works</h2>
   <div class="howgrid">
-    <figure class="howstep"><div class="hownum">1</div><img src="/site/img/how-1.jpg" alt="Pocket app screen: Open your account" loading="lazy" width="390" height="760">
-      <figcaption><b>Open your account</b> <span class="soon">Real money coming soon</span><br>Sign up, link your bank and add money. Brokerage by Alpaca, a registered broker-dealer.<br><a href="https://demo.pocketinvesting.com/#/portfolio">See it in the demo →</a></figcaption></figure>
-    <figure class="howstep"><div class="hownum">2</div><img src="/site/img/how-2.jpg" alt="Pocket app screen: Invest your way" loading="lazy" width="390" height="760">
-      <figcaption><b>Invest your way</b><br>Trade on your own, or follow an investor and approve each copied trade with one tap.<br><a href="https://demo.pocketinvesting.com/#/u/demo_maya">See it in the demo →</a></figcaption></figure>
-    <figure class="howstep"><div class="hownum">3</div><img src="/site/img/how-3.jpg" alt="Pocket app screen: Invest together" loading="lazy" width="390" height="760">
-      <figcaption><b>Invest together</b><br>Start or join a group, vote on trades, and see everyone's share. Pooled clubs keep the books for you.<br><a href="https://demo.pocketinvesting.com/#/groups">See it in the demo →</a></figcaption></figure>
-    <figure class="howstep"><div class="hownum">4</div><img src="/site/img/how-4.jpg" alt="Pocket app screen: Stay in control" loading="lazy" width="390" height="760">
-      <figcaption><b>Stay in control</b><br>Approvals, alerts and statements, with nothing traded without your OK.<br><a href="https://demo.pocketinvesting.com/#/stock/AAPL">See it in the demo →</a></figcaption></figure>
+    <figure class="howstep"><img src="/site/img/how-1.jpg" alt="Pocket app screen: Open your account" loading="lazy" width="390" height="760">
+      <figcaption><b><span class="hownum" aria-hidden="true">1</span>Open your account</b> <span class="soon">Real money coming soon</span><br>Sign up, link your bank and add money. Brokerage by Alpaca, a registered broker-dealer.<br><a href="https://demo.pocketinvesting.com/#/portfolio">See it in the demo →</a></figcaption></figure>
+    <figure class="howstep"><img src="/site/img/how-2.jpg" alt="Pocket app screen: Invest your way" loading="lazy" width="390" height="760">
+      <figcaption><b><span class="hownum" aria-hidden="true">2</span>Invest your way</b><br>Trade on your own, or follow an investor and approve each copied trade with one tap.<br><a href="https://demo.pocketinvesting.com/#/u/demo_maya">See it in the demo →</a></figcaption></figure>
+    <figure class="howstep"><img src="/site/img/how-3.jpg" alt="Pocket app screen: Invest together" loading="lazy" width="390" height="760">
+      <figcaption><b><span class="hownum" aria-hidden="true">3</span>Invest together</b><br>Start or join a group, vote on trades, and see everyone's share. Pooled clubs keep the books for you.<br><a href="https://demo.pocketinvesting.com/#/groups">See it in the demo →</a></figcaption></figure>
+    <figure class="howstep"><img src="/site/img/how-4.jpg" alt="Pocket app screen: Stay in control" loading="lazy" width="390" height="760">
+      <figcaption><b><span class="hownum" aria-hidden="true">4</span>Stay in control</b><br>Approvals, alerts and statements, with nothing traded without your OK.<br><a href="https://demo.pocketinvesting.com/#/stock/AAPL">See it in the demo →</a></figcaption></figure>
   </div>
   <p class="howlabel">Shown with sample data. Sample people and results aren't real.</p>
 </div></section>
@@ -215,10 +215,10 @@ footer .legal{ margin-top:22px; max-width:820px; line-height:1.55 }
 </div></section>
 
 <section class="band" id="pricing"><div class="wrap">
-  <div class="intro"><h2>Free to start.</h2><p>Pay only when you want to copy with real money or run a group.</p></div>
+  <div class="intro"><h2>Free to start.</h2><p>Trading in your own account is free. Pay when you want to copy investors, join groups as a full member, or run a group.</p></div>
   <div class="plans">
-    <div class="plan"><h3>Free</h3><div class="price">$0</div><div class="per">forever</div><ul><li>Practice trading</li><li>Follow investors and see track records</li><li>Watch groups and join as an observer</li></ul></div>
-    <div class="plan"><h3>Pro</h3><div class="price">$9.99</div><div class="per">a month, or $99 a year</div><ul><li>Copy investors, with approval on every trade</li><li>Full group membership and voting</li><li>Statements and tax documents</li></ul></div>
+    <div class="plan"><h3>Free</h3><div class="price">$0</div><div class="per">forever</div><ul><li>Trade in your own account</li><li>Deposits, statements and tax documents</li><li>Follow investors, alerts and posting</li><li>Watch groups as an observer</li></ul></div>
+    <div class="plan"><h3>Pro</h3><div class="price">$9.99</div><div class="per">a month, or $99 a year</div><ul><li>Copy investors, with approval on every trade</li><li>Full group membership and voting</li><li>Recurring buys and advanced statements</li></ul></div>
     <div class="plan"><h3>Group Pro</h3><div class="price">$19.99</div><div class="per">a month, per group</div><ul><li>Run a group or investment club</li><li>Roles, proposals and voting rules</li><li>Club books, meetings and member statements</li></ul></div>
   </div>
   <p class="beta-note">Everything is free during the beta.</p>
