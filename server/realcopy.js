@@ -60,7 +60,7 @@ function mount(app, d){
       if (reason){ await q(`INSERT INTO real_copy_requests (id, leader_user, leader_order, follower_user, gid, sym, side, leader_price, leader_qty, fraction, status, reason) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'skipped',$11)`, [...base, fraction, reason]); continue; }
       const mins = f.gid ? f.mins : 30;
       await q(`INSERT INTO real_copy_requests (id, leader_user, leader_order, follower_user, gid, sym, side, leader_price, leader_qty, suggested_qty, fraction, status, expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pending', now() + ($12 || ' minutes')::interval)`, [...base, suggested, fraction, String(mins)]);
-      notify(uid, { title: `${lname} ${o.side === 'buy' ? 'bought' : 'sold'} ${o.sym}`, body: `Real money: approve to ${o.side} ${suggested} shares in your account. Nothing happens until you approve.`, url: '/#/portfolio', tag: 'realcopy-' + id });
+      notify(uid, { title: `${lname} ${o.side === 'buy' ? 'bought' : 'sold'} ${o.sym}`, body: `${config.alpaca.env === 'sandbox' ? 'Test environment: a' : 'A'}pprove to ${o.side} ${suggested} shares in your account. Nothing happens until you approve.`, url: '/#/portfolio', tag: 'realcopy-' + id });
     }
   }
 
@@ -78,7 +78,7 @@ function mount(app, d){
     if (r.status !== 'pending') return bad(res, 'This request was already ' + r.status + '.');
     if (r.expires_at && new Date(r.expires_at).getTime() < Date.now()){ await q(`UPDATE real_copy_requests SET status = 'expired' WHERE id = $1`, [r.id]); return bad(res, 'The approval window for this trade has closed.'); }
     if (req.body.decision !== 'approve'){ await q(`UPDATE real_copy_requests SET status = 'declined', decided_at = now() WHERE id = $1`, [r.id]); return ok(res, { status: 'declined' }); }
-    if (await getSetting('realPaused', false)) return bad(res, 'Real-money trading is paused right now. Please try again later.');
+    if (await getSetting('realPaused', false)) return bad(res, 'Trading is paused right now. Please try again later.');
     const a = await acct(u.id); if (!a || a.status !== 'ACTIVE') return bad(res, 'Your brokerage account is not active yet.');
     const qty = r6(Number(r.suggested_qty) * (req.body.fraction === 'half' ? 0.5 : 1)); if (!(qty > 0)) return bad(res, 'That amount is too small to place.');
     if (r.side === 'buy'){ const bp = Number((await alpaca.tradingAccount(a.alpaca_id)).buying_power || 0), est = qty * (Market.price(r.sym) || Number(r.leader_price));
@@ -125,7 +125,7 @@ function mount(app, d){
           notify(uid, { title: 'Copying paused', body: `${sym} fell ${Math.round(drop * 100)}% below what you paid, past your ${r.d.stopPct}% limit.`, url: '/#/portfolio', tag: 'rstop-' + r.id }); break; }
         await q(`INSERT INTO real_copy_requests (id, leader_user, leader_order, follower_user, gid, sym, side, leader_price, leader_qty, suggested_qty, fraction, status, reason, expires_at) VALUES ($1,$2,'stop',$3,$4,$5,'sell',$6,0,$7,1,'pending',$8, now() + interval '30 minutes')`,
           [newId(), r.leaderUser || uid, uid, r.gid, sym, px, r6(copied), `Stop-loss: down ${Math.round(drop * 100)}% from what you paid (limit ${r.d.stopPct}%)`]);
-        notify(uid, { title: `${sym} is down ${Math.round(drop * 100)}% from your copy`, body: 'Real money: past your limit. Approve to sell, or decline to keep it.', url: '/#/portfolio', tag: 'rstop-' + r.id + sym });
+        notify(uid, { title: `${sym} is down ${Math.round(drop * 100)}% from your copy`, body: (config.alpaca.env === 'sandbox' ? 'Test environment: past' : 'Past') + ' your limit. Approve to sell, or decline to keep it.', url: '/#/portfolio', tag: 'rstop-' + r.id + sym });
       }
     }
   }

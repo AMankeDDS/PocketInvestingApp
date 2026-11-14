@@ -3,10 +3,12 @@
 /* ---------- help ---------- */
 function vHelp(){
   const Q = [
-    ['Is this real money?', Store.site.realMoney ? 'Your practice account uses simulated money. Your real-money account is held at our brokerage partner, and every real trade and transfer is shown separately.' : 'No. The beta uses practice money, so you can try everything with nothing at risk.'],
+    ['Is this real money?', Store.site.realMoney ? (isTestBroker() ? 'Not here. This is the test environment: accounts, deposits and trades are simulated by the brokerage and no money moves. On the live site, your account is held at our brokerage partner, Alpaca, and every trade and transfer is real.' : 'Yes. Your account is held at our brokerage partner, Alpaca. Every trade and transfer you approve uses your money, and you can download statements and tax documents any time.') : 'No. The beta uses practice money, so you can try everything with nothing at risk.'],
     ['Will anyone trade in my account?', "No. When someone you copy or your group's Lead Trader trades, you get a request sized to your account. Nothing happens until you approve it."],
     ['How do groups work?', 'Groups have roles, proposals and votes. Join one from Groups, or start your own from a template. Members approve each copied trade; a pooled club trades its shared account only by member vote.'],
     ['What are club books and statements?', 'Clubs can track dues, withdrawals and valuations with unit values, run meetings, and send members monthly statements. Find them on the Club books tab of a group, and your statements in Profile, Statements.'],
+    ['Is there an app?', 'Pocket works in your phone\'s browser. Add it to your Home Screen and it opens full screen, with notifications for approvals and alerts. iPhone and Android apps are coming soon.'],
+    ['Can I use my existing brokerage account?', 'Not yet. Connecting an account you already have at another brokerage is coming soon.' + (Store.site.realMoney ? ' For now, you open an account through Pocket with our brokerage partner, Alpaca.' : '')],
     ['How do I protect my account?', 'Turn on two-step sign-in in your Profile. It adds a code from an authenticator app when you sign in, and it is required for club officers and real-money withdrawals.'],
     ['I found a problem or have an idea', 'Use the Feedback button on any screen. It sends your note straight to the Pocket team, with the page you were on.']
   ];

@@ -17,7 +17,7 @@ function vHome(){ return vPracticeHome('home'); }
 function vPortfolio(){
   if (Store.site.realMoney && Store.signedIn){ ui.homeTab = 'real'; if (ui.real && !ui.realLoading && Date.now() - (ui.realTs || 0) > 15000){ ui.real = null; ui.realReq = null; } return vReal(); }
   if (Store.site.realMoney && Store.signedIn && Store.get('portfolios', Store.myPid)){
-    const tabs = `<div class="seg" style="margin-bottom:16px"><button class="${ui.homeTab !== 'real' ? 'on' : ''}" data-act="hometab" data-k="practice">Practice</button><button class="${ui.homeTab === 'real' ? 'on' : ''}" data-act="hometab" data-k="real">Real money</button></div>`;
+    const tabs = `<div class="seg" style="margin-bottom:16px"><button class="${ui.homeTab !== 'real' ? 'on' : ''}" data-act="hometab" data-k="practice">Practice</button><button class="${ui.homeTab === 'real' ? 'on' : ''}" data-act="hometab" data-k="real">${acctName()}</button></div>`;
     return tabs + (ui.homeTab === 'real' ? vReal() : vPracticeHome('portfolio'));
   }
   return vPracticeHome('portfolio');
@@ -78,7 +78,7 @@ ${sec('Holdings', `<div class="list">${hold.length ? hold.map(h => { const px = 
   <p class="hint" style="margin-top:22px">${disclose()}</p>`;
   }
   /* The Home tab: what's happening, with approvals and votes first. */
-  const pfLine = Store.site.realMoney ? `<a class="panel" href="#/portfolio" style="display:flex;align-items:center;gap:12px;padding:16px 18px;margin-bottom:18px;color:var(--text)"><div class="grow"><div class="small muted">Your brokerage account</div><div style="font-size:22px;font-weight:700" class="num">${ui.real && ui.real.balances ? usd(ui.real.balances.equity) : 'Real money'}</div></div><div class="small muted">View ›</div></a>` : `<a class="panel" href="#/portfolio" style="display:flex;align-items:center;gap:12px;padding:16px 18px;margin-bottom:18px;color:var(--text)"><div class="grow"><div class="small muted">${Store.site.realMoney ? 'Practice portfolio' : 'Your portfolio'}</div><div style="font-size:24px;font-weight:700" class="num" data-pv="${me}">${usd(v)}</div></div><div style="text-align:right"><div class="num ${sgn(d)}">${pct(d)} today</div><div class="small muted">View portfolio ›</div></div></a>`;
+  const pfLine = Store.site.realMoney ? homeAcctCard() : `<a class="panel" href="#/portfolio" style="display:flex;align-items:center;gap:12px;padding:16px 18px;margin-bottom:18px;color:var(--text)"><div class="grow"><div class="small muted">${Store.site.realMoney ? 'Practice portfolio' : 'Your portfolio'}</div><div style="font-size:24px;font-weight:700" class="num" data-pv="${me}">${usd(v)}</div></div><div style="text-align:right"><div class="num ${sgn(d)}">${pct(d)} today</div><div class="small muted">View portfolio ›</div></div></a>`;
   return `${Store.site.realMoney ? realCopySection(true) : ''}${sec('Waiting on you', waiting)}${Store.signedIn ? checkinCard() + installCard() : ''}${pfLine}${gettingStarted()}${showInstallTip()}${starterCard(prof, groups)}
   ${sec('Your groups', latest ? `<div class="list">${latest}</div>` : '', '<button class="linkbtn small" data-act="gofeedgroups">See all</button>')}
   ${waitingOnYou()}
@@ -102,4 +102,18 @@ function vReadOnlyHome(){
     <h1 style="margin-top:16px">See Pocket Investing in two minutes</h1><p class="muted">Take a guided tour as Dan, a sample member of an investing group. You'll see an approval request, the Risk Manager's review, group rules and voting, the feed and how members track their group.${Store.inviteOnly ? ' Have an invite code? Create an account and try it with simulated money.' : ' Or create a free account and try it with simulated money.'}</p>
     <div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn ember" data-act="tour">Start the tour</button>${Store.signedIn ? '' : `<a class="btn ghost" href="#/join">Create a free account</a><button class="btn ghost" data-act="signin">Sign in</button>`}</div></div>
   <section class="block"><header><h2>Markets</h2><span class="muted small">Simulated prices</span></header><div class="list">${marketRows()}</div></section>`;
+}
+
+/* Home card for the brokerage account: says what state the account is in, never just "Real money". */
+function homeAcctCard(){
+  if (!Store.signedIn) return '';
+  const R = ui.real; if (!R && !ui.realLoading) loadReal();
+  const box = (inner, right, href = '#/portfolio') => `<a class="panel" href="${href}" style="display:flex;align-items:center;gap:12px;padding:16px 18px;margin-bottom:18px;color:var(--text)"><div class="grow"><div class="small muted">${acctName()}</div>${inner}</div><div style="text-align:right">${right}</div></a>`;
+  const big = t => `<div style="font-size:22px;font-weight:700" class="num">${t}</div>`;
+  if (!R || R.error) return box(big(R && R.error ? '—' : '…'), '<div class="small muted">View ›</div>');
+  if (R.require2fa && !R.twofa) return box(big(usd(0)), '<span class="btn sm">Set up two-step sign-in</span>', '#/security');
+  if (!R.account) return box(big(usd(0)), '<span class="btn sm">Open your account</span>', '#/open');
+  if (R.account.status !== 'ACTIVE') return box(big({ REJECTED:'Not approved', ACTION_REQUIRED:'Action needed', DISABLED:'Account disabled', ACCOUNT_CLOSED:'Account closed' }[R.account.status] || 'Account under review'), '<div class="small muted">View ›</div>');
+  const B = R.balances || {}, d = B.lastEquity ? B.equity / B.lastEquity - 1 : 0;
+  return box(big(usd(B.equity || 0)), `<div class="num ${sgn(d)}">${pct(d)} today</div><div class="small muted">View account ›</div>`);
 }

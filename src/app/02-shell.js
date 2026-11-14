@@ -2,6 +2,49 @@
 
 function route(){ const h = (location.hash || '#/home').slice(2).split('/'); return { name: h[0] || 'home', a: h[1] ? decodeURIComponent(h[1]) : null, b: h[2] || null }; }
 
+/* In-app history. Each screen visit gets a position in the browser's history, so "← Back" returns to the
+   screen you came from (named in the link), with its scroll position and Explore tab as you left them. */
+const NAV = { snaps: {}, cur: 0 }, NAV_KEYS = ['exploreTab', 'exMovers', 'exSector', 'homeTab', 'exAll'];
+let navRestore = null;
+(function navInit(){
+  let saved = {}; try { saved = JSON.parse(sessionStorage.getItem('pi_nav') || '{}') || {}; } catch(e){}
+  const st = history.state;
+  if (st && st.pi_idx != null && saved.snaps){ NAV.snaps = saved.snaps; NAV.cur = st.pi_idx; }
+  else try { history.replaceState(Object.assign({}, st || {}, { pi_idx: 0 }), ''); } catch(e){}
+  NAV.snaps[NAV.cur] = { hash: location.hash || '#/home', y: 0 };
+})();
+function navSave(){ try { sessionStorage.setItem('pi_nav', JSON.stringify({ snaps: NAV.snaps })); } catch(e){} }
+window.addEventListener('hashchange', () => {
+  const prev = NAV.snaps[NAV.cur]; if (prev){ prev.y = window.scrollY; NAV_KEYS.forEach(k => { prev[k] = ui[k]; }); }
+  const st = history.state, h = location.hash || '#/home', back = st && st.pi_idx != null && NAV.snaps[st.pi_idx] && NAV.snaps[st.pi_idx].hash === h;
+  if (back){ NAV.cur = st.pi_idx; navRestore = NAV.snaps[NAV.cur]; NAV_KEYS.forEach(k => { if (k in navRestore) ui[k] = navRestore[k]; }); }
+  else { NAV.cur++; Object.keys(NAV.snaps).forEach(k => { if (+k >= NAV.cur || +k < NAV.cur - 60) delete NAV.snaps[k]; }); NAV.snaps[NAV.cur] = { hash: h, y: 0 }; navRestore = null;
+    try { history.replaceState(Object.assign({}, st || {}, { pi_idx: NAV.cur }), ''); } catch(e){} }
+  navSave();
+});
+/* Called after the new screen renders: put the scroll back where it was, unless the person starts scrolling. */
+function navScroll(){
+  const r = navRestore; navRestore = null; if (!r || !(r.y > 0)) return;
+  let stop = false; const halt = () => { stop = true; }; ['wheel', 'touchstart', 'keydown'].forEach(ev => window.addEventListener(ev, halt, { once: true, passive: true }));
+  const go = () => { if (!stop && Math.abs(window.scrollY - r.y) > 4) window.scrollTo(0, r.y); };
+  go(); requestAnimationFrame(go); setTimeout(go, 150); setTimeout(go, 500);
+}
+function navLabel(h){
+  const parts = String(h || '').replace(/^#\/?/, '').split('/'), n = parts[0] || 'home', a = parts[1] ? decodeURIComponent(parts[1]) : '';
+  const name = { home:'Home', explore:'Explore', feed:'Feed', portfolio:'Portfolio', groups:'Groups', inbox:'Approvals', notifications:'Notifications', markets:'Search', security:'Two-step sign-in', statements:'Statements', documents:'Documents', help:'Help', alerts:'Price alerts', badges:'Badges', settings:'Notification settings', digest:'Weekly recap', admin:'Beta admin', metrics:'Pilot metrics', demo:'Demo controls', open:'Open your account' }[n];
+  if (n === 'stock') return a || 'Stock';
+  if (n === 'group'){ const g = typeof Store !== 'undefined' && Store.get('groups', a); return g ? g.name : 'Group'; }
+  if (n === 'u') return a === Store.myPid ? 'Profile' : (Store.displayName(a) || 'Profile');
+  return name || 'Back';
+}
+/* "← Back" link: to the previous screen when there is one, otherwise to the fallback. */
+function backLink(fallback, fallbackLabel){
+  const p = NAV.snaps[NAV.cur - 1], ok = p && p.hash && p.hash !== location.hash;
+  const label = ok ? navLabel(p.hash) : fallbackLabel;
+  return `<a href="${esc(ok ? p.hash : fallback)}" class="small backlink"${ok ? ' data-back="1"' : ''}>← ${esc(label.length > 28 ? label.slice(0, 27) + '…' : label)}</a>`;
+}
+document.addEventListener('click', e => { const a = e.target.closest && e.target.closest('a[data-back="1"]'); if (!a || e.metaKey || e.ctrlKey) return; e.preventDefault(); history.back(); });
+
 
 /* ---------- nav ---------- */
 function renderNav(){
@@ -79,7 +122,7 @@ function render(){
   const ann = Store.settings.announcement; let annOff = ''; try { annOff = localStorage.getItem('pi_ann_off') || ''; } catch(e){}
   if (ann && ann.text && String(ann.ts) !== annOff && ui.tour == null) html = `<div class="banner ember" style="margin-bottom:16px"><div style="flex:1"><b>From the Pocket team</b><div class="small">${esc(ann.text)}</div></div><button class="btn sm ghost" data-act="annoff" data-k="${ann.ts}">Dismiss</button></div>` + html;
   const site = Store.site, strip = site.demoSite ? `<div class="banner" style="margin-bottom:16px" role="note"><div style="flex:1"><b>Demo</b>: sample people and simulated prices. Nothing here is real.</div><a class="btn sm" href="https://www.pocketinvesting.com/#invite">Request an invite</a></div>`
-    : site.realMoney ? (site.alpacaEnv === 'sandbox' ? `<div class="site-strip" role="note"><b>Real money</b> · test environment: no real money moves</div>` : '')
+    : site.realMoney ? (site.alpacaEnv === 'sandbox' ? `<div class="site-strip" role="note"><b>Test environment</b> · balances and trades are simulated. No money moves.</div>` : '')
     : `<div class="site-strip" role="note"><b>Beta</b> · practice money${site.realPrices ? ', real market prices' : ''}</div>`;
   html = strip + html;
   const ac = Store.actingAs; if (ac) html = `<div class="banner ember" style="margin-bottom:16px" role="status"><div style="flex:1"><b>Acting as ${esc(Store.get('profiles', Store.myPid) ? Store.displayName(Store.myPid) : 'a test account')}</b> <span class="small">(test account)</span><div class="small">Everything you do here is real in the sandbox and recorded in the admin log under ${esc(ac.admin)}. Ends ${new Date(ac.until).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.</div></div><button class="btn sm" data-act="actstop">Return to your account</button></div>` + html;
@@ -118,7 +161,7 @@ function toast(msg, opt = {}){
 function errToast(e){ toast(e && e.userFacing ? e.message : 'Something went wrong. Try again.'); if (!(e && e.userFacing)) console.error(e); }
 
 function openModal(html, mount){
-  if (!(history.state && history.state.pkModal)) try { history.pushState({ pkModal: 1, h: location.hash }, ''); } catch(e){}
+  if (!(history.state && history.state.pkModal)) try { history.pushState({ pkModal: 1, h: location.hash, pi_idx: NAV.cur }, ''); } catch(e){}
   $('#modal').innerHTML = `<div class="scrim" data-scrim><div class="sheet" role="dialog" aria-modal="true">${html}</div></div>`;
   const s = $('#modal [data-scrim]'); s.addEventListener('click', e => { if (e.target === s) closeModal(); });
   $$('#modal [data-close]').forEach(b => b.onclick = closeModal);
@@ -130,7 +173,7 @@ function openModal(html, mount){
 /* Closing a sheet removes its history entry, but only if the app is still on the same page (an action may have just moved to another page). */
 function closeModal(){ const had = !!$('#modal').innerHTML; $('#modal').innerHTML = ''; if (had) setTimeout(() => { const st = history.state; if (st && st.pkModal && st.h === location.hash && !$('#modal').innerHTML) try { history.back(); } catch(e){} }, 0); }
 /* Back closes an open sheet instead of leaving the page; a leftover sheet entry is simply cleared. */
-window.addEventListener('popstate', () => { if ($('#modal').innerHTML){ $('#modal').innerHTML = ''; return; } if (history.state && history.state.pkModal) try { history.replaceState(null, ''); } catch(e){} });
+window.addEventListener('popstate', () => { if ($('#modal').innerHTML){ $('#modal').innerHTML = ''; return; } if (history.state && history.state.pkModal) try { history.replaceState({ pi_idx: history.state.pi_idx != null ? history.state.pi_idx : NAV.cur }, ''); } catch(e){} });
 
 function suggestSheet(gid){
   const g = Store.get('groups', gid), R = Store.rulesOf(g);

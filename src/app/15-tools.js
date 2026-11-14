@@ -36,7 +36,7 @@ function vAlerts(){
   if (!X || X === 'loading') return '<div class="loading">Loading your alerts…</div>'; if (X.error) return `<div class="panel empty">${esc(X.error)}</div>`;
   const W = { above: 'Rises above', below: 'Falls below', move: 'Moves more than' }, fmt = a => a.kind === 'move' ? a.value + '% in a day' : usd(a.value);
   const act = X.alerts.filter(a => a.active), done = X.alerts.filter(a => !a.active);
-  return `<div class="pagehead"><div><a href="#/u/${Store.myPid}" class="small">← Profile</a><h1 style="margin-top:6px">Price alerts</h1><p class="muted">Push and in-app notifications, checked every minute. Each alert fires once.</p></div></div>
+  return `<div class="pagehead"><div>${backLink('#/u/' + Store.myPid, 'Profile')}<h1 style="margin-top:6px">Price alerts</h1><p class="muted">Push and in-app notifications, checked every minute. Each alert fires once.</p></div></div>
     <section class="panel" style="padding:16px 18px"><label style="display:flex;gap:10px;align-items:flex-start"><input type="checkbox" id="al-w" ${X.watchMoves ? 'checked' : ''} style="margin-top:4px"><span><b>Big moves in my watchlist</b><span class="small muted" style="display:block">Once a day per stock, when it moves more than the amount below.</span></span></label>
       <div class="field" style="margin:10px 0 0;max-width:220px"><label for="al-t">Move size</label><select class="input" id="al-t">${[3, 5, 10].map(v => `<option value="${v}" ${X.threshold == v ? 'selected' : ''}>${v}%</option>`).join('')}</select></div>
       <button class="btn sm" data-act="alertprefs" style="margin-top:10px">Save</button></section>
@@ -62,7 +62,7 @@ function copyStopSheet(o){
   const rel = o.gid ? Store.membership(o.gid) || {} : Store.all('copies').find(c => c.from === Store.myPid && c.to === o.pid) || {};
   const who = o.gid ? ((Store.get('groups', o.gid) || {}).name || 'this group') : Store.displayName(o.pid);
   openModal(`<header><h2>Protect your copies</h2><button class="x" data-close aria-label="Close">×</button></header>
-    <p class="muted" style="margin-top:0">For stocks you got by copying ${esc(who)}: if one falls far enough below what you paid, Pocket steps in. Applies to practice and real money.</p>
+    <p class="muted" style="margin-top:0">For stocks you got by copying ${esc(who)}: if one falls far enough below what you paid, Pocket steps in. Applies to practice and brokerage accounts.</p>
     ${rel.copyPaused ? `<div class="why-not">Copies from ${esc(who)} are paused because a stock passed your limit. Save to resume them.</div>` : ''}
     <div class="field"><label for="cs-p">If a copied stock falls below what I paid by</label><select class="input" id="cs-p"><option value="">Off</option>${[10, 15, 20, 25, 30].map(v => `<option value="${v}" ${rel.stopPct == v ? 'selected' : ''}>${v}%</option>`).join('')}</select></div>
     <div class="field"><label for="cs-a">Then</label><select class="input" id="cs-a"><option value="ask" ${rel.stopAction !== 'stop' ? 'selected' : ''}>Ask me to sell it (you approve, as always)</option><option value="stop" ${rel.stopAction === 'stop' ? 'selected' : ''}>Stop copying ${esc(who)} (keep what I have)</option></select></div>
@@ -139,3 +139,58 @@ function memberBadges(p, extra = []){
   if (typeof autoBadges === 'function') autoBadges(p).forEach(b => out.push(b));
   return out;
 }
+
+/* Stock search for the order sheets. Before typing: what you own, recent picks, your watchlist.
+   While typing: stocks already on Pocket first, then "More US stocks" from the full list (tap to add). */
+function recentSyms(){ try { const l = JSON.parse(localStorage.getItem('pi_recent_syms') || '[]'); return Array.isArray(l) ? l.filter(s => Market.MAP[s]) : []; } catch(e){ return []; } }
+function pushRecentSym(s){ try { localStorage.setItem('pi_recent_syms', JSON.stringify([s].concat(recentSyms().filter(x => x !== s)).slice(0, 8))); } catch(e){} }
+function wireStockSearch(qi, res, { held = () => [], current = () => '', onPick }){
+  const row = x => `<button type="button" class="row" data-s="${esc(x.s)}"${x.isNew ? ' data-new="1"' : ''} style="width:100%;text-align:left;border:0;border-top:1px solid var(--line);background:none">${logo(x.s)}<span class="grow" style="min-width:0"><span class="sym">${esc(x.s)}</span> <span class="small muted">${esc(x.n || '')}</span></span>${x.isNew ? '<span class="small muted">Add</span>' : `<span class="num muted">${usd(Market.price(x.s))}</span>`}</button>`;
+  const head = t => `<div class="small muted" style="padding:10px 12px 4px;font-weight:600">${t}</div>`;
+  const suggest = () => {
+    const seen = new Set([current()]), take = l => (l || []).filter(s => Market.MAP[s] && !seen.has(s) && seen.add(s)).slice(0, 4);
+    const parts = [['You own', take(held())], ['Recent', take(recentSyms())], ['Your watchlist', take(((Store.get('profiles', Store.myPid) || {}).watchlist))]].filter(p => p[1].length);
+    if (!parts.length){ res.style.display = 'none'; res.innerHTML = ''; return; }
+    res.innerHTML = parts.map(([t, l]) => head(t) + l.map(s => row({ s, n: Market.MAP[s].n })).join('')).join(''); res.style.display = '';
+  };
+  let tq = null, seq = 0;
+  const run = () => {
+    const t = qi.value.trim(), tl = t.toLowerCase(); seq++; clearTimeout(tq);
+    if (!t) return suggest();
+    const rank = x => x.s.toLowerCase() === tl ? 0 : x.s.toLowerCase().startsWith(tl) ? 1 : 2;
+    const hits = Market.LIST.filter(x => x.s.toLowerCase().startsWith(tl) || x.n.toLowerCase().includes(tl)).sort((a, b) => rank(a) - rank(b)).slice(0, 6);
+    res.style.display = '';
+    res.innerHTML = (hits.length ? head('On Pocket') + hits.map(row).join('') : '') + (Store.site.marketData ? `<div data-more>${hits.length ? '' : '<div class="empty">Searching all US stocks…</div>'}</div>` : (hits.length ? '' : '<div class="empty">No matching stock.</div>'));
+    if (!Store.site.marketData) return;
+    const my = seq; tq = setTimeout(() => Store.searchStocks(t).then(list => {
+      if (my !== seq) return; const box = res.querySelector('[data-more]'); if (!box) return;
+      const have = new Set(hits.map(x => x.s)), more = list.filter(x => !have.has(x.s) && !Market.MAP[x.s]).slice(0, 6), onP = list.filter(x => !have.has(x.s) && Market.MAP[x.s]).slice(0, 3);
+      box.innerHTML = (onP.length ? (hits.length ? '' : head('On Pocket')) + onP.map(x => row({ s: x.s, n: Market.MAP[x.s].n })).join('') : '') + (more.length ? head('More US stocks') + more.map(x => row({ s: x.s, n: x.n, isNew: true })).join('') : '') + (!hits.length && !onP.length && !more.length ? '<div class="empty">No US stock matches that name or ticker.</div>' : '');
+    }, () => { const box = res.querySelector('[data-more]'); if (box && !hits.length) box.innerHTML = '<div class="empty">Search isn\'t available right now. Try again in a moment.</div>'; }), 250);
+  };
+  qi.oninput = run;
+  qi.onfocus = () => { if (!qi.value.trim()) suggest(); };
+  res.onclick = async e => {
+    const b = e.target.closest('[data-s]'); if (!b || b.disabled) return; const s = b.dataset.s;
+    if (b.dataset.new){ b.disabled = true;
+      try { await Store.ensureStock(s); }
+      catch(err){ const why = err && err.userFacing ? err.message : "That stock can't be added right now. Try again later.";
+        b.lastElementChild.outerHTML = `<span class="small" style="color:var(--loss);max-width:55%;text-align:right">${esc(why)}</span>`; return; } }
+    pushRecentSym(s); qi.value = ''; res.style.display = 'none'; res.innerHTML = ''; onPick(s);
+  };
+}
+
+/* Quick-amount buttons follow the mode: dollars or shares when buying, a share of your position when selling. */
+function quickChips(side, by){
+  if (side === 'sell') return [['0.25','25%'],['0.5','50%'],['0.75','75%'],['1','All']];
+  return by === 'shares' ? [['1','1 share'],['5','5 shares'],['10','10 shares'],['max','Max']] : [['100','$100'],['500','$500'],['1000','$1,000'],['max','Max']];
+}
+/* Amount for a quick button. power = cash or buying power; whole = whole shares only (limit orders). */
+function quickAmount(k, { side, by, power, price, held, whole }){
+  if (side === 'sell'){ if (by === 'shares') return k === '1' ? String(held) : String(Math.floor(held * +k * 1000) / 1000); return String(Math.floor(held * +k * price * 100) / 100); }
+  if (k !== 'max') return k;
+  if (by === 'dollars') return String(Math.floor(power * 100) / 100);
+  const n = power / (price || 1); return String(whole ? Math.floor(n) : Math.floor(n * 1000) / 1000);
+}
+/* Convert the typed amount when switching between Dollars and Shares. */
+function convertAmount(amt, toBy, price, whole){ const a = parseFloat(amt); if (!(a > 0) || !(price > 0)) return ''; if (toBy === 'dollars') return String(Math.round(a * price * 100) / 100); const n = a / price; return String(whole ? Math.floor(n) || '' : Math.floor(n * 1000) / 1000); }

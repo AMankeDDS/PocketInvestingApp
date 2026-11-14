@@ -15,6 +15,9 @@ const pool = new Pool({
 });
 
 async function migrate(){
+  /* A database from an older version of the app (user ids stored as uuid) can't be upgraded in place. Say so plainly. */
+  const idType = (await pool.query(`SELECT data_type FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'users' AND column_name = 'id'`)).rows[0];
+  if (idType && idType.data_type !== 'text') throw new Error(`This database was made by an older version of the app (users.id is ${idType.data_type}, not text). Connect this service to a new, empty Postgres database (in Railway: add a Postgres database and point DATABASE_URL at it).`);
   for (const c of COLS){
     await pool.query(`CREATE TABLE IF NOT EXISTS ${table(c)} (id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz NOT NULL DEFAULT now())`);
   }

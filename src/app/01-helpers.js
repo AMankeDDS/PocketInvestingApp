@@ -33,3 +33,8 @@ function nextDividend(sym){ const y = DIV_YIELDS[sym]; if (!y) return null; cons
 function reportError(message, stack){ if (++errCount > 8) return; try { fetch('/api/client-error', { method:'POST', credentials:'same-origin', headers:{ 'content-type':'application/json' }, body: JSON.stringify({ message: String(message).slice(0, 500), stack: String(stack || '').slice(0, 4000), url: location.hash }) }).catch(() => {}); } catch(e){} }
 
 function logView(){ const n = route().name; if (!/^[a-z]+$/.test(n) || ui.tour != null) return; const now = Date.now(); if (seenViews[n] && now - seenViews[n] < 60000) return; seenViews[n] = now; fetch('/api/event', { method:'POST', credentials:'same-origin', headers:{ 'content-type':'application/json' }, body: JSON.stringify({ name: 'view:' + n }) }).catch(() => {}); }
+
+/* Brokerage wording: the test site says "test" plainly; the live site needs no label at all. */
+function isTestBroker(){ return !!(Store.site.realMoney && Store.site.alpacaEnv === 'sandbox'); }
+function acctName(lower){ const s = isTestBroker() ? 'Your test account' : 'Your account'; return lower ? s.toLowerCase() : s; }
+const TEST_NOTE = 'Test environment: balances and trades are simulated. No money moves.';

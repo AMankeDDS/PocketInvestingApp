@@ -60,21 +60,21 @@ function tradeSheet({ sym = 'AAPL', side = 'buy', gid = null } = {}){
   const st = { sym: sym || 'AAPL', side: side || 'buy', by: side === 'sell' ? 'shares' : 'dollars', amt: side === 'sell' ? '' : '100', acct: gid || 'me', q:'', step:'edit', chip: side === 'sell' ? null : '100' };
   const pf = () => Store.get('portfolios', me);
   const held = () => (((pf() || {}).positions || {})[st.sym] || {}).shares || 0;
-  const calc = () => { const px = Market.price(st.sym), a = parseFloat(st.amt) || 0; const shares = Math.floor((st.by === 'dollars' ? a / px : a) * 1000) / 1000; return { px, shares, dollars: shares * px }; };
+  const calc = () => { const px = Market.price(st.sym), a = parseFloat(st.amt) || 0, h = held(); let shares = Math.floor((st.by === 'dollars' ? a / px : a) * 1000) / 1000;
+    if (st.side === 'sell' && h && (st.chip === '1' || (st.by === 'dollars' && a >= h * px - 0.01 && a <= h * px + 0.01))) shares = h;
+    return { px, shares, dollars: shares * px }; };
   const grp = () => st.acct !== 'me';
   const recipients = () => grp() ? Store.membersOf(st.acct).filter(m => m.pid !== me && m.role !== 'observer').length : Store.copiersOf(me).length;
   openModal('<div id="ts"></div>', sh => {
     const root = sh.querySelector('#ts'); const q = id => root.querySelector('#' + id);
-    const chips = () => st.side === 'buy'
-      ? [['100','$100'],['500','$500'],['1000','$1,000'],['max','Max']]
-      : [['0.25','25%'],['0.5','50%'],['0.75','75%'],['1','All']];
+    const chips = () => quickChips(st.side, st.by);
     function drawEdit(focusAmt){
       const T = Market.MAP[st.sym];
       root.innerHTML = `<header><h2>${grp() ? 'Trade for ' + esc((Store.get('groups', st.acct) || {}).name || 'the group') : 'Place an order'}</h2><button class="x" data-close aria-label="Close">×</button></header>
         ${tradeGroups.length ? `<div class="field"><label for="t-acct">Account</label><select class="input" id="t-acct"><option value="me">Personal</option>${tradeGroups.map(g => `<option value="${g.id}" ${st.acct === g.id ? 'selected' : ''}>Trade for ${esc(g.name)}</option>`).join('')}</select></div>` : ''}
         <div class="field"><label for="t-q">Stock</label>
-          <div style="display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--surface-2)"><span class="sym">${st.sym}</span><span class="grow muted ellip" style="flex:1">${esc(T.n)}</span><b class="num" data-px="${st.sym}">${usd(Market.price(st.sym))}</b></div>
-          ${lowPriceNote(st.sym)}<input class="input" id="t-q" data-nofocus placeholder="Search another stock, e.g. Apple or MSFT" autocomplete="off" value="${esc(st.q)}" style="margin-top:8px"><div id="t-res" class="list" style="display:none;margin-top:6px"></div></div>
+          <div style="display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--surface-2)">${logo(st.sym)}<span class="sym">${st.sym}</span><span class="grow muted ellip" style="flex:1">${esc(T.n)}</span><b class="num" data-px="${st.sym}">${usd(Market.price(st.sym))}</b></div>
+          ${lowPriceNote(st.sym)}<input class="input" id="t-q" data-nofocus placeholder="Search name or ticker" autocomplete="off" aria-label="Search for a stock" style="margin-top:8px"><div id="t-res" class="list" style="display:none;margin-top:6px"></div></div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px"><div class="seg" id="t-side"><button data-k="buy" class="${st.side === 'buy' ? 'on' : ''}">Buy</button><button data-k="sell" class="${st.side === 'sell' ? 'on' : ''}">Sell</button></div>
           <div class="seg" id="t-by"><button data-k="dollars" class="${st.by === 'dollars' ? 'on' : ''}">Dollars</button><button data-k="shares" class="${st.by === 'shares' ? 'on' : ''}">Shares</button></div></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px" id="t-chips">${chips().map(([k, l]) => `<button class="btn sm ${st.chip === k ? '' : 'ghost'}" data-k="${k}" ${st.side === 'sell' && !held() ? `disabled title="You don't own any ${st.sym} to sell"` : ''}>${l}</button>`).join('')}</div>
@@ -106,28 +106,15 @@ function tradeSheet({ sym = 'AAPL', side = 'buy', gid = null } = {}){
     function wireEdit(){
       const acct = q('t-acct'); if (acct) acct.onchange = () => { st.acct = acct.value; drawEdit(); };
       q('t-side').onclick = e => { const b = e.target.closest('button'); if (!b || b.dataset.k === st.side) return; st.side = b.dataset.k; st.by = st.side === 'sell' ? 'shares' : 'dollars'; st.amt = ''; st.chip = null; drawEdit(true); };
-      q('t-by').onclick = e => { const b = e.target.closest('button'); if (!b || b.dataset.k === st.by) return; const c = calc(); st.by = b.dataset.k; st.amt = c.shares ? String(st.by === 'dollars' ? Math.round(c.dollars * 100) / 100 : c.shares) : ''; st.chip = null; drawEdit(true); };
+      q('t-by').onclick = e => { const b = e.target.closest('button'); if (!b || b.dataset.k === st.by) return; const c = calc(); st.by = b.dataset.k; st.amt = c.shares ? String(st.by === 'dollars' ? Math.round(c.dollars * 100) / 100 : c.shares) : ''; if (st.side === 'buy') st.chip = null; drawEdit(true); };
       q('t-chips').onclick = e => { const b = e.target.closest('button'); if (!b || b.disabled) return; const k = b.dataset.k; st.chip = k;
-        if (st.side === 'buy'){ st.by = 'dollars'; st.amt = k === 'max' ? String(Math.floor(((pf() || {}).cash || 0) * 100) / 100) : k; }
-        else { st.by = 'shares'; st.amt = String(Math.floor(held() * +k * 1000) / 1000); }
+        st.amt = quickAmount(k, { side: st.side, by: st.by, power: (pf() || {}).cash || 0, price: Market.price(st.sym), held: held() });
         drawEdit(); };
       q('t-amt').oninput = () => { st.amt = q('t-amt').value; st.chip = null; upd(); };
       const sc = q('t-share'); if (sc) sc.onchange = () => { st.share = sc.checked; q('t-note-f').style.display = sc.checked ? '' : 'none'; };
       const nt = q('t-note'); if (nt) nt.oninput = () => { st.note = nt.value; };
-      const qi = q('t-q'), res = q('t-res');
-      let tq = null;
-      qi.oninput = () => { st.q = qi.value; const t = st.q.trim().toLowerCase();
-        if (!t){ res.style.display = 'none'; return; }
-        /* also search the full stock list when market data is on */
-        if (Store.site.marketData){ clearTimeout(tq); tq = setTimeout(() => Store.searchStocks(t).then(list => { if (st.q.trim().toLowerCase() !== t) return;
-          const have = new Set([...res.querySelectorAll('[data-s]')].map(b => b.dataset.s));
-          res.insertAdjacentHTML('beforeend', list.filter(x => !have.has(x.s) && !x.added).slice(0, 6).map(x => `<button class="row" data-s="${esc(x.s)}" data-new="1" style="width:100%;text-align:left;border:0;border-top:1px solid var(--line);background:none"><span class="sym" style="width:60px">${esc(x.s)}</span><span class="grow ellip">${esc(x.n)}</span><span class="small muted">Add</span></button>`).join(''));
-          res.style.display = ''; }).catch(() => {}), 250); }
-        const hits = Market.LIST.filter(x => x.s.toLowerCase().startsWith(t) || x.n.toLowerCase().includes(t)).slice(0, 6);
-        res.style.display = ''; res.innerHTML = hits.map(x => `<button class="row" data-s="${x.s}" style="width:100%;text-align:left;border:0;border-top:1px solid var(--line);background:none"><span class="sym" style="width:60px">${x.s}</span><span class="grow ellip">${esc(x.n)}</span><span class="num muted">${usd(Market.price(x.s))}</span></button>`).join('') || '<div class="empty">No matching stock in this demo.</div>'; };
-      res.onclick = async e => { const b = e.target.closest('[data-s]'); if (!b) return;
-        if (b.dataset.new){ b.disabled = true; try { await Store.ensureStock(b.dataset.s); } catch(err){ b.disabled = false; return errToast(err); } }
-        st.sym = b.dataset.s; st.q = ''; if (st.side === 'sell'){ st.amt = ''; st.chip = null; } drawEdit(true); };
+      wireStockSearch(q('t-q'), q('t-res'), { current: () => st.sym, held: () => Object.entries(((pf() || {}).positions) || {}).filter(([, p]) => p && p.shares > 0).map(([s]) => s),
+        onPick: sym => { st.sym = sym; if (st.side === 'sell'){ st.amt = ''; st.chip = null; } drawEdit(true); } });
       q('t-rev').onclick = () => drawReview();
     }
     function drawReview(){

@@ -78,12 +78,12 @@ function mount(app, d){
   }));
 
   /* ---------- real money (live site only) ---------- */
-  const realOnly = (req, res, next) => config.realMoney ? next() : bad(res, "Real money isn't available on this site.", 404);
+  const realOnly = (req, res, next) => config.realMoney ? next() : bad(res, "Brokerage accounts aren't available on this site.", 404);
   app.use('/api/real', realOnly);
   app.use('/api/admin/real', realOnly);
   async function needReal(req, res){
     const u = await needUser(req, res); if (!u) return null;
-    if (config.require2fa && !(u.is_test && config.alpaca.env === 'sandbox')){ const r = (await q('SELECT totp_enabled FROM users WHERE id = $1', [u.id])).rows[0]; if (!r || !r.totp_enabled){ bad(res, 'Turn on two-step sign-in to use real money.', 403); return null; } }
+    if (config.require2fa && !(u.is_test && config.alpaca.env === 'sandbox')){ const r = (await q('SELECT totp_enabled FROM users WHERE id = $1', [u.id])).rows[0]; if (!r || !r.totp_enabled){ bad(res, 'Turn on two-step sign-in to use your brokerage account.', 403); return null; } }
     return u;
   }
   const acctOf = async userId => (await q('SELECT * FROM broker_accounts WHERE user_id = $1', [userId])).rows[0];
@@ -218,7 +218,7 @@ function mount(app, d){
 
   app.post('/api/real/order', wrap(async (req, res) => {
     const x = await needActive(req, res); if (!x) return;
-    if (await getSetting('realPaused', false)) return bad(res, 'Real-money trading is paused right now. Please try again later.');
+    if (await getSetting('realPaused', false)) return bad(res, 'Trading is paused right now. Please try again later.');
     const sym = String(req.body.sym || ''); if (!Market.MAP[sym]) return bad(res, "That stock isn't available yet.");
     const side = req.body.side === 'sell' ? 'sell' : 'buy';
     const qty = req.body.qty != null ? Math.floor(Number(req.body.qty) * 1e6) / 1e6 : null, notional = req.body.notional != null ? Math.floor(Number(req.body.notional) * 100) / 100 : null;

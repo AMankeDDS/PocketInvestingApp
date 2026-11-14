@@ -1,6 +1,14 @@
 /* Markets, stock pages, news, earnings and the watchlist. */
 
-function logo(sym, cls = ''){ return `<span class="logo ${cls}" style="background:${SECTOR_COLOR[SECTOR[sym]] || AV[Market.hash(sym) % AV.length]}" aria-hidden="true">${esc(String(sym).slice(0, 4))}</span>`; }
+/* Company logos from Logo.dev when LOGO_DEV_KEY is set; the colored letter tile shows until the logo loads, or if there isn't one. */
+const LOGO_OK = new Set(), LOGO_BAD = new Set();
+function logo(sym, cls = ''){
+  const s = String(sym), k = Store.site && Store.site.logoKey;
+  const img = k && !LOGO_BAD.has(s) && /^[A-Z][A-Z.]{0,5}$/.test(s) ? `<img src="https://img.logo.dev/ticker/${encodeURIComponent(s)}?token=${encodeURIComponent(k)}&size=64&format=png&retina=true&fallback=404" alt="" loading="lazy" decoding="async" data-logo="${esc(s)}"${LOGO_OK.has(s) ? ' class="ok"' : ''}>` : '';
+  return `<span class="logo ${cls}" style="background:${SECTOR_COLOR[SECTOR[sym]] || AV[Market.hash(sym) % AV.length]}" aria-hidden="true">${esc(s.slice(0, 4))}${img}</span>`;
+}
+document.addEventListener('load', e => { const t = e.target; if (t && t.dataset && t.dataset.logo){ LOGO_OK.add(t.dataset.logo); t.classList.add('ok'); } }, true);
+document.addEventListener('error', e => { const t = e.target; if (t && t.dataset && t.dataset.logo){ LOGO_BAD.add(t.dataset.logo); t.remove(); } }, true);
 
 /* Real news first; SEC filings only when specific (catch-all items like 'other company news' stay out of top headlines). */
 function topHeadlines(items){ const vague = /: (other company news|investor update|current report) \(Form/; return items.filter(n => !(n.source === 'SEC filing' && vague.test(n.headline || ''))).sort((a, b) => (a.source === 'SEC filing') - (b.source === 'SEC filing') || b.ts - a.ts).slice(0, 5); }
@@ -69,7 +77,7 @@ function marketRows(limit){
 
 function vMarkets(){
   const R = ui.search;
-  return `<div class="pagehead"><div><a href="#/home" class="small">← Home</a><h1 style="margin-top:6px">Markets</h1><p class="muted">${Store.site.realPrices ? 'Market prices' : 'Simulated prices'}${Store.site.marketData ? '. Search any stock listed on a major US exchange.' : ' for the stocks in Pocket today.'}</p></div></div>
+  return `<div class="pagehead"><div>${backLink('#/home', 'Home')}<h1 style="margin-top:6px">Markets</h1><p class="muted">${Store.site.realPrices ? 'Market prices' : 'Simulated prices'}${Store.site.marketData ? '. Search any stock listed on a major US exchange.' : ' for the stocks in Pocket today.'}</p></div></div>
   <div class="field" style="max-width:520px"><label for="mk-q" class="sr">Search stocks</label><input class="input" id="mk-q" data-search placeholder="Search by ticker or company, e.g. F or Ford" autocomplete="off" value="${esc(ui.searchQ || '')}"></div>
   ${ui.searchQ ? `<section class="block" style="margin-top:6px"><header><h2>Results</h2></header><div class="list">${R === 'loading' ? '<div class="empty">Searching…</div>' : (R || []).map(r => `<a class="row" href="#/stock/${esc(r.s)}">${logo(r.s)}<div class="grow"><div class="sym">${esc(r.s)}</div><div class="small muted ellip">${esc(r.n)}</div></div>${r.added ? mini(r.s) : '<span class="small muted">View</span>'}</a>`).join('') || '<div class="empty">No stocks match. Pocket supports stocks on major US exchanges priced $5 and up.</div>'}</div></section>` : ''}
   <section class="block"><header><h2>In Pocket</h2></header><div class="list">${marketRows()}</div></section>`;
@@ -103,7 +111,7 @@ function vStock(sym){
   const watching = ((Store.get('profiles', Store.myPid) || {}).watchlist || []).includes(sym);
   const holders = Store.all('portfolios').filter(p => (p.positions || {})[sym]).length;
   const groupsHolding = Store.all('groups').filter(g => !Store.rulesOf(g).hidden && (((Store.get('portfolios', g.leadPid) || {}).positions || {})[sym] || Store.all('posts').some(p => p.groupId === g.id && p.groupTrade && p.trade && p.trade.sym === sym && p.ts > Date.now() - 90 * 86400000)));
-  return `<div class="pagehead"><div><a href="#/home" class="small">← Back</a><div style="display:flex;gap:12px;align-items:center;margin-top:6px">${logo(sym)}<h1>${esc(t.n)} <span class="muted">${sym}</span></h1></div>
+  return `<div class="pagehead"><div>${backLink('#/home', 'Home')}<div style="display:flex;gap:12px;align-items:center;margin-top:6px">${logo(sym)}<h1>${esc(t.n)} <span class="muted">${sym}</span></h1></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><span class="tag">${esc(SECTOR[sym] || 'Stock')}</span>${Market.price(sym) > 0 && Market.price(sym) < 5 ? '<span class="tag lowprice">Low-priced stock</span>' : ''}${holders ? `<span class="tag">${holders} Pocket member${holders === 1 ? '' : 's'} own it</span>` : ''}</div>${Market.price(sym) > 0 && Market.price(sym) < 5 ? '<p class="hint" style="margin:8px 0 0">Stocks under $5 can be very volatile and easier to manipulate.</p>' : ''}</div>
     ${Store.canWrite && Store.get('profiles', Store.myPid) ? `<button class="btn ${watching ? 'ghost' : ''} sm" data-act="watch" data-k="${sym}" aria-pressed="${watching}">${watching ? '★ Watching' : '☆ Watch'}</button> <button class="btn ghost sm" data-act="alertsheet" data-k="${sym}">Set alert</button>` : ''}</div>
   <div class="panel hero"><div class="value" data-px="${sym}">${usd(px)}</div><div class="num ${sgn(c)}" data-chg="${sym}">${pct(c)} <span class="muted">today</span></div>

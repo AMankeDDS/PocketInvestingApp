@@ -82,7 +82,7 @@ function vGroup(gid, tab){
   tab = tab || 'activity';
   const my = Store.membership(gid), role = my && my.role, ms = Store.membersOf(gid);
   const hasMe = !!Store.get('profiles', Store.myPid);
-  const head = `<div class="pagehead"><div><a href="#/groups" class="small">← Groups</a><h1 style="margin-top:6px">${esc(g.name)}</h1>
+  const head = `<div class="pagehead"><div>${backLink('#/groups', 'Groups')}<h1 style="margin-top:6px">${esc(g.name)}</h1>
       <p class="muted" style="max-width:62ch">${esc(g.description || '')}</p>
       ${g.goals ? `<p class="small" style="max-width:62ch;margin:6px 0 0"><b>Our goal:</b> ${esc(g.goals)}</p>` : ''}
       ${groupLeaderPanel(g)}

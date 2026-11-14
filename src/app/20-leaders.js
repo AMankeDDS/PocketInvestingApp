@@ -50,7 +50,7 @@ function referralCard(){
   if (!R){ ui.refInfo = 'loading'; Store.http('GET', '/api/referral').then(r => { ui.refInfo = r; render(); }, () => { ui.refInfo = { error: true }; }); }
   if (!R || R === 'loading' || R.error) return '';
   const link = location.origin + '/r/' + R.code, pro = (Store.get('profiles', Store.myPid) || {}).proCreditMonths || 0;
-  return `<section class="panel" style="padding:16px 18px;margin-top:16px"><b>Invite friends</b><div class="small muted" style="margin:4px 0 10px">Earn 3 months of Pro when a friend you invite opens a real-money account and deposits more than $100. Up to ${R.max} friends.</div>
+  return `<section class="panel" style="padding:16px 18px;margin-top:16px"><b>Invite friends</b><div class="small muted" style="margin:4px 0 10px">Earn 3 months of Pro when a friend you invite opens a brokerage account and deposits more than $100. Up to ${R.max} friends.</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap"><input class="input" readonly value="${esc(link)}" style="flex:1;min-width:180px" aria-label="Your invite link"><button class="btn sm" data-act="sharelink" data-k="${esc(link)}">Share link</button></div>
     <div class="small" style="margin-top:10px">${R.rewarded} of ${R.max} referrals rewarded${pro ? ` · ${pro} months of Pro credit, applied when Pro becomes paid` : ''}${R.joined > R.rewarded ? ` · ${R.joined - R.rewarded} joined and haven't deposited yet` : ''}</div></section>`;
 }
@@ -79,6 +79,7 @@ function installCard(){
   const ios = /iPhone|iPad|iPod/.test(navigator.userAgent); if (st || !(ios || a2hsEvent)) return '';
   return `<section class="panel" style="padding:16px 18px;margin-bottom:16px;display:flex;gap:12px;align-items:flex-start"><span class="mark" aria-hidden="true" style="flex:none">P</span><div class="grow"><b>Add Pocket to your Home Screen</b>
     <div class="small muted" style="margin-top:4px">${ios ? 'Opens full screen like an app, and turns on notifications for approvals and alerts. In Safari, tap the Share button, then <b>Add to Home Screen</b>.' : 'Opens full screen like an app, with notifications for approvals and alerts.'}</div>
+    <div class="small muted" style="margin-top:4px">iPhone and Android apps are coming soon.</div>
     ${ios ? '' : '<button class="btn sm" data-act="a2hs" style="margin-top:8px">Install Pocket</button>'}</div><button class="x" data-act="a2hsoff" aria-label="Dismiss">×</button></section>`;
 }
 try { const k = 'pi_visit_day', d = new Date().toISOString().slice(0, 10); if (localStorage.getItem(k) !== d){ localStorage.setItem(k, d); localStorage.setItem('pi_visits', String(+(localStorage.getItem('pi_visits') || 0) + 1)); } } catch(e){}

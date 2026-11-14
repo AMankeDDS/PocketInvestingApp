@@ -98,6 +98,10 @@ Without keys, both sites work as before with the 20 built-in stocks and no news.
 - **Market brief:** a short daily summary on Home (the S&P 500 and Nasdaq-100, the biggest movers, top headlines), built from a fixed template, never AI-written, and labeled as information, not a recommendation.
 - Confirm news display rights and the market data plan with Alpaca before a public launch.
 
+## Company logos (optional)
+
+Set `LOGO_DEV_KEY` on each service to a Logo.dev publishable key (free account at logo.dev; the key starts with `pk_`). Stock rows, stock pages and order sheets then show real company logos. Without the key, or for a stock Logo.dev doesn't have, the colored letter tile shows instead.
+
 ## Demo content
 
 - **Sample data:** about 20 sample investors and 8 groups (Tech Momentum Crew, Dividend Builders Club, Value Hunters, Beginners Circle, Index and Chill, Brand Loyalists, Chip Watchers and Kitchen Table Investors), with roughly four months of back-filled trades, group trades and member approvals, posts, comments, likes and votes. It loads automatically on an empty demo database, and **Reset the demo** restores it with fresh dates.

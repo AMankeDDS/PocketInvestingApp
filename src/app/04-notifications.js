@@ -27,7 +27,7 @@ function vDigest(){
   const fol = new Set(Store.all('follows').filter(f => f.from === me).map(f => f.to));
   const top = Store.all('posts').filter(p => !p.groupId && fol.has(p.pid) && p.ts > week).map(p => [p, Store.all('reactions').filter(r => r.postId === p.id).length]).sort((a, b) => b[1] - a[1]).slice(0, 3);
   const fmt = ts => new Date(ts).toLocaleDateString('en-US', { month:'short', day:'numeric' });
-  return `<div class="pagehead"><div><a href="#/home" class="small">← Home</a><h1 style="margin-top:6px">Your week in Pocket</h1><p class="muted">${fmt(week)} to ${fmt(Date.now())}. Sent every Monday morning.</p></div></div>
+  return `<div class="pagehead"><div>${backLink('#/home', 'Home')}<h1 style="margin-top:6px">Your week in Pocket</h1><p class="muted">${fmt(week)} to ${fmt(Date.now())}. Sent every Monday morning.</p></div></div>
   <div class="panel kv"><div><span>Portfolio value</span><b>${usd(v)}</b></div><div><span>This week</span><b class="${sgn(ch)}">${pct(ch)}</b></div><div><span>Waiting for approval</span><b>${Store.myPending().length}</b></div></div>
   ${groups.map(g => {
     const trades = Store.all('posts').filter(p => p.groupId === g.id && p.groupTrade && p.ts > week && p.pid !== me);
@@ -55,7 +55,7 @@ function vNotifySettings(){
   const tog = (id, on, label, hint) => `<label class="row" style="cursor:pointer"><div class="grow"><b>${label}</b>${hint ? `<div class="small muted">${hint}</div>` : ''}</div><input type="checkbox" id="${id}" ${on ? 'checked' : ''} style="width:22px;height:22px"></label>`;
   const pushRow = ps === 'unsupported' ? (ios && !standalone ? 'On iPhone, add Pocket to your Home Screen first, then open it from there to turn on notifications.' : "This browser doesn't support notifications.")
     : ps === 'denied' ? 'Notifications are blocked for this site. Turn them on in your browser or phone settings.' : ps === 'on' ? 'On for this device.' : ps === 'loading' || ps === null ? 'Checking…' : 'Off for this device.';
-  return `<div class="pagehead"><div><a href="#/u/${Store.myPid}" class="small">← Profile</a><h1 style="margin-top:6px">Notifications</h1><p class="muted">Approval requests have a short window, so phone alerts matter.</p></div></div>
+  return `<div class="pagehead"><div>${backLink('#/u/' + Store.myPid, 'Profile')}<h1 style="margin-top:6px">Notifications</h1><p class="muted">Approval requests have a short window, so phone alerts matter.</p></div></div>
   <section class="panel" style="padding:18px 20px"><h2>Phone alerts</h2><p class="muted small" style="margin:6px 0 12px">${pushRow}</p>
     <div style="display:flex;gap:10px;flex-wrap:wrap">${ps === 'off' ? '<button class="btn ember" data-act="pushon">Turn on notifications</button>' : ''}${ps === 'on' ? '<button class="btn ghost" data-act="pushtest">Send a test</button><button class="btn ghost" data-act="pushoff">Turn off on this device</button>' : ''}</div></section>
   <section class="block"><header><h2>What to alert me about</h2></header><div class="list">
