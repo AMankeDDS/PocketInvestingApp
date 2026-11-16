@@ -212,8 +212,10 @@ const START_CASH = 100000;
    user a fresh account. Users stay signed in. */
 async function reset(tx){
   for (const c of COLS) await tx.wipe(c);
-  const docs = seed(Date.now());
-  for (const [path, data] of Object.entries(docs)){ const [c, id] = path.split('/'); await tx.set(c, id, data); }
+  const now = Date.now(), docs = seed(now);
+  /* seedDoc marks generated sample records so the demo can keep their dates current (demodates.js) */
+  for (const [path, data] of Object.entries(docs)){ const [c, id] = path.split('/'); await tx.set(c, id, String(path).includes('u_') ? data : Object.assign({}, data, { seedDoc: true })); }
+  await tx.setSetting('demoAlignedAt', now);
   const users = (await tx.query('SELECT id, display_name FROM users')).rows;
   for (const u of users) await createAccount(tx, u.id, u.display_name, 'balanced');
   await tx.setSetting('clock', 'live');

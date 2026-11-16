@@ -54,7 +54,7 @@ async function act(el, ev){ /* eslint-disable-line */
     case 'anchor': return busy(async () => { if (!confirm('Update simulated prices to start from real closing prices? Prices that have drifted far will jump, which changes everyone’s gains and losses in the demo.')) return; const r = await Store.http('POST', '/api/admin/prices/anchor'); toast(`Updated ${r.count} prices to real closes${r.sample ? ' (' + r.sample + ')' : ''}.`); ui.amd = null; ui.anchorInfo = null; });
     case 'anchorauto': return busy(async () => { await Store.http('POST', '/api/admin/prices/auto', { on: el.dataset.k === '1' }); toast(el.dataset.k === '1' ? 'Prices will update to real closes each morning.' : 'Automatic price updates are off.'); ui.anchorInfo = null; render(); });
     case 'amdfilings': return busy(async () => { const r = await Store.http('POST', '/api/admin/marketdata/filings'); toast(r.status && r.status.error && !r.status.checked ? 'SEC request failed. See the error below.' : `Fetched SEC filings: ${r.added} new.`); ui.amd = null; render(); });
-    case 'arpause': return busy(async () => { await Store.http('POST', '/api/admin/real/pause', { paused: el.dataset.k === '1' }); ui.areal = null; toast(el.dataset.k === '1' ? 'Real-money trading paused.' : 'Real-money trading running.'); render(); });
+    case 'arpause': return busy(async () => { const code = adminCode(); if (code === false) return; await Store.http('POST', '/api/admin/real/pause', { paused: el.dataset.k === '1', code }); ui.areal = null; toast(el.dataset.k === '1' ? 'Real-money trading paused.' : 'Real-money trading running.'); render(); });
     case 'annoff': try { localStorage.setItem('pi_ann_off', el.dataset.k); } catch(e){} return render();
     case 'feedback': return feedbackSheet();
     case 'chpw': return pwSheet();
@@ -79,22 +79,24 @@ async function act(el, ev){ /* eslint-disable-line */
     case 'adm-spend': return busy(async () => { const m = document.getElementById('ms-m').value, amt = Number(document.getElementById('ms-a').value); await Store.http('POST', '/api/admin/metrics/adspend', { month: m, amount: amt }); ui.ametrics = null; toast('Ad spend saved.'); render(); });
     case 'adm-utm': { const s = (document.getElementById('mu-s').value || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, ''); if (!s){ toast('Name the source first, like instagram.'); return; }
       const link = location.origin + '/?utm_source=' + s + '&utm_medium=' + (document.getElementById('mu-p').checked ? 'paid' : 'referral') + '&utm_campaign=beta'; document.getElementById('mu-l').value = link; try { navigator.clipboard.writeText(link); toast('Link copied.'); } catch(e){} return; }
-    case 'adm-tab': ev.preventDefault(); ui.adminTab = el.dataset.k; ui.ametrics = null; ui.adocs = null; ui.areq = null; ui.alog = null; ui.atest = null; ui.arepl = null; ui.areal = null; ui.amd = null; ui.amdCheck = null; return render();
+    case 'adm-tab': ev.preventDefault(); ui.adminTab = el.dataset.k; ui.asec = null; ui.ametrics = null; ui.adocs = null; ui.areq = null; ui.alog = null; ui.atest = null; ui.arepl = null; ui.areal = null; ui.amd = null; ui.amdCheck = null; return render();
     case 'adm-refresh': ui.admin = null; ui.ametrics = null; return render();
     case 'adm': return busy(async () => {
       const op = el.dataset.op;
       if (op === 'disable' && !confirm('Turn off this account? They will be signed out and unable to sign in.')) return;
+      if (op === 'unlock' && !confirm(`Unlock @${el.dataset.n}?\n\nFirst confirm it's really them: a video call, or matching their name, email and account details, through a channel you already know is theirs. Not just the contact details in their unlock request.\n\nThey'll get a security alert.`)) return;
       if (op === 'reset2fa' && !confirm(`Reset two-step sign-in for @${el.dataset.n}?\n\nFirst confirm it's really them: a video call, or matching their name, email and account details, through a channel you already know is theirs.\n\nTheir withdrawals and bank changes will be paused for 48 hours, and they'll get a security alert.`)) return;
-      const r = await Store.http('POST', '/api/admin/user', { userId: id, op });
+      const code = ['reset2fa', 'unlock'].includes(op) ? adminCode() : undefined; if (code === false) return;
+      const r = await Store.http('POST', '/api/admin/user', { userId: id, op, code });
       if (op === 'reset'){ openModal(`<header><h2>Reset code</h2><button class="x" data-close aria-label="Close">×</button></header><p>Give this code to <b>@${esc(el.dataset.n)}</b>. It works once, for 24 hours. They choose "Forgot your password?" on the sign-in screen.</p><div class="est"><b class="num" style="font-size:24px;letter-spacing:2px">${esc(r.code)}</b></div>`); }
-      else toast(op === 'reset2fa' ? 'Two-step reset. They set it up again at next sign-in; money moves are paused 48 hours.' : 'Updated.');
+      else toast(op === 'reset2fa' ? 'Two-step reset. They set it up again at next sign-in; money moves are paused 48 hours.' : op === 'unlock' ? `@${el.dataset.n} is unlocked.` : 'Updated.'); ui.asec = null;
       await loadAdmin();
     });
     case 'adm-newinv': return newInviteSheet();
     case 'adm-invtoggle': return busy(async () => { await Store.http('POST', '/api/admin/invite', { code: el.dataset.k, op: 'toggle' }); await loadAdmin(); });
     case 'rcopy': return busy(async () => { const k = el.dataset.k; const r = await Store.real.decideCopy(el.dataset.id, k === 'decline' ? 'decline' : 'approve', k === 'half' ? 'half' : 'full'); ui.realReq = null; ui.real = null; toast(k === 'decline' ? 'Declined.' : 'Order placed in your brokerage account.'); render(); });
     case 'actstop': return busy(async () => { await Store.http('POST', '/api/act-as/stop', {}); location.hash = '#/admin'; location.reload(); });
-    case 'adm-actas': return busy(async () => { await Store.http('POST', '/api/admin/act-as', { userId: el.dataset.id }); location.hash = '#/portfolio'; location.reload(); });
+    case 'adm-actas': return busy(async () => { const code = adminCode(); if (code === false) return; await Store.http('POST', '/api/admin/act-as', { userId: el.dataset.id, code }); location.hash = '#/portfolio'; location.reload(); });
     case 'adm-mktest': return busy(async () => { const r = await Store.http('POST', '/api/admin/test-accounts', { count: +$('#tt-n').value, deposit: +$('#tt-d').value }); ui.atest = null; toast(`Created ${r.made.length} test account${r.made.length === 1 ? '' : 's'}. Brokerage approval, bank and deposit finish in the background.`); render(); });
     case 'navexplore': ui.exploreTab = 'market'; if (location.hash === '#/explore') return render(); location.hash = '#/explore'; return;
     case 'search': return searchSheet();
@@ -266,6 +268,10 @@ async function act(el, ev){ /* eslint-disable-line */
     case 'opeek': if (!confirm(`See results? You won't be able to vote on ${el.dataset.k} this week.`)) return; return busy(async () => { await Store.http('POST', '/api/outlook/' + el.dataset.k + '/peek', { gid: el.dataset.gid || '' }); delete ui.outlook[el.dataset.k + ':' + (el.dataset.gid || '')]; render(); });
     case 'opublic': return busy(async () => { await Store.http('POST', '/api/outlook-public', { on: el.checked }); delete ui.outlook['rec:' + Store.myPid]; render(); });
     case 'support': return supportSheet();
+    case 'reload': return location.reload();
+    case 'adm-cap': return busy(async () => { await Store.http('POST', '/api/admin/security/cap', { cap: Number($('#sec-cap').value) }); ui.asec = null; toast('Daily withdrawal limit saved.'); render(); });
+    case 'devout': return busy(async () => { await Store.http('POST', '/api/sessions/revoke', { sid: id }); ui.devices = null; toast('Signed out of that device.'); render(); });
+    case 'devoutall': if (!confirm('Sign out of every other device? You stay signed in here.')) return; return busy(async () => { const r = await Store.http('POST', '/api/sessions/revoke', { others: true }); ui.devices = null; toast(`Signed out of ${r.removed} other device${r.removed === 1 ? '' : 's'}.`); render(); });
     case 'supreply': return busy(async () => { const v = ($('#sr-' + el.dataset.id) || {}).value || ''; await Store.http('POST', '/api/support/' + el.dataset.id + '/reply', { body: v }); ui.mySupport = null; toast('Sent.'); render(); });
     case 'walkthrough': return walkthrough();
     case 'admsup': return busy(async () => { const id = el.dataset.id; await Store.http('POST', '/api/admin/support/' + id, { reply: ($('#as-r-' + id) || {}).value || '', status: el.dataset.k, complaint: !!($('#as-c-' + id) || {}).checked, outcome: ($('#as-o-' + id) || {}).value || '' }); ui.admSupport = null; toast('Saved.'); render(); });

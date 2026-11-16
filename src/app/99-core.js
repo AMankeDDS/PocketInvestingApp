@@ -133,7 +133,8 @@ const Store = (() => {
     ready = true; emit(); if (hasDb) connect();
   }
   /* A real message for a refused request; "Connection problem" is only for no connection at all. */
-  const errFor = (r, j) => fail((j && j.error) || (r.status === 413 ? "That's too large to upload. Try a smaller photo or file." : r.status === 429 ? 'Too many requests. Wait a moment and try again.' : r.status >= 500 ? `Something went wrong on our side (error ${r.status}). Try again in a minute.` : `Something went wrong (error ${r.status}). Try again.`));
+  const errFor = (r, j) => Object.assign(errBase(r, j), { locked: !!(j && j.locked), frozen: !!(j && j.frozen), contact: !!(j && j.contact) });
+  const errBase = (r, j) => fail((j && j.error) || (r.status === 413 ? "That's too large to upload. Try a smaller photo or file." : r.status === 429 ? 'Too many requests. Wait a moment and try again.' : r.status >= 500 ? `Something went wrong on our side (error ${r.status}). Try again in a minute.` : `Something went wrong (error ${r.status}). Try again.`));
   async function api(name, args = {}){
     let r, j;
     try { r = await fetch('/api/action/' + name, { method:'POST', credentials:'same-origin', headers:{ 'content-type':'application/json' }, body: JSON.stringify(args) }); }
@@ -432,7 +433,8 @@ const EXPLAINERS = [
 
 const isSample = pid => (Store.get('profiles', pid) || {}).kind === 'demo';
 
-const sampleTag = pid => isSample(pid) ? ' <span class="tag" style="font-size:10px;padding:1px 6px;vertical-align:1px">Sample</span>' : '';
+const sampleTag = pid => isSample(pid) ? ' <span class="tag" style="font-size:10px;padding:1px 6px;vertical-align:1px">Sample</span>'
+  : ((Store.get('profiles', pid) || {}).staff ? ' <span class="tag blue" style="font-size:10px;padding:1px 6px;vertical-align:1px" title="A member of the Pocket Investing team">Pocket team</span>' : '');
 
 const newsNote = () => Store.site.realPrices ? '' : '<p class="hint" style="margin:8px 2px 0">Prices are simulated. News is real.</p>';
 
@@ -498,6 +500,8 @@ const fmtDay = s => new Date(s + 'T12:00:00Z').toLocaleDateString('en-US', { wee
 const u3 = v => Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: 3 });
 
 const askCode = msg => { const v = prompt(msg); return v ? v.trim() : ''; };
+/* A fresh code from the admin's own app for sensitive admin actions (skipped when two-step isn't on, which only test setups allow). Cancel returns false. */
+const adminCode = () => { if (!Store.twofa) return undefined; const v = prompt('Enter the 6-digit code from your authenticator app to confirm.'); return v == null ? false : v.trim(); };
 
 try { if (!sessionStorage.getItem('pi_visit')){ sessionStorage.setItem('pi_visit', '1'); localStorage.setItem('pi_visits', String((+localStorage.getItem('pi_visits') || 0) + 1)); } } catch(e){}
 
@@ -562,7 +566,7 @@ document.addEventListener('change', ev => { const el = ev.target; if (el.id === 
 
 document.addEventListener('input', ev => { const el = ev.target; if (el.dataset && el.dataset.draft) ui.drafts[el.dataset.draft] = el.value; });
 
-window.addEventListener('hashchange', () => { ui.feedLimit = 30; ui.stats = {}; if (route().name !== 'markets'){ ui.searchQ = ''; ui.search = null; } if (ui.lastRoute === 'feed' || ui.lastRoute === 'home') ui.lastSeenPost = Date.now(); ui.lastRoute = route().name; closeModal(); if (!navRestore) window.scrollTo(0, 0); if (route().name !== 'admin') ui.admin = null; if (route().name !== 'metrics') ui.usage = null; if (route().name !== 'settings') ui.pushState = null; if (route().name !== 'statements') ui.docs = null; if (route().name !== 'security') ui.sec = null; render(); if (route().name === 'notifications') setTimeout(() => Store.markSeen(), 1500);  navScroll(); });
+window.addEventListener('hashchange', () => { ui.feedLimit = 30; ui.stats = {}; if (route().name !== 'markets'){ ui.searchQ = ''; ui.search = null; } if (ui.lastRoute === 'feed' || ui.lastRoute === 'home') ui.lastSeenPost = Date.now(); ui.lastRoute = route().name; closeModal(); if (!navRestore) window.scrollTo(0, 0); if (route().name !== 'admin') ui.admin = null; if (route().name !== 'metrics') ui.usage = null; if (route().name !== 'settings') ui.pushState = null; if (route().name !== 'statements') ui.docs = null; if (route().name !== 'security'){ ui.sec = null; ui.devices = null; } render(); if (route().name === 'notifications') setTimeout(() => Store.markSeen(), 1500);  navScroll(); });
 
 
 /* ---------- viewer tour (read-only, nothing is written) ---------- */

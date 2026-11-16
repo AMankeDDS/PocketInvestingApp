@@ -244,6 +244,7 @@ footer .legal{ margin-top:22px; max-width:820px; line-height:1.55 }
     <label>Anything we should know? <span style="color:var(--muted);font-weight:400">Optional</span><textarea name="note" rows="3" maxlength="500"></textarea></label>
     <div class="hp" aria-hidden="true"><label>Leave this empty<input name="website" tabindex="-1" autocomplete="off"></label></div>
     <button class="btn primary" type="submit">Request an invite</button>
+    <div id="bot" style="margin:6px 0 10px"></div>
     <p class="msg" id="msg" role="status" aria-live="polite"></p>
   </form>
 </div></section>
@@ -260,6 +261,11 @@ footer .legal{ margin-top:22px; max-width:820px; line-height:1.55 }
 document.getElementById('yr').textContent = new Date().getFullYear();
 const how = document.getElementById('how'), sizeL = document.getElementById('sizeL');
 how.addEventListener('change', () => { sizeL.hidden = !['group', 'club'].includes(how.value); });
+/* Bot check (Cloudflare Turnstile), shown only when the site has its keys set. */
+let botToken = () => null;
+fetch('/api/site').then(r => r.ok ? r.json() : {}).then(site => { if (!site.turnstileSite) return;
+  const s = document.createElement('script'); s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'; s.async = true;
+  s.onload = () => { const id = turnstile.render('#bot', { sitekey: site.turnstileSite, theme: 'auto' }); botToken = () => turnstile.getResponse(id) || null; }; document.head.appendChild(s); }).catch(() => {});
 document.getElementById('f').addEventListener('submit', async ev => {
   ev.preventDefault();
   const f = ev.target, msg = document.getElementById('msg'), btn = f.querySelector('button'), data = Object.fromEntries(new FormData(f));
@@ -269,6 +275,7 @@ document.getElementById('f').addEventListener('submit', async ev => {
   if (!/(^|\.)pocketinvesting\.com$|^localhost$|^127\.0\.0\.1$/.test(location.hostname)) { msg.className = 'msg ok'; msg.textContent = 'This is a preview. On pocketinvesting.com, this sends your invite request.'; return; }
   btn.disabled = true; btn.textContent = 'Sending…';
   try {
+    data.botToken = botToken();
     data.source = 'website' + (location.search.includes('utm_source=') ? ':' + new URLSearchParams(location.search).get('utm_source') : '');
     const r = await fetch('/api/waitlist', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) });
     const j = await r.json().catch(() => ({}));
@@ -276,6 +283,7 @@ document.getElementById('f').addEventListener('submit', async ev => {
     f.reset(); sizeL.hidden = true; msg.className = 'msg ok'; msg.textContent = 'Thanks, ' + data.name.trim().split(' ')[0] + '. We\u2019ll email you an invite when there\u2019s room in the beta.';
   } catch (e) {
     msg.className = 'msg err'; msg.textContent = e.message && !/Failed to fetch|NetworkError|Load failed/.test(e.message) ? e.message : 'The request didn\u2019t go through. Check your connection and try again.';
+    if (window.turnstile) try { turnstile.reset(); } catch (x) {}
   } finally { btn.disabled = false; btn.textContent = 'Request an invite'; }
 });
 </script>

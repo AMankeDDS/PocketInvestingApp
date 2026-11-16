@@ -155,7 +155,7 @@ function rTransferSheet(dir){
     <button class="btn" id="tr-go" style="width:100%">${out ? 'Withdraw' : 'Deposit'}</button>`, sh => {
     sh.querySelector('#tr-go').onclick = async () => { const b = sh.querySelector('#tr-go'); b.disabled = true;
       try { const r = await Store.real.transfer(dir, Number(sh.querySelector('#tr-a').value), out ? askCode('Enter the 6-digit code from your authenticator app to confirm this withdrawal.') : undefined); closeModal(); toast(out ? 'Withdrawal requested.' : (r.instant ? `Deposit started. ${usd(r.instant)} is available to invest now.` : 'Deposit started. It usually clears in 1 to 3 business days.')); loadReal(); }
-      catch(e){ b.disabled = false; errToast(e); } };
+      catch(e){ b.disabled = false; if (e.contact && out){ const amt = sh.querySelector('#tr-a').value; closeModal(); toast(e.message); supportSheet({ topic: 'money', body: `I'd like to withdraw more than the daily limit. Amount: $${amt}. Reason: ` }); } else errToast(e); } };
   });
 }
 

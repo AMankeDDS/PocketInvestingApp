@@ -9,6 +9,9 @@ function code(secret, t = Date.now(), step = 30){
   return String(((h.readUInt32BE(o) & 0x7fffffff) % 1000000)).padStart(6, '0');
 }
 const verify = (secret, input) => { const c = String(input || '').replace(/\s/g, ''); if (!/^\d{6}$/.test(c)) return false; const now = Date.now(); return [-1, 0, 1].some(w => crypto.timingSafeEqual(Buffer.from(code(secret, now + w * 30000)), Buffer.from(c))); };
+/* Which 30-second step the code belongs to (now, or one step either side), or -1. Used to refuse a code twice. */
+const match = (secret, input) => { const c = String(input || '').replace(/\s/g, ''); if (!/^\d{6}$/.test(c)) return -1; const now = Date.now(), base = Math.floor(now / 30000);
+  for (const w of [0, -1, 1]) if (crypto.timingSafeEqual(Buffer.from(code(secret, now + w * 30000)), Buffer.from(c))) return base + w; return -1; };
 const newSecret = () => base32(crypto.randomBytes(20));
 const uri = (secret, label) => `otpauth://totp/${encodeURIComponent('Pocket Investing:' + label)}?secret=${secret}&issuer=${encodeURIComponent('Pocket Investing')}&algorithm=SHA1&digits=6&period=30`;
 
@@ -16,4 +19,4 @@ const uri = (secret, label) => `otpauth://totp/${encodeURIComponent('Pocket Inve
 function key(appSecret){ return crypto.createHash('sha256').update(appSecret || 'pocket-dev-only-key').digest(); }
 function seal(plain, appSecret){ const iv = crypto.randomBytes(12); const c = crypto.createCipheriv('aes-256-gcm', key(appSecret), iv); const enc = Buffer.concat([c.update(plain, 'utf8'), c.final()]); return 'v1:' + Buffer.concat([iv, c.getAuthTag(), enc]).toString('base64'); }
 function open(sealed, appSecret){ if (!sealed || !sealed.startsWith('v1:')) return null; const b = Buffer.from(sealed.slice(3), 'base64'); const d = crypto.createDecipheriv('aes-256-gcm', key(appSecret), b.subarray(0, 12)); d.setAuthTag(b.subarray(12, 28)); return Buffer.concat([d.update(b.subarray(28)), d.final()]).toString('utf8'); }
-module.exports = { code, verify, newSecret, uri, seal, open };
+module.exports = { code, verify, match, newSecret, uri, seal, open };

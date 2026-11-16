@@ -83,7 +83,7 @@ function render(){
   const view = $('#view'), r = route();
   view.style.paddingTop = ui.tour != null || ui.presenter != null ? '190px' : '';
   if (!Store.ready){ view.innerHTML = '<div class="loading">Loading Pocket Investing…</div>'; return; }
-  if (!Store.hasDb){ view.innerHTML = `<div class="panel empty" style="margin-top:40px"><h2>Can't reach Pocket Investing</h2><p>Check your connection and refresh the page.</p><button class="btn" onclick="location.reload()">Refresh</button></div>`; return; }
+  if (!Store.hasDb){ view.innerHTML = `<div class="panel empty" style="margin-top:40px"><h2>Can't reach Pocket Investing</h2><p>Check your connection and refresh the page.</p><button class="btn" data-act="reload">Refresh</button></div>`; return; }
   const active = document.activeElement, ak = active && active.dataset && active.dataset.draft, sel = ak ? [active.selectionStart, active.selectionEnd] : null;
   const y = window.scrollY;
   let html;

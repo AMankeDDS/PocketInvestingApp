@@ -34,7 +34,17 @@ function vSecurity(){
       <img src="${S.qr}" alt="QR code for your authenticator app" width="200" height="200" style="display:block;margin:10px 0;border-radius:12px;background:#fff;padding:6px">
       <div class="small muted" style="word-break:break-all">Key: <b class="num">${esc(S.secret)}</b></div>
       <div class="field" style="margin-top:14px"><label for="tf-code">6-digit code</label><input class="input num" id="tf-code" inputmode="numeric" maxlength="6" autocomplete="one-time-code"></div><button class="btn" data-act="tfenable">Turn on</button>`
-    : '<p>Not set up yet.</p><button class="btn" data-act="tfsetup">Set up two-step sign-in</button>'}</div>`;
+    : '<p>Not set up yet.</p><button class="btn" data-act="tfsetup">Set up two-step sign-in</button>'}</div>${devicesPanel()}`;
+}
+/* Where you're signed in, with a way to end a session on a lost or shared device. */
+function devicesPanel(){
+  if (Store.actingAs) return '';
+  if (ui.devices == null){ ui.devices = 'loading'; Store.http('GET', '/api/sessions').then(r => { ui.devices = r.sessions; render(); }, () => { ui.devices = []; render(); }); }
+  const L = Array.isArray(ui.devices) ? ui.devices : null, others = L ? L.filter(d => !d.current).length : 0;
+  const when = t => { const ms = Date.now() - new Date(t).getTime(); return ms < 120000 ? 'active now' : 'active ' + ago(new Date(t).getTime()) + ' ago'; };
+  return `<section class="block" style="max-width:560px"><header><h2>Signed-in devices</h2></header>
+    <div class="list">${L ? L.map(d => `<div class="row"><div class="grow"><b>${esc(d.device.charAt(0).toUpperCase() + d.device.slice(1))}</b>${d.current ? ' <span class="tag blue">This device</span>' : ''}<div class="small muted">${d.current ? 'You are using it now' : esc(when(d.lastActive))}, signed in ${esc(new Date(d.since).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }))} · ${esc(d.ip)}</div></div>${d.current ? '' : `<button class="btn sm ghost" data-act="devout" data-id="${esc(d.sid)}">Sign out</button>`}</div>`).join('') : '<div class="empty">Loading…</div>'}</div>
+    ${others ? '<button class="btn ghost" data-act="devoutall" style="margin-top:12px">Sign out everywhere else</button>' : ''}<p class="hint">Don't recognize a device? Sign it out, then change your password.</p></section>`;
 }
 
 function personRow(p){
@@ -110,7 +120,7 @@ function vProfile(pid){
       <div class="row"><div class="grow"><b>Trade history</b><div class="small muted">Download every trade and fill as a spreadsheet</div></div><a class="btn sm ghost" href="/api/export/trades.csv" download>Download CSV</a></div>
       <div class="row"><div class="grow"><b>Password</b></div><button class="btn sm ghost" data-act="chpw">Change password</button></div>
       <div class="row"><div class="grow"><b>Appearance</b><div class="small muted">Auto follows your phone's light or dark setting</div></div><div class="seg" style="flex:none">${[['auto', 'Auto'], ['light', 'Light'], ['dark', 'Dark']].map(([k, l]) => `<button class="${themePref() === k ? 'on' : ''}" data-act="theme" data-k="${k}" aria-pressed="${themePref() === k}">${l}</button>`).join('')}</div></div>
-      <a class="row" href="#/security"><div class="grow"><b>Two-step sign-in</b><div class="small muted">${Store.twofa ? 'On' : 'Off'}${Store.site.require2fa ? ', required for your brokerage account' : ''}</div></div><span class="small">${Store.twofa ? 'Manage' : 'Set up'}</span></a>
+      <a class="row" href="#/security"><div class="grow"><b>Two-step sign-in</b><div class="small muted">${Store.twofa ? 'On' : 'Off'}${Store.site.require2fa ? ', required for your brokerage account' : ''} · signed-in devices</div></div><span class="small">${Store.twofa ? 'Manage' : 'Set up'}</span></a>
       <div class="row"><div class="grow"><b>Signed in as ${esc(Store.username || '')}</b></div><button class="btn sm ghost" data-act="signout">Sign out</button></div>
       <div class="row"><div class="grow"><b>Delete account</b><div class="small muted">Removes your profile, posts and activity</div></div><button class="btn sm ghost" data-act="delacct" style="color:var(--loss);border-color:var(--loss)">Delete</button></div>` : ''}
     ${Store.all('copies').filter(c => c.from === pid).map(c => `<div class="row"><div class="grow"><b>Copying ${esc(Store.displayName(c.to))}</b><div class="small muted">Each trade asks for your approval</div></div><button class="btn sm ghost" data-act="copystop" data-id="${c.to}">${c.stopPct ? 'Limit ' + c.stopPct + '%' : 'Protect'}</button> <button class="btn sm ghost" data-act="uncopy" data-id="${c.to}">Stop</button></div>`).join('')}

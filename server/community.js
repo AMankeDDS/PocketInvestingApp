@@ -30,9 +30,12 @@ function mount(app, d){
     if (d.onContribution) d.onContribution(r.user_id).catch(() => {}); ok(res); }));
   /* Support requests. Brokerage complaints are logged with dates and outcomes. */
   const ref = () => 'S-' + crypto.randomBytes(4).toString('hex').toUpperCase().slice(0, 6);
-  app.post('/api/support', wrap(async (req, res) => { const u = await needUser(req, res); if (!u) return;
+  const supportLimit = require('express-rate-limit').rateLimit({ windowMs: 60 * 60000, limit: 10, standardHeaders: true, legacyHeaders: false, message: { error: 'Too many requests. Try again later.' } });
+  const realImage = s => { const m = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/.exec(String(s || '')); if (!m) return false; const b = Buffer.from(m[2].slice(0, 64), 'base64');
+    return m[1] === 'png' ? b.toString('hex', 0, 8) === '89504e470d0a1a0a' : m[1] === 'jpeg' ? (b[0] === 0xFF && b[1] === 0xD8) : b.toString('ascii', 0, 4) === 'RIFF' && b.toString('ascii', 8, 12) === 'WEBP'; };
+  app.post('/api/support', supportLimit, wrap(async (req, res) => { const u = await needUser(req, res); if (!u) return;
     const topic = ['account', 'money', 'groups', 'bug', 'other'].includes(req.body.topic) ? req.body.topic : 'other', body = clean(req.body.body, 4000); if (!body) return bad(res, 'Tell us what happened.');
-    const shot = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(String(req.body.screenshot || '')) && String(req.body.screenshot).length < 1.4e6 ? req.body.screenshot : null;
+    const shot = realImage(req.body.screenshot) && String(req.body.screenshot).length < 1.4e6 ? req.body.screenshot : null;
     const r = ref(); await q('INSERT INTO support_requests (id, ref, user_id, topic, body, screenshot, complaint) VALUES ($1, $2, $3, $4, $5, $6, $7)', [db.newId(), r, u.id, topic, body, shot, topic === 'money' && !!req.body.complaint]);
     ok(res, { ref: r }); }));
   app.get('/api/support', wrap(async (req, res) => { const u = await needUser(req, res); if (!u) return;

@@ -32,10 +32,36 @@ function authSheet(mode){
         const back = (() => { try { return sessionStorage.getItem('pi_after_auth'); } catch(e){ return null; } })();
         try { sessionStorage.removeItem('pi_after_auth'); } catch(e){}
         location.hash = back || '#/home'; render();
-      } catch(e){ b.disabled = false; sh.querySelector('#a-err').textContent = e.userFacing ? e.message : 'Something went wrong. Try again.'; if (e.need2fa && sh.querySelector('#a-2fa-f')){ sh.querySelector('#a-2fa-f').style.display = ''; sh.querySelector('#a-2fa').focus(); } }
+      } catch(e){ b.disabled = false; sh.querySelector('#a-err').textContent = e.userFacing ? e.message : 'Something went wrong. Try again.';
+        if (e.locked){ sh.querySelector('#a-err').insertAdjacentHTML('beforeend', ' <button class="linkbtn" id="a-unlock">Request unlock</button>'); sh.querySelector('#a-unlock').onclick = () => unlockSheet(v('a-u')); } if (e.need2fa && sh.querySelector('#a-2fa-f')){ sh.querySelector('#a-2fa-f').style.display = ''; sh.querySelector('#a-2fa').focus(); } }
     };
     sh.querySelector('#a-go').onclick = go;
     sh.querySelectorAll('input:not([type=checkbox])').forEach(i => i.addEventListener('keydown', e => { if (e.key === 'Enter') go(); }));
     sh.querySelectorAll('[data-sw]').forEach(a => a.onclick = e => { e.preventDefault(); authSheet(a.dataset.sw); });
+  });
+}
+
+/* Cloudflare Turnstile bot check: shown only when the site has its keys. Resolves to a function that returns the token. */
+let turnstileLoad = null;
+function botCheck(el){
+  const key = Store.site && Store.site.turnstileSite; if (!key || !el) return Promise.resolve(() => null);
+  turnstileLoad = turnstileLoad || new Promise((ok, no) => { const s = document.createElement('script'); s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'; s.async = true; s.onload = () => ok(); s.onerror = () => { turnstileLoad = null; no(new Error('Bot check could not load')); }; document.head.appendChild(s); });
+  return turnstileLoad.then(() => { const id = window.turnstile.render(el, { sitekey: key, theme: 'auto' }); return () => window.turnstile.getResponse(id) || null; }, () => () => null);
+}
+/* Locked accounts: a request to the Pocket team, sent without signing in. */
+function unlockSheet(username){
+  openModal(`<header><h2>Request an unlock</h2><button class="x" data-close aria-label="Close">×</button></header>
+    <p class="muted" style="margin-top:0">Your account was locked after repeated wrong passwords or codes. The Pocket team will contact you to confirm it's really you, then unlock it.</p>
+    <div class="field"><label for="ul-u">Username</label><input class="input" id="ul-u" maxlength="24" autocapitalize="none" spellcheck="false" value="${esc(username || '')}"></div>
+    <div class="field"><label for="ul-c">Email or phone we can reach you at</label><input class="input" id="ul-c" maxlength="200" autocomplete="email"></div>
+    <div class="field"><label for="ul-n">Anything we should know? <span class="muted">(optional)</span></label><textarea class="input" id="ul-n" rows="3" maxlength="1000"></textarea></div>
+    <div id="ul-bot" style="margin-bottom:10px"></div>
+    <div class="hint" id="ul-e" style="color:var(--loss);min-height:1.2em"></div><button class="btn" id="ul-go" style="width:100%">Send request</button>`, sh => {
+    let token = () => null; botCheck(sh.querySelector('#ul-bot')).then(f => { token = f; });
+    sh.querySelector('#ul-go').onclick = async () => { const b = sh.querySelector('#ul-go'); b.disabled = true; sh.querySelector('#ul-e').textContent = '';
+      try { const r = await fetch('/api/unlock-request', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: sh.querySelector('#ul-u').value, contact: sh.querySelector('#ul-c').value, note: sh.querySelector('#ul-n').value, botToken: token() }) });
+        const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || 'Something went wrong. Try again.');
+        closeModal(); toast(j.message || 'Request sent.'); }
+      catch(e){ sh.querySelector('#ul-e').textContent = e.message; b.disabled = false; if (window.turnstile) try { window.turnstile.reset(); } catch(x){} } };
   });
 }

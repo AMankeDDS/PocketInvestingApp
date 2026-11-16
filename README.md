@@ -98,6 +98,13 @@ Without keys, both sites work as before with the 20 built-in stocks and no news.
 - **Market brief:** a short daily summary on Home (the S&P 500 and Nasdaq-100, the biggest movers, top headlines), built from a fixed template, never AI-written, and labeled as information, not a recommendation.
 - Confirm news display rights and the market data plan with Alpaca before a public launch.
 
+## Security settings
+
+- `APP_SECRET` (**required on the real-money site; set it on the beta too**): a long random value (at least 24 characters) that encrypts two-step sign-in secrets. The real-money site won't start without it. Set it once and never change it: changing it means everyone sets up two-step again.
+- `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` (optional): Cloudflare Turnstile keys (free at dash.cloudflare.com → Turnstile; add your domains). With both set, the homepage invite form and the "Request unlock" form show a bot check. Without them, the forms work without one.
+- Rules built in: 5 wrong passwords or two-step codes pause sign-in for 15 minutes; a second pause within 24 hours (with no successful sign-in in between) locks the account until an admin unlocks it in Beta admin → Security. Withdrawals pause for 48 hours after a password change or a newly linked bank. The daily withdrawal limit (default $50,000) is set in Beta admin → Security.
+- After this version deploys, everyone is signed out once (sign-in sessions are now stored scrambled).
+
 ## Company logos (optional)
 
 Set `LOGO_DEV_KEY` on each service to a Logo.dev publishable key (free account at logo.dev; the key starts with `pk_`). Stock rows, stock pages and order sheets then show real company logos. Without the key, or for a stock Logo.dev doesn't have, the colored letter tile shows instead.

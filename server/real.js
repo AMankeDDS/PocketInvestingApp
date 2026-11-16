@@ -31,11 +31,8 @@ function mount(app, d){
     const hold = (await q('SELECT money_hold_until FROM users WHERE id = $1', [userId])).rows[0];
     if (hold && hold.money_hold_until && new Date(hold.money_hold_until) > new Date()){ bad(res, `For your security, withdrawals and bank changes are paused until ${new Date(hold.money_hold_until).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} because your two-step sign-in was reset.`); return false; }
     if (config.alpaca.env === 'sandbox' && (await d.q('SELECT is_test FROM users WHERE id = $1', [userId])).rows.some(r => r.is_test)) return true; /* sandbox test accounts used through Act as */
-    const row = (await d.q('SELECT totp_enabled, totp_secret FROM users WHERE id = $1', [userId])).rows[0];
-    if (!row || !row.totp_enabled){ res.status(403).json({ error: 'Turn on two-step sign-in first.' }); return false; }
-    const secret = totp.open(row.totp_secret, config.appSecret);
-    if (!req.body.code){ res.status(401).json({ error: 'Enter the 6-digit code from your authenticator app to confirm.', needCode: true }); return false; }
-    if (!secret || !totp.verify(secret, req.body.code)){ res.status(401).json({ error: "That code didn't match. Try the newest code.", needCode: true }); return false; }
+    /* wrong codes count toward the same pause and lock as wrong passwords; a code can't be used twice */
+    const c = await d.sec.checkCode(req, userId, req.body.code); if (c){ res.status(c.code).json(c.body); return false; }
     return true;
   }
   const { q, wrap, ok, bad, needUser, needAdmin, sendTo, newId, isPro, getSetting, setSetting, appUserFromReq } = d;
@@ -61,17 +58,14 @@ function mount(app, d){
   }));
   /* New backup codes (needs a current code from the app). */
   app.post('/api/2fa/backup', wrap(async (req, res) => { const u = await needUser(req, res); if (!u) return;
-    const row = (await q('SELECT totp_secret, totp_enabled FROM users WHERE id = $1', [u.id])).rows[0]; const secret = row && row.totp_enabled && totp.open(row.totp_secret, config.appSecret);
-    if (!secret) return bad(res, 'Turn on two-step sign-in first.'); if (!totp.verify(secret, req.body.code)) return bad(res, "That code didn't match. Try the newest code.");
+    { const c = await d.sec.checkCode(req, u.id, req.body.code); if (c) return res.status(c.code === 401 ? 400 : c.code).json(c.body); }
     if (d.securityEvent) d.securityEvent(req, u.id, 'two-step', 'New backup codes created', 'New two-step backup codes were created. Your old ones no longer work.');
     ok(res, { backupCodes: await require('./backup').issue(q, u.id) }); }));
   app.get('/api/2fa/backup', wrap(async (req, res) => { const u = await needUser(req, res); if (!u) return; ok(res, { left: await require('./backup').left(q, u.id) }); }));
   app.post('/api/2fa/disable', wrap(async (req, res) => {
     const u = await needUser(req, res); if (!u) return;
     if (config.require2fa) return bad(res, 'Two-step sign-in is required on this site.');
-    const row = (await q('SELECT totp_secret FROM users WHERE id = $1', [u.id])).rows[0];
-    const secret = row && totp.open(row.totp_secret, config.appSecret);
-    if (!secret || !totp.verify(secret, req.body.code)) return bad(res, "That code didn't match.");
+    { const c = await d.sec.checkCode(req, u.id, req.body.code); if (c) return res.status(c.code === 401 ? 400 : c.code).json(c.body); }
     if (d.securityEvent) d.securityEvent(req, u.id, 'two-step', 'Two-step sign-in turned off', 'Two-step sign-in was turned off for your account. If this wasn\'t you, change your password now.');
     await q('UPDATE users SET totp_secret = NULL, totp_enabled = false WHERE id = $1', [u.id]);
     ok(res);
@@ -183,6 +177,8 @@ function mount(app, d){
       if (!body.account_owner_name) return bad(res, "Add the account owner's name.");
     }
     const r = await alpaca.createAch(x.a.alpaca_id, body);
+    if (!x.u.is_test) await d.sec.holdWithdrawals(x.u.id, 'bank');
+    if (d.securityEvent) d.securityEvent(req, x.u.id, 'bank', 'Bank account linked', x.u.is_test ? null : 'A bank account was linked to your Pocket brokerage account. Withdrawals are paused for 48 hours. If this wasn\'t you, contact us right away.');
     ok(res, { id: r.id, status: r.status });
   }));
   app.post('/api/real/bank/remove', wrap(async (req, res) => { const x = await needActive(req, res); if (!x) return; await alpaca.deleteAch(x.a.alpaca_id, String(req.body.id || '')); ok(res); }));
@@ -193,6 +189,7 @@ function mount(app, d){
     if (dir === 'OUTGOING' && !(await stepUp(req, res, x.u.id))) return;
     const amount = Math.round(Number(req.body.amount) * 100) / 100;
     if (!(amount >= 1) || amount > 50000) return bad(res, 'Enter an amount between $1 and $50,000.');
+    if (dir === 'OUTGOING' && !x.u.is_test){ const w = await d.sec.withdrawCheck(x.u.id, amount, getSetting); if (w) return res.status(400).json(w); }
     const banks = (await alpaca.listAch(x.a.alpaca_id)) || [];
     const bank = banks.find(b => ['APPROVED','QUEUED','SUBMITTED','PENDING'].includes(b.status) && b.status !== 'CANCELED');
     if (!bank) return bad(res, 'Link a bank account first.');
@@ -205,6 +202,7 @@ function mount(app, d){
     const instant = dir === 'INCOMING' ? await instantInfo(x.u.id, 'u_' + x.u.id, x.a) : null;
     const t = await alpaca.createTransfer(x.a.alpaca_id, { transfer_type: 'ach', relationship_id: bank.id, amount: amount.toFixed(2), direction: dir });
     await q('INSERT INTO real_transfers (id, user_id, direction, amount, status) VALUES ($1, $2, $3, $4, $5)', [t.id, x.u.id, dir, amount, t.status || 'QUEUED']);
+    if (dir === 'OUTGOING') q("INSERT INTO events (user_id, name) VALUES ($1, 'sec:withdraw')", [x.u.id]).catch(() => {});
     let instantAmount = 0;
     if (instant && instant.eligible && !(await getSetting('realPaused', false))){
       instantAmount = Math.min(amount, config.instant.perDeposit);
@@ -364,7 +362,7 @@ function mount(app, d){
     }
     ok(res, { fixed });
   }));
-  app.post('/api/admin/real/pause', wrap(async (req, res) => { if (!(await needAdmin(req, res))) return; await setSetting('realPaused', !!req.body.paused); if (d.broadcastRaw) d.broadcastRaw({ type: 'real', what: 'paused' }); ok(res); }));
+  app.post('/api/admin/real/pause', wrap(async (req, res) => { const adm = await needAdmin(req, res); if (!adm) return; if (d.adminStepUp && !(await d.adminStepUp(req, res, adm))) return; await setSetting('realPaused', !!req.body.paused); if (d.broadcastRaw) d.broadcastRaw({ type: 'real', what: 'paused' }); ok(res); }));
 }
 
 /* ---------- background sync: orders every 5s, accounts and transfers every 20s ---------- */

@@ -49,7 +49,8 @@ config.sec = {
   dataUrl: process.env.SEC_DATA_URL || 'https://data.sec.gov',
   wwwUrl: process.env.SEC_WWW_URL || 'https://www.sec.gov'
 };
+config.turnstile = { site: String(process.env.TURNSTILE_SITE_KEY || '').trim(), secret: String(process.env.TURNSTILE_SECRET_KEY || '').trim() };
 config.logoKey = /^pk_[A-Za-z0-9_-]{6,80}$/.test(process.env.LOGO_DEV_KEY || '') ? process.env.LOGO_DEV_KEY : '';
-config.publicInfo = () => ({ logoKey: config.logoKey || null, demoSite: config.demoSite, mode: config.mode, news: config.marketData || config.sec.mode === 'on', realMoney: config.realMoney, marketData: config.marketData, realPrices: config.realPrices, alpacaEnv: config.realMoney ? config.alpaca.env : null, demoTools: config.demoTools, require2fa: config.require2fa,
+config.publicInfo = () => ({ turnstileSite: config.turnstile.site && config.turnstile.secret ? config.turnstile.site : null, logoKey: config.logoKey || null, demoSite: config.demoSite, mode: config.mode, news: config.marketData || config.sec.mode === 'on', realMoney: config.realMoney, marketData: config.marketData, realPrices: config.realPrices, alpacaEnv: config.realMoney ? config.alpaca.env : null, demoTools: config.demoTools, require2fa: config.require2fa,
   instantDeposits: { enabled: config.instant.enabled, perDeposit: config.instant.perDeposit } });
 module.exports = config;
