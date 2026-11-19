@@ -178,7 +178,7 @@ async function executeProposal(tx, prid, leaderPid){
     if (pr.status === 'open') await tx.update('proposals', prid, { status: 'passed', closedTs: Date.now() });
     await tx.update('groups', pr.gid, { windDown: { ts: Date.now(), by: leaderPid, prid } });
     await tx.update('proposals', prid, { executed: true, executedTs: Date.now(), executedBy: leaderPid });
-    await tx.set('posts', tx.newId(), { pid: leaderPid, ts: Date.now(), groupId: pr.gid, text: 'Members voted to close the club. Next: sell all holdings, then pay everyone out by their units.' });
+    await tx.set('posts', tx.newId(), { pid: leaderPid, ts: Date.now(), groupId: pr.gid, system: true, text: 'Members voted to close the club. Next: sell all holdings, then pay everyone out by their units.' });
     await clubLog(tx, pr.gid, leaderPid, 'Members voted to wind down the club');
     notify(tx, (await tx.find('memberships', { gid: pr.gid })).map(m => m.pid), { title: wg.name + ' is closing', body: 'Members voted to wind down the club. Holdings will be sold and everyone paid out.', url: '/#/group/' + pr.gid + '/club', tag: 'club-' + pr.gid });
     return { windDown: true };
@@ -202,7 +202,7 @@ async function executeProposal(tx, prid, leaderPid){
     if (!(sh > 0)) throw fail(pr.tradeSide === 'sell' ? "The club doesn't hold this stock." : "The club doesn't have enough cash. Members can add money first.");
     if (pr.status === 'open') await tx.update('proposals', prid, { status: 'passed', closedTs: Date.now() });
     const t = await executeTrade(tx, clubPid(pr.gid), pr.tradeSym, pr.tradeSide || 'buy', sh, { groupId: pr.gid });
-    await tx.set('posts', tx.newId(), { pid: leaderPid, ts: Date.now(), groupId: pr.gid, groupTrade: true, text: `Executed the club's decision: ${pr.title}`, trade: { sym: t.sym, side: t.side, shares: t.shares, price: t.price } });
+    await tx.set('posts', tx.newId(), { pid: leaderPid, ts: Date.now(), groupId: pr.gid, system: true, groupTrade: true, text: `Executed the club's decision: ${pr.title}`, trade: { sym: t.sym, side: t.side, shares: t.shares, price: t.price } });
     await tx.update('proposals', prid, { executed: true, executedTs: Date.now(), executedBy: leaderPid });
     return { trade: t };
   }
@@ -480,7 +480,7 @@ A.clubDecideWithdrawal = async (tx, ctx, a) => {
     }
     await tx.update('portfolios', clubPid(row.gid), { cash: Math.round(left * 100) / 100, updatedTs: Date.now() });
     await tx.update('groups', row.gid, { closed: { ts: Date.now(), by: ctx.pid } });
-    await tx.set('posts', tx.newId(), { pid: ctx.pid, ts: Date.now(), groupId: row.gid, text: 'The club is closed. Every member was paid out their share.' });
+    await tx.set('posts', tx.newId(), { pid: ctx.pid, ts: Date.now(), groupId: row.gid, system: true, text: 'The club is closed. Every member was paid out their share.' });
   } else if (patch.status === 'confirmed' && row.data.exit){
     const pot = await tx.get('portfolios', clubPid(row.gid), { lock: true }), S = await clubState(tx, row.gid), mm = S.members.find(x => x.pid === row.pid);
     const amount = mm && S.units > 1e-9 ? Math.floor(mm.units / S.units * pv(pot) * 100) / 100 : 0;
@@ -553,7 +553,7 @@ async function applyRole(tx, gid, pid, from, to, by, prid){
   await tx.update('memberships', gid + '__' + pid, Object.assign({ role: to }, money ? { roleChangedTs: Date.now() } : {}));
   if (money){
     const name = ((await tx.get('profiles', pid)) || {}).name || 'A member';
-    await tx.set('posts', tx.newId(), { pid: by, ts: Date.now(), groupId: gid, text: `${name} is now ${ROLE_NAME[to]}${prid ? ' by member vote' : ''}. New money roles wait 3 days before approving anything.` });
+    await tx.set('posts', tx.newId(), { pid: by, ts: Date.now(), groupId: gid, system: true, text: `${name} is now ${ROLE_NAME[to]}${prid ? ' by member vote' : ''}. New money roles wait 3 days before approving anything.` });
     await clubLog(tx, gid, by, `${name}: ${ROLE_NAME[from] || 'Member'} → ${ROLE_NAME[to]}${prid ? ' (member vote)' : ''}`);
     const gn = await tx.get('groups', gid); notify(tx, (await tx.find('memberships', { gid })).map(m => m.pid), { title: (gn ? gn.name : 'Your group') + ': role change', body: `${name} is now ${ROLE_NAME[to]}. New money roles wait 3 days before approving anything.`, url: '/#/group/' + gid + '/members', tag: 'roles-' + gid });
   }
@@ -706,15 +706,82 @@ A.executeProposal = async (tx, ctx, a) => {
 };
 async function notMuted(tx, pid){ const p = await tx.get('profiles', pid); if (p && p.mutedUntil > Date.now()) throw fail(`You can't post until ${new Date(p.mutedUntil).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} because of a community rules violation.`); }
 async function blockedBy(tx, owner, actor){ return !!(await tx.get('blocks', owner + '__' + actor)); }
+/* @mentions (item 104): the client sends the people picked from the list; each must be named in the text, not have
+   blocked the writer, and (in a group) be a member who can see the post. Mentioned people get a notification. */
+async function cleanMentions(tx, ctx, text, list, groupId){
+  const out = [];
+  for (const pid of [...new Set(Array.isArray(list) ? list : [])].slice(0, 10)){
+    if (typeof pid !== 'string' || pid === ctx.pid) continue;
+    const p = await tx.get('profiles', pid); if (!p || !p.name || !text.includes('@' + p.name)) continue;
+    if (await blockedBy(tx, pid, ctx.pid)) continue;
+    if (groupId && !(await roleIn(tx, groupId, pid))) continue;
+    out.push(pid);
+  }
+  return out;
+}
+async function tellMentioned(tx, ctx, pids, where, text, groupId){
+  if (!pids.length) return; const me = (await tx.get('profiles', ctx.pid)) || {}, g = groupId ? await tx.get('groups', groupId) : null;
+  notify(tx, pids, { title: `${me.name || 'Someone'} mentioned you${g ? ' in ' + g.name : ''}`, body: `In a ${where}: "${text.length > 140 ? text.slice(0, 137) + '…' : text}"`, url: g ? '/#/group/' + groupId : '/#/notifications', tag: 'mention-' + Date.now(), mail: 'mentions' });
+}
 A.post = async (tx, ctx, a) => {
   await needProfile(tx, ctx); await notMuted(tx, ctx.pid);
   const text = str(a.text, 500).trim(); if (!text) throw fail('Write something first.');
   if (a.groupId && !(await roleIn(tx, a.groupId, ctx.pid))) throw fail('Join the group to post there.');
-  await tx.set('posts', tx.newId(), { pid: ctx.pid, text, ts: Date.now(), groupId: a.groupId || null });
+  const mentions = await cleanMentions(tx, ctx, text, a.mentions, a.groupId || null);
+  await tx.set('posts', tx.newId(), Object.assign({ pid: ctx.pid, text, ts: Date.now(), groupId: a.groupId || null }, mentions.length ? { mentions } : {}));
+  await tellMentioned(tx, ctx, mentions, 'post', text, a.groupId || null);
 };
+/* Editing (item 105): your own posts and comments, text only. A trade post's trade (stock, shares, price) never changes. */
+A.editPost = async (tx, ctx, a) => {
+  await needProfile(tx, ctx); await notMuted(tx, ctx.pid);
+  const p = await tx.get('posts', a.id); if (!p) throw fail('Post not found.');
+  if (p.pid !== ctx.pid) throw fail('You can only edit your own posts.');
+  if (p.removed || p.system || p.groupTrade) throw fail("This post can't be edited.");
+  const text = str(a.text, 500).trim(); if (!text && !p.trade) throw fail('Write something first, or delete the post.');
+  if (text === (p.text || '')) return;
+  const mentions = await cleanMentions(tx, ctx, text, a.mentions, p.groupId || null), was = new Set(p.mentions || []);
+  await tx.update('posts', p.id, { text, mentions, editedTs: Date.now() });
+  await tellMentioned(tx, ctx, mentions.filter(x => !was.has(x)), 'post', text, p.groupId || null);
+};
+A.editComment = async (tx, ctx, a) => {
+  await needProfile(tx, ctx); await notMuted(tx, ctx.pid);
+  const c = await tx.get('comments', a.id); if (!c) throw fail('Comment not found.');
+  if (c.pid !== ctx.pid) throw fail('You can only edit your own comments.'); if (c.removed) throw fail("This comment can't be edited.");
+  const text = str(a.text, 400).trim(); if (!text) throw fail('Write something first, or delete the comment.');
+  if (text === c.text) return;
+  const post = await tx.get('posts', c.postId); const mentions = await cleanMentions(tx, ctx, text, a.mentions, post && post.groupId), was = new Set(c.mentions || []);
+  await tx.update('comments', c.id, { text, mentions, editedTs: Date.now() });
+  await tellMentioned(tx, ctx, mentions.filter(x => !was.has(x)), 'comment', text, post && post.groupId);
+};
+/* Saved posts (item 106): private to the member. */
+A.toggleSave = async (tx, ctx, a) => {
+  await needProfile(tx, ctx); const id = ctx.pid + '__' + a.postId;
+  if (await tx.get('saves', id)){ await tx.del('saves', id); return { saved: false }; }
+  if (!(await tx.get('posts', a.postId))) throw fail('Post not found.');
+  if ((await tx.find('saves', { pid: ctx.pid })).length >= 500) throw fail('You can save up to 500 posts. Remove some to save more.');
+  await tx.set('saves', id, { pid: ctx.pid, postId: a.postId, ts: Date.now() }); return { saved: true };
+};
+/* Personal goals (item 108): private to the member, up to 3. */
+A.setGoal = async (tx, ctx, a) => {
+  await needProfile(tx, ctx);
+  const name = str(a.name, 60).trim() || 'My goal', target = Math.round(Number(a.target) * 100) / 100, by = Number(a.byTs);
+  if (!(target >= 10) || target > 100000000) throw fail('Enter a target between $10 and $100,000,000.');
+  if (!(by > Date.now() + 20 * 86400000) || by > Date.now() + 60 * 365 * 86400000) throw fail('Pick a date at least a month from now.');
+  const mine = await tx.find('goals', { pid: ctx.pid });
+  if (a.id){ const g = await tx.get('goals', a.id); if (!g || g.pid !== ctx.pid) throw fail('Goal not found.'); await tx.update('goals', a.id, { name, target, byTs: by }); return { id: a.id }; }
+  if (mine.length >= 3) throw fail('You can have up to 3 goals. Remove one to add another.');
+  const id = tx.newId(); await tx.set('goals', id, { pid: ctx.pid, name, target, byTs: by, createdTs: Date.now() }); return { id };
+};
+A.deleteGoal = async (tx, ctx, a) => { const g = await tx.get('goals', a.id); if (!g || g.pid !== ctx.pid) throw fail('Goal not found.'); await tx.del('goals', a.id); };
+/* Interests (item 110): shape the For you feed and suggestions. Private to the member. */
+const INTERESTS = ['Dividends', 'Growth', 'Tech', 'Index funds', 'Value', 'Beginners', 'ESG', 'Healthcare', 'Energy', 'Consumer brands', 'Banks and finance', 'Real estate'];
+A.setInterests = async (tx, ctx, a) => { await needProfile(tx, ctx); const list = [...new Set((Array.isArray(a.list) ? a.list : []).filter(x => INTERESTS.includes(x)))].slice(0, 8); await tx.update('profiles', ctx.pid, { interests: list, interestsTs: Date.now() }); };
 A.toggleLike = async (tx, ctx, a) => { await needProfile(tx, ctx); const id = a.postId + '__' + ctx.pid; if (await tx.get('reactions', id)) await tx.del('reactions', id); else await tx.set('reactions', id, { postId: a.postId, pid: ctx.pid, ts: Date.now() }); };
-A.comment = async (tx, ctx, a) => { await needProfile(tx, ctx); await notMuted(tx, ctx.pid); const text = str(a.text, 400).trim(); if (!text) throw fail('Write a comment first.'); const post0 = await tx.get('posts', a.postId); if (!post0) throw fail('Post not found.'); if (await blockedBy(tx, post0.pid, ctx.pid)) throw fail("You can't interact with this member."); await tx.set('comments', tx.newId(), { postId: a.postId, pid: ctx.pid, text, ts: Date.now() }); };
-A.deletePost = async (tx, ctx, a) => { const p = await tx.get('posts', a.id); if (!p) return; if (p.pid !== ctx.pid && !ctx.isAdmin && !(p.groupId && canModerate(await roleIn(tx, p.groupId, ctx.pid)))) throw fail('You can only delete your own posts.'); await tx.del('posts', a.id); for (const c of await tx.find('comments', { postId: a.id })) await tx.del('comments', c.id); };
+A.comment = async (tx, ctx, a) => { await needProfile(tx, ctx); await notMuted(tx, ctx.pid); const text = str(a.text, 400).trim(); if (!text) throw fail('Write a comment first.'); const post0 = await tx.get('posts', a.postId); if (!post0) throw fail('Post not found.'); if (await blockedBy(tx, post0.pid, ctx.pid)) throw fail("You can't interact with this member.");
+  const mentions = await cleanMentions(tx, ctx, text, a.mentions, post0.groupId || null);
+  await tx.set('comments', tx.newId(), Object.assign({ postId: a.postId, pid: ctx.pid, text, ts: Date.now() }, mentions.length ? { mentions } : {}));
+  await tellMentioned(tx, ctx, mentions, 'comment', text, post0.groupId || null); };
+A.deletePost = async (tx, ctx, a) => { const p = await tx.get('posts', a.id); if (!p) return; if (p.pid !== ctx.pid && !ctx.isAdmin && !(p.groupId && canModerate(await roleIn(tx, p.groupId, ctx.pid)))) throw fail('You can only delete your own posts.'); await tx.del('posts', a.id); for (const c of await tx.find('comments', { postId: a.id })) await tx.del('comments', c.id); for (const sv of await tx.find('saves', { postId: a.id })) await tx.del('saves', sv.id); };
 A.deleteComment = async (tx, ctx, a) => { const c = await tx.get('comments', a.id); if (!c) return; const p = await tx.get('posts', c.postId); if (c.pid !== ctx.pid && !ctx.isAdmin && !(p && p.groupId && canModerate(await roleIn(tx, p.groupId, ctx.pid)))) throw fail('You can only delete your own comments.'); await tx.del('comments', a.id); };
 A.follow = async (tx, ctx, a) => { await needProfile(tx, ctx); if (a.pid === ctx.pid) return; if (await blockedBy(tx, a.pid, ctx.pid)) throw fail("You can't interact with this member."); await tx.set('follows', ctx.pid + '__' + a.pid, { from: ctx.pid, to: a.pid, ts: Date.now() }); };
 A.unfollow = async (tx, ctx, a) => tx.del('follows', ctx.pid + '__' + a.pid);
@@ -965,6 +1032,7 @@ async function deleteAccountDocs(tx, pid){
   await by('memberships', 'pid'); await by('comments', 'pid'); await by('reactions', 'pid'); await by('votes', 'pid');
   await by('follows', 'from'); await by('follows', 'to'); await by('copies', 'from'); await by('copies', 'to');
   await by('copyRequests', 'memberPid'); await by('joinRequests', 'pid'); await by('suggestions', 'pid'); await by('reports', 'reporterPid'); await by('trades', 'pid');
+  await by('saves', 'pid'); await by('goals', 'pid'); await by('recurring', 'pid');
   await tx.del('portfolios', pid); await tx.del('profiles', pid);
 }
-module.exports = { copyStopCheck, canApprove, approvers, MONEY_OFFICERS, actions: A, housekeeping, deleteAccountDocs, rulesOf, UserError, START_CASH, personalTrade, groupTrade, TAGS };
+module.exports = { INTERESTS, copyStopCheck, canApprove, approvers, MONEY_OFFICERS, actions: A, housekeeping, deleteAccountDocs, rulesOf, UserError, START_CASH, personalTrade, groupTrade, TAGS };

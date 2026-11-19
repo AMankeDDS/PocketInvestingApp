@@ -13,6 +13,7 @@ function vHelp(){
     ['I found a problem or have an idea', 'Use the Feedback button on any screen. It sends your note straight to the Pocket team, with the page you were on.']
   ];
   return `<div class="pagehead"><div><h1>Help</h1><p class="muted">Quick answers about the beta.</p></div></div>
+  <a class="panel" href="#/glossary" style="display:flex;gap:12px;align-items:center;padding:14px 18px;margin-bottom:16px;color:var(--text)"><div class="grow"><b>Investing terms</b><div class="small muted">Plain-English meanings for P/E, dividend yield, limit orders and more</div></div><span class="muted" aria-hidden="true">›</span></a>
     <div class="list">${Q.map(([q, a]) => `<details class="row" style="display:block"><summary style="cursor:pointer;font-weight:600">${esc(q)}</summary><p class="muted" style="margin:8px 0 0">${esc(a)}</p></details>`).join('')}</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px"><button class="btn sm ghost" data-act="walkthrough">Take the tour again</button><a class="btn sm ghost" href="#/badges">Badges</a><a class="btn sm ghost" href="/site/guidelines.html" target="_blank">Community guidelines</a><a class="btn sm ghost" href="/status" target="_blank">Status</a></div>
     ${mySupportSection()}

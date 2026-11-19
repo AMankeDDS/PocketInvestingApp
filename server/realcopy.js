@@ -61,6 +61,8 @@ function mount(app, d){
       const mins = f.gid ? f.mins : 30;
       await q(`INSERT INTO real_copy_requests (id, leader_user, leader_order, follower_user, gid, sym, side, leader_price, leader_qty, suggested_qty, fraction, status, expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pending', now() + ($12 || ' minutes')::interval)`, [...base, suggested, fraction, String(mins)]);
       notify(uid, { title: `${lname} ${o.side === 'buy' ? 'bought' : 'sold'} ${o.sym}`, body: `${config.alpaca.env === 'sandbox' ? 'Test environment: a' : 'A'}pprove to ${o.side} ${suggested} shares in your account. Nothing happens until you approve.`, url: '/#/portfolio', tag: 'realcopy-' + id });
+      if (d.notices) d.notices.later(uid, 'approvals', `${lname} ${o.side === 'buy' ? 'bought' : 'sold'} ${o.sym}`, [`${config.alpaca.env === 'sandbox' ? 'Test environment: a' : 'A'}pprove to ${o.side} ${suggested} shares in your account. Nothing happens until you approve.`, `This request expires in about ${mins} minutes.`],
+        { label: 'Review it in Pocket', url: config.appUrl + '/#/portfolio' }, { delayMin: Math.max(2, Math.min(15, Math.floor(mins / 2))), check: ['realcopy', id] }).catch(() => {});
     }
   }
 

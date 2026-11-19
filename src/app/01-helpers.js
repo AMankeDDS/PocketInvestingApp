@@ -30,7 +30,7 @@ function stockRow(sym, right){ const t = Market.MAP[sym], c = Market.dayChange(s
 function nextDividend(sym){ const y = DIV_YIELDS[sym]; if (!y) return null; const monthly = sym === 'O', off = Market.hash(sym) % 3, d = new Date(); d.setUTCHours(12, 0, 0, 0);
   for (let i = 0; i < 400; i++){ if (d.getUTCDate() === 15 && (monthly || d.getUTCMonth() % 3 === off) && d.getTime() > Date.now() - 86400000) return d; d.setUTCDate(d.getUTCDate() + 1); } return null; }
 
-function reportError(message, stack){ if (++errCount > 8) return; try { fetch('/api/client-error', { method:'POST', credentials:'same-origin', headers:{ 'content-type':'application/json' }, body: JSON.stringify({ message: String(message).slice(0, 500), stack: String(stack || '').slice(0, 4000), url: location.hash }) }).catch(() => {}); } catch(e){} }
+function reportError(message, stack){ if (++errCount > 8) return; try { fetch('/api/client-error', { method:'POST', credentials:'same-origin', headers:{ 'content-type':'application/json' }, body: JSON.stringify({ message: String(message).slice(0, 500), stack: String(stack || '').slice(0, 4000), url: location.hash, version: (document.querySelector('meta[name="pi-version"]') || {}).content || 'dev' }) }).catch(() => {}); } catch(e){} }
 
 function logView(){ const n = route().name; if (!/^[a-z]+$/.test(n) || ui.tour != null) return; const now = Date.now(); if (seenViews[n] && now - seenViews[n] < 60000) return; seenViews[n] = now; fetch('/api/event', { method:'POST', credentials:'same-origin', headers:{ 'content-type':'application/json' }, body: JSON.stringify({ name: 'view:' + n }) }).catch(() => {}); }
 

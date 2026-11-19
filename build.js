@@ -26,7 +26,9 @@ if (esbuild){
 }
 const stamp = s => crypto.createHash('sha256').update(s).digest('hex').slice(0, 10);
 for (const dir of ['js', 'css']){ fs.mkdirSync(path.join(PUB, dir), { recursive: true }); for (const f of fs.readdirSync(path.join(PUB, dir))) if (/^(app|lazy)\.[0-9a-f]{10}\.(js|css)$/.test(f)) fs.unlinkSync(path.join(PUB, dir, f)); }
+/* Item 102: a version people can read off a screenshot: the build date (Eastern time) and a short fingerprint of the code. */
+const VERSION = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()).replace(/-/g, '.') + '-' + stamp(js + lazyJs + css).slice(0, 6);
 const jsName = `/js/app.${stamp(js)}.js`, cssName = `/css/app.${stamp(css)}.css`, lazyName = `/js/lazy.${stamp(lazyJs)}.js`;
 fs.writeFileSync(path.join(PUB, jsName), js); fs.writeFileSync(path.join(PUB, lazyName), lazyJs); fs.writeFileSync(path.join(PUB, cssName), css);
-fs.writeFileSync(path.join(PUB, 'index.html'), fs.readFileSync(path.join(SRC, 'index.template.html'), 'utf8').replace('{{JS}}', jsName).replace('{{LAZY}}', lazyName).replace('{{CSS}}', cssName));
+fs.writeFileSync(path.join(PUB, 'index.html'), fs.readFileSync(path.join(SRC, 'index.template.html'), 'utf8').replace('{{JS}}', jsName).replace('{{LAZY}}', lazyName).replace('{{CSS}}', cssName).replace('<head>', `<head>\n<meta name="pi-version" content="${VERSION}">`));
 console.log(`Built ${files.length} files into ${jsName} (${Math.round(js.length / 1024)} KB, plus ${Math.round(lazyJs.length / 1024)} KB loaded on demand) and ${cssName} (${Math.round(css.length / 1024)} KB)${esbuild ? '' : ' without compacting (esbuild not installed)'}.`);

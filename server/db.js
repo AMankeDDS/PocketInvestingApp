@@ -4,7 +4,7 @@ const { Pool } = require('pg');
 const crypto = require('crypto');
 
 const COLS = ['profiles','portfolios','groups','memberships','posts','reactions','comments','follows','proposals','votes',
-  'copyRequests','trades','copies','reports','joinRequests','reviews','suggestions','dividends','meetings','groupWatch','studies','recurring','badges','blocks'];
+  'copyRequests','trades','copies','reports','joinRequests','reviews','suggestions','dividends','meetings','groupWatch','studies','recurring','badges','blocks','saves','goals'];
 const LIMITED = { posts: 400, trades: 400, comments: 400, dividends: 400 };
 const table = col => 'doc_' + col.replace(/[A-Z]/g, c => '_' + c.toLowerCase());
 
@@ -30,6 +30,7 @@ async function migrate(){
   await pool.query(`CREATE TABLE IF NOT EXISTS password_resets (token_hash text PRIMARY KEY, user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at timestamptz NOT NULL, used boolean NOT NULL DEFAULT false)`);
   await pool.query(`CREATE TABLE IF NOT EXISTS feedback (id text PRIMARY KEY, user_id text, screen text, body text NOT NULL, ua text, status text NOT NULL DEFAULT 'open', created_at timestamptz NOT NULL DEFAULT now())`);
   await pool.query(`CREATE TABLE IF NOT EXISTS client_errors (id bigserial PRIMARY KEY, user_id text, message text, stack text, url text, ua text, created_at timestamptz NOT NULL DEFAULT now())`);
+  for (const c of ['source text', 'version text']) await pool.query(`ALTER TABLE client_errors ADD COLUMN IF NOT EXISTS ${c}`);
   await pool.query(`CREATE TABLE IF NOT EXISTS push_subs (endpoint text PRIMARY KEY, user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE, sub jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`);
   await pool.query(`CREATE TABLE IF NOT EXISTS events (id bigserial PRIMARY KEY, user_id text, name text NOT NULL, props jsonb, ts timestamptz NOT NULL DEFAULT now())`);
   await pool.query(`CREATE INDEX IF NOT EXISTS events_ts ON events (ts)`);

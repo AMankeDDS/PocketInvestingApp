@@ -46,13 +46,14 @@ const ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || '').split(',').map
 app.use('/api', (req, res, next) => {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
   const o = req.headers.origin; if (!o) return next();
+  if (req.path.startsWith('/unsubscribe/')) return next(); /* one-click unsubscribe from mail apps; the link itself is the proof */
   let h = null; try { h = new URL(o).host; } catch (e){}
   if (h && (h === req.headers.host || ALLOWED_ORIGINS.includes(o))) return next();
   res.status(403).json({ error: 'Request blocked: it came from another website.' });
 });
 /* Admin activity log: every admin change is recorded. */
 app.use((req, res, next) => {
-  const p = req.path, isAdminCall = req.method === 'POST' && (p.startsWith('/api/admin/') || /^\/api\/action\/(demo|setClock|admin)/.test(p) || /^\/api\/admin/.test(p));
+  const p = req.path, isAdminCall = req.method === 'POST' && (p.startsWith('/api/admin/') || /^\/api\/action\/(demo|setClock|admin|moderate|resolveReport|featureGroup|resetAll|setSampleActivity)/.test(p) || /^\/api\/admin/.test(p));
   if (!isAdminCall) return next();
   res.on('finish', async () => { try { const u = await currentUser(req); if (!u || !isAdmin(u)) return;
     const b = Object.fromEntries(Object.entries(req.body || {}).filter(([k]) => !/password|code|secret|file|data|token/i.test(k)).map(([k, v]) => [k, typeof v === 'string' ? v.slice(0, 80) : v]));
@@ -92,7 +93,14 @@ const q = (sql, p) => db.pool.query(sql, p);
 const clean = s => String(s || '').trim();
 const ok = (res, body = {}) => res.json(Object.assign({ ok: true }, body));
 const bad = (res, msg, code = 400) => res.status(code).json({ error: msg });
-const wrap = fn => (req, res) => fn(req, res).catch(e => { if (e.userFacing) return bad(res, e.message); console.error(e); try { noteError(); } catch (x){} bad(res, 'Something went wrong. Try again.', 500); });
+const wrap = fn => (req, res) => fn(req, res).catch(e => { if (e.userFacing) return bad(res, e.message); console.error(e); try { noteError(); } catch (x){} serverError(req, e); bad(res, 'Something went wrong. Try again.', 500); });
+/* Item 101: server errors land in Beta admin, Errors, next to the ones from phones and browsers. */
+function serverError(req, e){
+  try { q(`INSERT INTO client_errors (user_id, message, stack, url, ua, source, version) VALUES (NULL, $1, $2, $3, $4, 'server', $5)`,
+    [String(e && e.message || e).slice(0, 500), String(e && e.stack || '').slice(0, 4000), (req.method + ' ' + req.path).slice(0, 300), String(req.headers['user-agent'] || '').slice(0, 300), APP_VERSION]).catch(() => {}); } catch (x){}
+}
+/* The build stamps a version into index.html (item 102). */
+const APP_VERSION = (() => { try { const m = require('fs').readFileSync(require('path').join(__dirname, '..', 'public', 'index.html'), 'utf8').match(/name="pi-version" content="([^"]+)"/); return m ? m[1] : 'dev'; } catch (e){ return 'dev'; } })();
 
 /* ---------- sessions ---------- */
 function readCookie(req){ const m = (req.headers.cookie || '').match(new RegExp('(?:^|; )' + COOKIE + '=([a-f0-9]{64})')); return m && m[1]; }
@@ -135,6 +143,8 @@ const needAdmin = async (req, res) => { const u = await currentUser(req); if (!i
 const logEvent = (userId, name, props) => q('INSERT INTO events (user_id, name, props) VALUES ($1, $2, $3)', [userId || null, String(name).slice(0, 60), props ? JSON.stringify(props) : null]).catch(() => {});
 const sec = security.create({ q, logEvent, securityEvent: (...a) => securityEvent(...a), pool: db.pool });
 const em = emailMod.create({ q }); sec.attachEmail(em);
+const noticesMod = require('./notices');
+const notices = noticesMod.create({ q, em, secStats: () => sec.stats(), get envAdmins(){ return ENV_ADMINS; } }); push.setMailer((o, c) => notices.fromPush(o, c));
 
 /* ---------- live updates ---------- */
 const server = http.createServer(app);
@@ -147,7 +157,7 @@ async function sharedForVis(){ const ms = (await q('SELECT data FROM doc_members
 async function visCtx(userId, admin, shared){ shared = shared || await sharedForVis(); return vis.makeCtx({ pid: userId ? 'u_' + userId : null, isAdmin: !!admin }, shared.ms, shared.gs, config.sampleData, shared.bl || []); }
 async function broadcast(changes){
   if (!changes || !changes.length) return;
-  for (const n of changes.filter(c => c.col === '_notify')) push.send(db.pool, n.pids, n.payload).catch(() => {});
+  for (const n of changes.filter(c => c.col === '_notify')){ push.send(db.pool, n.pids, n.payload).catch(() => {}); if (n.payload && n.payload.mail) notices.fromNotify(n.pids, n.payload).catch(e => console.error('notice', e.message)); }
   changes = changes.filter(c => c.col !== '_notify'); if (!changes.length) return;
   push.fromChanges(db.pool, changes).catch(e => console.error('push', e.message));
   try {
@@ -320,7 +330,7 @@ app.post('/api/email/verify', authLimit, wrap(async (req, res) => {
   ok(res, { email: t.email });
 }));
 app.post('/api/email/prefs', wrap(async (req, res) => { const u = await needUser(req, res); if (!u) return;
-  const prefs = {}; if (typeof req.body.recap === 'boolean') prefs.recap = req.body.recap;
+  const prefs = {}; for (const k of ['recap', 'approvals', 'alerts', 'support', 'votes', 'mentions']) if (typeof req.body[k] === 'boolean') prefs[k] = req.body[k];
   await q(`UPDATE users SET email_prefs = email_prefs || $2::jsonb WHERE id = $1`, [u.id, JSON.stringify(prefs)]); ok(res); }));
 /* Forgot password: the same answer whether or not the account exists. */
 app.post('/api/password/forgot', authLimit, wrap(async (req, res) => {
@@ -378,7 +388,7 @@ app.post('/api/delete-account', authLimit, wrap(async (req, res) => {
   await q('INSERT INTO admin_log (user_id, action, detail, status) VALUES ($1, $2, $3, $4)', [u.id, 'account-deleted', JSON.stringify({ username: row.username, brokerage: !!ba }), 200]).catch(() => {});
   const { changes } = await db.withTx(async tx => {
     await deleteAccountDocs(tx, 'u_' + u.id); await tx.query('DELETE FROM events WHERE user_id = $1', [u.id]);
-    await tx.query('DELETE FROM email_log WHERE user_id = $1', [u.id]).catch(() => {}); await tx.query('DELETE FROM email_tokens WHERE user_id = $1', [u.id]).catch(() => {});
+    await tx.query('DELETE FROM email_log WHERE user_id = $1', [u.id]).catch(() => {}); await tx.query('DELETE FROM email_tokens WHERE user_id = $1', [u.id]).catch(() => {}); await tx.query('DELETE FROM email_notices WHERE user_id = $1', [u.id]);
     await tx.query('DELETE FROM photos WHERE key = $1', ['u_' + u.id]).catch(() => {});
     if (ba){ /* keep the user row (and with it the brokerage records), but remove anything personal and any way to sign in */
       await tx.query(`UPDATE users SET username = $2, display_name = 'Deleted member', pass_hash = $3, totp_enabled = false, totp_secret = NULL, email = NULL, email_pending = NULL, email_verified_at = NULL WHERE id = $1`, [u.id, 'deleted_' + u.id, await bcrypt.hash(require('crypto').randomBytes(24).toString('hex'), 10)]);
@@ -393,7 +403,19 @@ app.get('/api/state', wrap(async (req, res) => { res.set('Cache-Control', 'no-st
   { const u = await currentUser(req), C = snap.collections || {};
     const ctx = vis.makeCtx({ pid: u ? 'u_' + u.id : null, isAdmin: isAdmin(u) }, C.memberships || [], C.groups || [], config.sampleData, C.blocks || []);
     snap.collections = await vis.filterCollections(ctx, C, lookupDoc); } snap.market = { extras: marketdata.extras(), bases: marketdata.bases(), quotes: config.realPrices ? Market.QUOTES : {} }; res.json(snap); }));
-app.get('/api/admin/log', wrap(async (req, res) => { if (!(await needAdmin(req, res))) return; ok(res, { log: (await q(`SELECT l.action, l.detail, l.status, l.ts, u.username FROM admin_log l LEFT JOIN users u ON u.id = l.user_id ORDER BY l.id DESC LIMIT 200`)).rows }); }));
+/* Item 100: the admin log names the member each change was about, and downloads as a spreadsheet. */
+async function adminLogRows(limit){
+  const rows = (await q(`SELECT l.action, l.detail, l.status, l.ts, u.username FROM admin_log l LEFT JOIN users u ON u.id = l.user_id ORDER BY l.id DESC LIMIT $1`, [limit])).rows;
+  const ids = new Set(); rows.forEach(r => { try { const d = JSON.parse(r.detail || '{}'); for (const k of ['userId', 'user', 'id', 'pid', 'test']) if (typeof d[k] === 'string') ids.add(d[k].replace(/^u_/, '')); } catch (e){} });
+  const names = Object.fromEntries((await q('SELECT id, username FROM users WHERE id = ANY($1)', [[...ids]])).rows.map(r => [r.id, r.username]));
+  return rows.map(r => { let target = null; try { const d = JSON.parse(r.detail || '{}'); for (const k of ['userId', 'user', 'id', 'pid', 'test']) if (typeof d[k] === 'string' && names[d[k].replace(/^u_/, '')]){ target = names[d[k].replace(/^u_/, '')]; break; } } catch (e){} return Object.assign(r, { target }); });
+}
+app.get('/api/admin/log', wrap(async (req, res) => { if (!(await needAdmin(req, res))) return; ok(res, { log: await adminLogRows(500) }); }));
+app.get('/api/admin/log.csv', wrap(async (req, res) => { if (!(await needAdmin(req, res))) return;
+  const cell = v => { let t = String(v == null ? '' : v); if (/^[=+\-@]/.test(t)) t = "'" + t; return '"' + t.replace(/"/g, '""') + '"'; };
+  const rows = await adminLogRows(5000);
+  res.set('Content-Type', 'text/csv; charset=utf-8'); res.set('Content-Disposition', `attachment; filename="pocket-admin-log-${new Date().toISOString().slice(0, 10)}.csv"`);
+  res.send(['When (UTC),Admin,Action,About,Details,Result'].concat(rows.map(r => [new Date(r.ts).toISOString(), r.username, r.action, r.target, r.detail, r.status].map(cell).join(','))).join('\n')); }));
 /* Site notice (a banner for everyone) and read-only mode (blocks changes while an issue is fixed). */
 app.post('/api/admin/maintenance', wrap(async (req, res) => { if (!(await needAdmin(req, res))) return;
   await setSetting('maintenance', req.body.on ? { on: true, message: clean(req.body.message).slice(0, 300) || null, ts: Date.now() } : null); broadcastRaw({ type: 'notice' }); ok(res); }));
@@ -518,6 +540,50 @@ app.get('/api/export/trades.csv', wrap(async (req, res) => {
   res.set('Content-Disposition', `attachment; filename="pocket-trades-${new Date().toISOString().slice(0, 10)}.csv"`);
   res.send(lines.join('\n') + '\n');
 }));
+/* Item 106: saved posts, including older ones the app didn't load. */
+app.get('/api/saved', wrap(async (req, res) => {
+  const u = await needUser(req, res); if (!u) return; const pid = 'u_' + u.id;
+  const saves = (await q(`SELECT data FROM doc_saves WHERE data->>'pid' = $1 ORDER BY (data->>'ts')::bigint DESC LIMIT 500`, [pid])).rows.map(r => r.data);
+  const posts = (await q(`SELECT id, data FROM doc_posts WHERE id = ANY($1)`, [saves.map(x => x.postId)])).rows.map(r => Object.assign({ id: r.id }, r.data));
+  const ctx = await visCtx(u.id, isAdmin(u)); const seen = (await vis.filterCollections(ctx, { posts }, lookupDoc)).posts;
+  const byId = Object.fromEntries(seen.map(p => [p.id, p]));
+  ok(res, { saved: saves.map(sv => ({ ts: sv.ts, post: byId[sv.postId] || null })).filter(x => x.post) });
+}));
+/* Item 103: everything Pocket keeps about you, in one file. */
+const exportHits = new Map();
+app.get('/api/export/my-data', wrap(async (req, res) => {
+  const u = await needUser(req, res); if (!u) return;
+  if (u.acting_admin) return bad(res, "That isn't available while acting as a test account.", 403);
+  const now = Date.now(), h = (exportHits.get(u.id) || []).filter(t => now - t < 3600000); if (h.length >= 5) return bad(res, 'You can download your data 5 times an hour. Try again later.', 429); h.push(now); exportHits.set(u.id, h);
+  const pid = 'u_' + u.id, safe = async (sql, p) => (await q(sql, p).catch(() => ({ rows: [] }))).rows;
+  const acct = (await safe(`SELECT username, display_name, email, email_verified_at, email_prefs, created_at, terms_accepted_at, terms_version, adult_confirmed_at, totp_enabled FROM users WHERE id = $1`, [u.id]))[0] || {};
+  const FIELDS = ['pid', 'memberPid', 'from', 'authorPid', 'follower', 'reporterPid', 'byPid'];
+  const docs = {};
+  for (const col of db.COLS){
+    const rows = await safe(`SELECT id, data FROM ${db.table(col)} WHERE id = $1 OR ${FIELDS.map((f, i) => `data->>'${f}' = $1`).join(' OR ')} ORDER BY id LIMIT 20000`, [pid]);
+    if (rows.length) docs[col] = rows.map(r => Object.assign({ id: r.id }, r.data));
+  }
+  const groupIds = [...new Set((docs.memberships || []).map(m => m.gid))];
+  const groups = groupIds.length ? (await safe(`SELECT id, data->>'name' AS name FROM doc_groups WHERE id = ANY($1)`, [groupIds])) : [];
+  const out = {
+    about: 'Everything Pocket Investing keeps about your account, as of the date below. Posts and comments other people wrote are not included. Questions: ' + config.email.replyTo.replace(/.*<|>.*/g, ''),
+    exportedAt: new Date().toISOString(), site: config.appUrl,
+    account: { username: acct.username, name: acct.display_name, email: acct.email, emailConfirmed: !!acct.email_verified_at, joined: acct.created_at, termsAccepted: acct.terms_accepted_at, termsVersion: acct.terms_version, twoStep: !!acct.totp_enabled, emailSettings: acct.email_prefs || {} },
+    groups: groups.map(g => ({ id: g.id, name: g.name, role: ((docs.memberships || []).find(m => m.gid === g.id) || {}).role })),
+    activity: docs,
+    priceAlerts: await safe(`SELECT sym, kind, value, active, created_at, triggered_at, triggered_price FROM price_alerts WHERE user_id = $1`, [u.id]),
+    supportRequests: await Promise.all((await safe(`SELECT id, ref, topic, body, status, created_at FROM support_requests WHERE user_id = $1 ORDER BY created_at`, [u.id])).map(async r => Object.assign({}, r, { id: undefined, replies: await safe(`SELECT from_admin, body, ts FROM support_replies WHERE request_id = $1 ORDER BY id`, [r.id]) }))),
+    devices: (await safe(`SELECT ua, ip, created_at, last_used_at FROM sessions WHERE user_id = $1`, [u.id])).map(r => ({ device: deviceName(r.ua), ip: r.ip, signedIn: r.created_at, lastUsed: r.last_used_at })),
+    securityEvents: await safe(`SELECT kind, detail, ip, ts FROM security_events WHERE user_id = $1 ORDER BY id DESC LIMIT 500`, [u.id]),
+    feedback: await safe(`SELECT screen, body, created_at FROM feedback WHERE user_id = $1`, [u.id])
+  };
+  if (config.realMoney){ const b = (await safe(`SELECT account_number, status, created_at, active_since FROM broker_accounts WHERE user_id = $1`, [u.id]))[0];
+    if (b) out.brokerageAccount = { accountNumber: b.account_number ? '••••' + String(b.account_number).slice(-4) : null, status: b.status, opened: b.created_at, activeSince: b.active_since, note: 'Your full brokerage records and statements come from the brokerage. See Statements in Pocket.' }; }
+  await q('INSERT INTO security_events (user_id, kind, detail) VALUES ($1, $2, $3)', [u.id, 'export', 'Downloaded account data']).catch(() => {});
+  res.set('Content-Type', 'application/json; charset=utf-8'); res.set('Cache-Control', 'no-store');
+  res.set('Content-Disposition', `attachment; filename="pocket-investing-data-${new Date().toISOString().slice(0, 10)}.json"`);
+  res.send(JSON.stringify(out, null, 2));
+}));
 
 /* ---------- feedback, errors, usage events ---------- */
 app.post('/api/feedback', lightLimit, wrap(async (req, res) => {
@@ -528,7 +594,7 @@ app.post('/api/feedback', lightLimit, wrap(async (req, res) => {
 app.post('/api/client-error', lightLimit, wrap(async (req, res) => {
   const u = await currentUser(req);
   try { noteError(); } catch (x){}
-  await q('INSERT INTO client_errors (user_id, message, stack, url, ua) VALUES ($1, $2, $3, $4, $5)', [u && u.id, clean(req.body.message).slice(0, 500), clean(req.body.stack).slice(0, 4000), clean(req.body.url).slice(0, 300), clean(req.headers['user-agent']).slice(0, 300)]);
+  await q(`INSERT INTO client_errors (user_id, message, stack, url, ua, source, version) VALUES ($1, $2, $3, $4, $5, 'app', $6)`, [u && u.id, clean(req.body.message).slice(0, 500), clean(req.body.stack).slice(0, 4000), clean(req.body.url).slice(0, 300), clean(req.headers['user-agent']).slice(0, 300), clean(req.body.version).slice(0, 40) || null]);
   await q('DELETE FROM client_errors WHERE id < (SELECT max(id) - 1000 FROM client_errors)');
   ok(res);
 }));
@@ -559,7 +625,7 @@ app.get('/api/admin/overview', wrap(async (req, res) => {
     .map(x => Object.assign(x, { env_admin: ENV_ADMINS.includes(x.username) }));
   const invites = (await q('SELECT * FROM invite_codes ORDER BY created_at DESC')).rows;
   const feedback = (await q(`SELECT f.*, u.username FROM feedback f LEFT JOIN users u ON u.id = f.user_id ORDER BY f.created_at DESC LIMIT 200`)).rows;
-  const errors = (await q(`SELECT e.*, u.username FROM client_errors e LEFT JOIN users u ON u.id = e.user_id ORDER BY e.id DESC LIMIT 100`)).rows;
+  const errors = (await q(`SELECT e.*, u.username FROM client_errors e LEFT JOIN users u ON u.id = e.user_id ORDER BY e.id DESC LIMIT 300`)).rows;
   ok(res, { users, invites, feedback, errors, inviteOnly: (await setting('inviteOnly', true)) !== false, announcement: await setting('announcement', null) });
 }));
 app.post('/api/admin/user', wrap(async (req, res) => {
@@ -621,18 +687,19 @@ app.get('/api/admin/usage', wrap(async (req, res) => {
   ok(res, { users, dau: await active(1), wau: await active(7), mau: await active(30), signups7: signups, retention: ret.cohort ? { cohort: ret.cohort, kept: ret.kept } : null, actions, views, daily, pushUsers });
 }));
 
-app.get('/healthz', (req, res) => res.json({ ok: true, mode: config.mode }));
+app.get('/healthz', (req, res) => res.json({ ok: true, mode: config.mode, version: APP_VERSION }));
 const realDeps = { broadcastRaw: (...a) => broadcastRaw(...a), securityEvent: (...a) => securityEvent(...a), q, wrap, ok, bad, needUser, needAdmin, sendTo, newId: db.newId, getSetting: setting, setSetting,
   isPro: async pid => { const r = await q('SELECT data FROM doc_profiles WHERE id = $1', [pid]); const p = r.rows[0] && r.rows[0].data; return !!p && (p.kind === 'demo' || p.plan === 'pro'); } };
 realDeps.sec = sec; realDeps.adminStepUp = adminStepUp; real.mount(app, realDeps);
 sec.mount(app, { wrap, ok, bad, needUser, needAdmin, readCookie, deviceName, setting, setSetting, push, ENV_ADMINS, authLimit });
-realDeps.push = push; realDeps.pool = db.pool; require('./realcopy').mount(app, realDeps);
+notices.mount(app, { wrap, ok, bad, needUser, needAdmin, clean });
+realDeps.push = push; realDeps.pool = db.pool; realDeps.notices = notices; require('./realcopy').mount(app, realDeps);
 require('./outlook').mount(app, { q, wrap, ok, bad, needUser, db, broadcast: (...x) => broadcast(...x) });
-require('./community').mount(app, { q, wrap, ok, bad, needUser, needAdmin, push, db, sendTo, broadcastAll: m => { for (const c of wss.clients) try { c.send(JSON.stringify(m)); } catch (e){} }, onContribution: (...a) => (global.__contrib ? global.__contrib(...a) : Promise.resolve()) });
+require('./community').mount(app, { q, wrap, ok, bad, needUser, needAdmin, push, db, sendTo, notices, broadcastAll: m => { for (const c of wss.clients) try { c.send(JSON.stringify(m)); } catch (e){} }, onContribution: (...a) => (global.__contrib ? global.__contrib(...a) : Promise.resolve()) });
 require('./referrals').mount(app, { q, wrap, ok, bad, needUser, needAdmin, db, broadcast: (...x) => broadcast(...x), push, sendTo });
 require('./badges').mount(app, { wrap, ok, bad, needAdmin, db, broadcast: (...x) => broadcast(...x), q });
 require('./photos').mount(app, { q, wrap, ok, bad, needUser, needAdmin, db, broadcast: (...x) => broadcast(...x) });
-require('./alerts').mount(app, { q, wrap, ok, bad, needUser, sendTo, push, db, getSetting: setting, setSetting, broadcast: (...a) => broadcast(...a), logic: require('./logic') });
+require('./alerts').mount(app, { q, wrap, ok, bad, needUser, sendTo, push, db, notices, getSetting: setting, setSetting, broadcast: (...a) => broadcast(...a), logic: require('./logic') });
 marketdata.mount(app, { q, wrap, ok, bad, needUser, needAdmin, getSetting: setting, setSetting, broadcastMsg: obj => broadcastRaw(obj), push, pool: db.pool });
 metrics.mount(app, { q, wrap, ok, bad, needAdmin, getSetting: setting, setSetting });
 stats.mount(app, { q, wrap, ok, bad, currentUser, isAdmin });
@@ -657,10 +724,15 @@ app.post('/api/waitlist', wrap(async (req, res) => {
   if (!name) return bad(res, 'Enter your name.');
   const how = ['own', 'copy', 'group', 'club'].includes(req.body.how) ? req.body.how : null, size = clean(req.body.clubSize).slice(0, 20), note = clean(req.body.note).slice(0, 500);
   await q(`INSERT INTO waitlist (email, name, how, club_size, note, source) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, how = EXCLUDED.how, club_size = EXCLUDED.club_size, note = EXCLUDED.note`, [email, name, how, size || null, note || null, clean(req.body.source).slice(0, 80) || 'website']);
+  /* Item 95: a confirmation, once per address. */
+  const first = (await q(`UPDATE waitlist SET confirm_sent_at = now() WHERE email = $1 AND confirm_sent_at IS NULL AND invited_code IS NULL RETURNING id`, [email])).rows.length;
+  if (first) await em.sendRaw(null, email, 'invite-request', 'We got your request for the Pocket Investing beta', [`Hi ${name.split(/\s+/)[0] || 'there'},`,
+    "Thanks for asking to join the Pocket Investing beta. We're letting people in a few at a time.", "When your invite is ready, it will come to this address with a link to create your account."],
+    null, ['The beta uses practice money, so nothing is at risk while you try it.', "Didn't ask for this? You can ignore this email; we won't send anything else."]).catch(e => console.error('waitlist email', e.message));
   ok(res);
 }));
 app.get('/api/site', (req, res) => res.json(config.publicInfo()));
-app.get('/api/admin/waitlist', wrap(async (req, res) => { if (!(await needAdmin(req, res))) return; ok(res, { requests: (await q('SELECT id, email, name, how, club_size, note, source, created_at, invited_code, invited_at FROM waitlist ORDER BY created_at DESC LIMIT 500')).rows }); }));
+app.get('/api/admin/waitlist', wrap(async (req, res) => { if (!(await needAdmin(req, res))) return; ok(res, { requests: (await q('SELECT id, email, name, how, club_size, note, source, created_at, invited_code, invited_at, emailed_at, confirm_sent_at FROM waitlist ORDER BY created_at DESC LIMIT 500')).rows }); }));
 app.post('/api/admin/waitlist/invited', wrap(async (req, res) => { if (!(await needAdmin(req, res))) return; await q('UPDATE waitlist SET invited_code = $2, invited_at = now() WHERE id = $1', [Number(req.body.id), clean(req.body.code).slice(0, 20)]); ok(res); }));
 app.use(express.static(pub, { setHeaders(res, p){ if (/\.(html|webmanifest)$|sw\.js$/.test(p)) res.set('Cache-Control', 'no-cache'); else if (/[\\/](js|css)[\\/]app\.[0-9a-f]{10}\.(js|css)$/.test(p)) res.set('Cache-Control', 'public, max-age=31536000, immutable'); } }));
 app.get('*', (req, res) => res.sendFile(path.join(pub, 'index.html')));
@@ -671,13 +743,14 @@ app.get('*', (req, res) => res.sendFile(path.join(pub, 'index.html')));
   require('./email'); /* loaded early so a syntax problem shows at startup */
   if (config.mode === 'live' && !config.appSecret) throw new Error('APP_SECRET is not set. The real-money site needs it to encrypt two-step sign-in secrets. Add a long random APP_SECRET in Railway Variables, keep it safe, and never change it.');
   await db.migrate();
-  await security.migrate(q); await emailMod.migrate(q);
+  await security.migrate(q); await emailMod.migrate(q); await noticesMod.migrate(q);
   await require('./referrals').migrate(q); await require('./community').migrate(q); await require('./outlook').migrate(q);
   await real.migrate(q); await require('./realcopy').migrate(q); await require('./alerts').migrate(q); await require('./photos').migrate(q);
   if (!config.demoTools) await q(`INSERT INTO settings (key, value) VALUES ('clock', '"live"') ON CONFLICT (key) DO UPDATE SET value = '"live"'`).catch(() => {}); /* without demo tools, the market follows real hours */
   await marketdata.migrate(q);
   await marketdata.loadExtras();
   await push.init(db.pool);
+  notices.start();
   if (config.sampleData && config.realPrices && !(await q('SELECT 1 FROM doc_profiles LIMIT 1')).rows.length){ console.log('Loading real price history before creating sample data…'); await require('./marketdata').warmForSeed().catch(e => console.error('warm', e.message)); }
   if (config.sampleData && await seedIfEmpty(db.withTx)) console.log('Loaded sample data.');
   if (config.demoSite) require('./demodates').start(db.pool, () => broadcastRaw({ type: 'resync' }));

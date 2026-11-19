@@ -31,7 +31,10 @@ function mount(app, d){
       if (!Market.MAP[a.sym]) continue; const p = Market.price(a.sym), v = Number(a.value), c = dayChange(a.sym);
       const hit = a.kind === 'above' ? p >= v : a.kind === 'below' ? p <= v : Math.abs(c) * 100 >= v; if (!hit) continue;
       await q('UPDATE price_alerts SET active = false, triggered_at = now(), triggered_price = $2 WHERE id = $1', [a.id, p]);
-      say(a.user_id, a.kind === 'move' ? `${a.sym} moved ${pctTxt(c)} today` : `${a.sym} is ${a.kind === 'above' ? 'above' : 'below'} $${v.toFixed(2)}`, `Now $${p.toFixed(2)}. This alert is done; set a new one any time.`, '/#/stock/' + a.sym);
+      const at = a.kind === 'move' ? `${a.sym} moved ${pctTxt(c)} today` : `${a.sym} is ${a.kind === 'above' ? 'above' : 'below'} $${v.toFixed(2)}`;
+      say(a.user_id, at, `Now $${p.toFixed(2)}. This alert is done; set a new one any time.`, '/#/stock/' + a.sym);
+      if (d.notices) d.notices.later(a.user_id, 'alerts', 'Price alert: ' + at, [`${a.sym} is now $${p.toFixed(2)}. You asked to hear when ${a.kind === 'move' ? `it moved ${v}% in a day` : `it went ${a.kind} $${v.toFixed(2)}`}.`, 'This alert is done. You can set a new one on the stock page.'],
+        { label: 'See ' + a.sym, url: require('./config').appUrl + '/#/stock/' + a.sym }, { delayMin: 0 }).catch(() => {});
     }
     for (const pr of (await q('SELECT * FROM alert_prefs WHERE watch_moves')).rows){
       const w = (((await q('SELECT data FROM doc_profiles WHERE id = $1', ['u_' + pr.user_id])).rows[0] || {}).data || {}).watchlist || [];

@@ -1,6 +1,6 @@
 :root{
   --ink:#14213d; --paper:#f2f4f8; --surface:#ffffff; --surface-2:#f7f8fb; --line:#e1e5ed;
-  --text:#18202e; --muted:#5b6577; --blue:#2f6fe4; --blue-soft:#e6eefc; --ember:#f28c38; --ember-ink:#a9530f; --ember-soft:#fdeedf;
+  --text:#18202e; --muted:#5b6577; --blue:#2563d9; --blue-soft:#e6eefc; --ember:#f28c38; --ember-ink:#a9530f; --ember-soft:#fdeedf;
   --gain:#12805a; --loss:#c2413a; --nav:#14213d; --nav-text:#c9d1e0;
   --r-sm:10px; --r-md:16px; --r-lg:22px;
   --f-ui:'DM Sans', system-ui, -apple-system, 'Segoe UI', Arial, sans-serif;
@@ -275,3 +275,13 @@ textarea.input{resize:vertical; min-height:84px}
 .shell{overflow-x:clip}
 .bpop{position:absolute;z-index:60;width:260px;padding:12px 14px;border-radius:12px;background:var(--surface);color:var(--text);border:1px solid var(--line);box-shadow:0 8px 24px rgba(0,0,0,.18)}.bchips{display:inline-flex;gap:4px;vertical-align:middle;flex-wrap:nowrap;max-width:60%;overflow:hidden}
 @media (max-width:400px){.bchips .tag:nth-child(2){display:none}}
+/* Items 104–110 */
+.term{background:none;border:0;padding:0;font:inherit;color:inherit;cursor:help;text-decoration:underline dotted;text-decoration-thickness:1px;text-underline-offset:3px;text-decoration-color:var(--muted)}
+.term:hover{text-decoration-color:var(--blue)}
+.mention{font-weight:600}
+.mention-pop{position:fixed;z-index:80;width:260px;max-height:260px;overflow:auto;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 30px rgba(10,16,30,.18);padding:4px}
+.mention-pop button{display:flex;align-items:center;gap:10px;width:100%;border:0;background:none;color:var(--text);font:inherit;text-align:left;padding:8px 10px;border-radius:8px;cursor:pointer;min-height:40px}
+.mention-pop button.on,.mention-pop button:hover{background:var(--blue-soft)}
+.goalbar{height:8px;border-radius:5px;background:var(--line);overflow:hidden;margin:8px 0 6px}
+.goalbar>div{height:100%;background:var(--gain);border-radius:5px}
+.post .bar button.on{color:var(--blue)}

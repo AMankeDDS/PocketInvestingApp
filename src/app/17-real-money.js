@@ -134,7 +134,7 @@ function rTradeSheet(sym, side){
       st.step = 'review';
       root.innerHTML = `<header><h2>Review order</h2><button class="x" data-close aria-label="Close">×</button></header>
         <div class="list">${[['Account', acctName()], ['Order', (st.side === 'buy' ? 'Buy ' : 'Sell ') + st.sym + (st.type === 'limit' ? ` with a limit of ${usd(parseFloat(st.lp))} (${st.tif === 'gtc' ? 'good till canceled' : 'day'})` : ' at market')], st.side === 'sell' && st.chip === '1' ? ['Shares', 'All ' + shs(held())] : [st.by === 'dollars' ? 'Amount' : 'Shares', st.by === 'dollars' ? usd(a) : shs(a)], ['Latest price', usd(p)], ['Estimated ' + (st.by === 'dollars' ? 'shares' : (st.side === 'buy' ? 'cost' : 'proceeds')), st.by === 'dollars' ? shs(Math.floor(a / p * 1000) / 1000) : usd(a * p)]].map(([x, y]) => `<div class="row"><div class="grow muted">${x}</div><b class="num">${y}</b></div>`).join('')}</div>
-        <p class="hint" style="margin:14px 0">Market orders fill at the next available price, which can differ from the estimate. Orders placed while the market is closed fill after it opens. ${disclose()}</p>
+        <p class="hint" style="margin:14px 0">${term('market', 'Market orders')} fill at the next available price, which can differ from the estimate. Orders placed while the market is closed fill after it opens. ${disclose()}</p>
         <div style="display:flex;gap:10px"><button class="btn ghost" id="r-back">Back</button><button class="btn" id="r-place" style="flex:1">Place ${st.side} order</button></div>`;
       q('r-back').onclick = () => { st.step = 'edit'; draw(); };
       q('r-place').onclick = async () => {

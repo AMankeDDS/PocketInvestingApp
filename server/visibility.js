@@ -18,7 +18,7 @@ function makeCtx({ pid, isAdmin }, memberships, groups, sampleOn, blocks = []){
     postGid: {}, propGid: {} };
 }
 /* Returns the document as this viewer may see it, or null. lookup(col, id) fetches a document the context doesn't know. */
-const PRIVATE_PROFILE = ['notif', 'wouldPay', 'wouldPayTs', 'proCreditMonths', 'referralsRewarded', 'lastActiveTs', 'checkinTs', 'mutedUntil', 'mutedReason', 'adultConfirmedTs', 'introSeen'];
+const PRIVATE_PROFILE = ['notif', 'wouldPay', 'wouldPayTs', 'proCreditMonths', 'referralsRewarded', 'lastActiveTs', 'checkinTs', 'mutedUntil', 'mutedReason', 'adultConfirmedTs', 'introSeen', 'interests', 'interestsTs'];
 async function view(ctx, col, d, lookup){
   if (!d) return d;
   const me = ctx.pid, A = ctx.isAdmin;
@@ -44,6 +44,7 @@ async function view(ctx, col, d, lookup){
     case 'joinRequests': return d.pid === me || ctx.manages(d.gid) ? d : null;
     case 'dividends': return d.pid === me || A || (String(d.pid || '').startsWith('club_') && ctx.seeMoney(String(d.pid).slice(5))) ? d : null;
     case 'recurring': return d.pid === me || A ? d : null;
+    case 'saves': case 'goals': return d.pid === me ? d : null;
     default: return GROUP_COLS[col] ? (ctx.seeGroup(d[GROUP_COLS[col]]) ? d : null) : d;
   }
 }

@@ -57,7 +57,9 @@ function mount(app, d){
     const reply = clean(req.body.reply, 4000); if (reply) await q('INSERT INTO support_replies (request_id, from_admin, body) VALUES ($1, true, $2)', [r.id, reply]);
     const st = ['received', 'answered', 'closed'].includes(req.body.status) ? req.body.status : (reply ? 'answered' : null);
     await q('UPDATE support_requests SET status = coalesce($2, status), complaint = coalesce($3, complaint), outcome = coalesce($4, outcome), updated_at = now() WHERE id = $1', [r.id, st, typeof req.body.complaint === 'boolean' ? req.body.complaint : null, clean(req.body.outcome, 300) || null]);
-    if (reply) tell(r.user_id, `Reply to your request ${r.ref}`, reply.slice(0, 120), '/#/help'); ok(res); }));
+    if (reply){ tell(r.user_id, `Reply to your request ${r.ref}`, reply.slice(0, 120), '/#/help');
+      if (d.notices) d.notices.later(r.user_id, 'support', `Reply to your request ${r.ref}`, ['The Pocket team replied:', ...String(reply).slice(0, 2000).split(/\n+/).filter(Boolean)], { label: 'See it in Pocket', url: require('./config').appUrl + '/#/help' }, { delayMin: 0 }).catch(() => {}); }
+    ok(res); }));
   /* Status page. */
   async function current(){ const inc = (await q(`SELECT * FROM incidents ORDER BY created_at DESC LIMIT 20`)).rows; for (const i of inc) i.updates = (await q('SELECT status, body, ts FROM incident_updates WHERE incident_id = $1 ORDER BY ts DESC', [i.id])).rows; return inc; }
   app.get('/api/status', wrap(async (req, res) => { const inc = await current(); ok(res, { active: inc.filter(i => !i.resolved_at), recent: inc.filter(i => i.resolved_at).slice(0, 10) }); }));

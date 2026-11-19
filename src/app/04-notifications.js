@@ -69,6 +69,7 @@ function vNotifySettings(){
     <div class="row"><div class="grow muted">From</div><input class="input" id="n-qs" aria-label="Quiet hours start" type="time" value="${esc(q.start)}" style="width:auto"></div>
     <div class="row"><div class="grow muted">Until</div><input class="input" id="n-qe" aria-label="Quiet hours end" type="time" value="${esc(q.end)}" style="width:auto"></div>
     ${tog('n-aq', n.approvalsInQuiet !== false, 'Still alert me for approval requests', "Approvals expire, so we recommend keeping this on")}</div></section>
+  ${emailPrefsSection(tog)}
   ${Store.myGroups().length ? `<section class="block"><header><h2>Groups</h2></header><div class="list">${Store.myGroups().map(g => tog('n-g-' + g.id, !muted.has(g.id), esc(g.name), '')).join('')}</div></section>` : ''}
   <p style="margin-top:18px"><button class="btn" data-act="savenotif">Save settings</button></p>`;
 }
@@ -89,3 +90,17 @@ async function pushOn(){
 }
 
 async function pushOff(){ const reg = await navigator.serviceWorker.ready; const sub = await reg.pushManager.getSubscription(); if (sub){ await Store.http('POST', '/api/push/unsubscribe', { endpoint: sub.endpoint }).catch(() => {}); await sub.unsubscribe(); } }
+
+/* Item 96: which emails to get. Each one also has a one-click "turn off" link in its footer. */
+function emailPrefsSection(tog){
+  const E = Store.email; if (!E || Store.site.demoSite) return '';
+  const pr = E.prefs || {}, on = k => pr[k] !== false;
+  const note = !E.address ? 'Add an email address in Profile to get these.' : !E.verified ? 'Confirm your email address to start getting these.' : `Sent to ${esc(E.address)}. Security emails, like password resets, always go out.`;
+  return `<section class="block"><header><h2>Emails</h2></header><p class="small muted" style="margin:-4px 0 10px">${note}</p><div class="list">
+    ${tog('e-ap', on('approvals'), 'Approval requests', "Only if you haven't opened Pocket in about 15 minutes and the request is still waiting")}
+    ${tog('e-al', on('alerts'), 'Price alerts', 'When a price alert you set goes off')}
+    ${tog('e-su', on('support'), 'Replies to your support requests', '')}
+    ${tog('e-vo', on('votes'), 'Votes closing soon', "A reminder before a vote you haven't voted on closes")}
+    ${tog('e-me', on('mentions'), 'Mentions', "When someone mentions you and you haven't seen it in the app")}
+    ${tog('e-re', on('recap'), 'Weekly recap and Pocket news', '')}</div></section>`;
+}

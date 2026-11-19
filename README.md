@@ -19,6 +19,8 @@ One Node service serves the app, the API, live updates (WebSockets), and backgro
 7. **Use your domain.** In Settings, under Networking, add the custom domain `app.pocketinvesting.com`. Railway shows a DNS record (usually a CNAME). Add it at your domain registrar. HTTPS is set up automatically once DNS updates, which can take from minutes to a few hours.
 8. **Put it on your phone.** Open app.pocketinvesting.com in Safari (iPhone) or Chrome (Android), then Share or the menu, then Add to Home Screen. It opens full-screen with the Pocket icon.
 
+9. **Health check (recommended, on every service).** In Settings, under Deploy, set **Healthcheck Path** to `/healthz`. A deploy that can't start then stays offline and the previous version keeps serving. `/healthz` also shows the running version, which matches the "Version" line at the bottom of Profile.
+
 Railway's menus change from time to time, so labels may differ slightly from the above.
 
 ## Two sites from one codebase
@@ -109,6 +111,12 @@ Set these on the **beta** and **real-money** services (the demo doesn't send ema
 - `EMAIL_DAILY_LIMIT` (optional, default 100, Resend's free daily limit). Near the limit, only security emails go out.
 
 What gets emailed: a confirmation link at sign-up and on email change (the old address is told), password reset links (1 hour, single use, at most 3 an hour), and security alerts (new-device sign-ins, pauses and locks, unlocks, password and two-step changes, devices signed out, new bank, withdrawals). New members need an email to sign up; existing members see a banner to add one. Opening a brokerage account needs a confirmed email, and the brokerage gets that address.
+
+Notification emails (each has its own switch in Profile → Notifications, and a one-click "turn off" link plus the List-Unsubscribe header Gmail and Yahoo use): approval requests (only if the member hasn't opened Pocket for about 15 minutes and the request is still waiting), price alerts, replies to support requests, votes closing soon (once, to members who haven't voted), and @mentions. These are about the member's own account, so they don't need `COMPANY_ADDRESS`.
+
+Invites: someone who asks for an invite on the website gets a "we got your request" email (once per address). In Beta admin → Invite requests, **Email invite** creates a one-time code and emails the sign-up link; **Copy invite message** is still there.
+
+Daily summary: each morning around 8 (Eastern), admins with a confirmed email get a summary of new invite requests, sign-ups, open support requests, locked accounts, security alerts, errors and failed emails. Urgent security alerts still go out right away. Beta admin → Security has **Send me a test email** (checks Resend, DNS and the from/reply-to addresses in one tap) and **Send today's summary now**.
 
 ## Security settings
 

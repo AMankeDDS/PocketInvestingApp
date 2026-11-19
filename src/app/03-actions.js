@@ -74,6 +74,7 @@ async function act(el, ev){ /* eslint-disable-line */
       const c = id => { const e = document.getElementById(id); return e ? e.checked : true; };
       const muted = Store.myGroups().filter(g => !c('n-g-' + g.id)).map(g => g.id);
       await Store.setNotifPrefs({ weeklyRecap: $('#n-wr') ? c('n-wr') : true, approvals: c('n-ap'), votes: c('n-vo'), social: c('n-so'), news: $('#n-nw') ? c('n-nw') : false, approvalsInQuiet: c('n-aq'), mutedGroups: muted, quiet: { on: c('n-qon'), start: $('#n-qs').value, end: $('#n-qe').value }, tz: Intl.DateTimeFormat().resolvedOptions().timeZone });
+      if ($('#e-ap')) { await Store.http('POST', '/api/email/prefs', { approvals: c('e-ap'), alerts: c('e-al'), support: c('e-su'), votes: c('e-vo'), mentions: c('e-me'), recap: c('e-re') }); if (Store.refreshMe) await Store.refreshMe(); }
       toast('Notification settings saved.');
     });
     case 'adm-spend': return busy(async () => { const m = document.getElementById('ms-m').value, amt = Number(document.getElementById('ms-a').value); await Store.http('POST', '/api/admin/metrics/adspend', { month: m, amount: amt }); ui.ametrics = null; toast('Ad spend saved.'); render(); });
@@ -114,6 +115,10 @@ async function act(el, ev){ /* eslint-disable-line */
     case 'onboff': try { localStorage.setItem('pi_onb_off', Store.myPid); } catch(e){} return render();
     case 'adm-reqinvite': return busy(async () => { const r = ui.areq.find(x => String(x.id) === String(id)); const inv = await Store.http('POST', '/api/admin/invite', { label: ('Website: ' + (r.name || r.email)).slice(0, 60), maxUses: 1 });
       const code = inv.code || (inv.invite || {}).code; await Store.http('POST', '/api/admin/waitlist/invited', { id: r.id, code }); r.invited_code = code; r.invited_at = new Date().toISOString(); ui.admin = null; toast('Invite created. Copy the message to send it.'); render(); });
+    case 'adm-reqsend': return busy(async () => { const r = ui.areq.find(x => String(x.id) === String(id)); if (el.dataset.k === 'again' && !confirm(`Email the invite to ${r.email} again?`)) return;
+      const out = await Store.http('POST', '/api/admin/waitlist/send', { id: r.id, again: el.dataset.k === 'again' }); r.invited_code = out.code; r.invited_at = r.invited_at || new Date().toISOString(); r.emailed_at = new Date().toISOString(); toast('Invite emailed to ' + r.email + '.'); render(); });
+    case 'adm-emailtest': return busy(async () => { ui.emailTest = await Store.http('POST', '/api/admin/email/test'); ui.asec = null; render(); });
+    case 'adm-summary': return busy(async () => { const r = await Store.http('POST', '/api/admin/email/summary'); toast(r.sent ? `Summary sent to ${r.sent} admin${r.sent === 1 ? '' : 's'}.` : 'No admin has a confirmed email yet, so nothing was sent.'); ui.asec = null; render(); });
     case 'adm-reqcopy': { const r = ui.areq.find(x => String(x.id) === String(id)), link = location.origin + '/#/signup/' + r.invited_code;
       const text = `Hi ${(r.name || '').split(' ')[0] || 'there'},\n\nHere's your invite to the Pocket Investing beta: ${link}\n\nThe beta uses practice money, so you can try everything with nothing at risk. Reply to this email with any questions.\n\nAndrew`;
       try { await navigator.clipboard.writeText(text); toast('Invite message copied.'); } catch(e){ prompt('Copy this message:', text); } return; }
@@ -142,9 +147,9 @@ async function act(el, ev){ /* eslint-disable-line */
     case 'decline': return busy(async () => { await Store.decline(id); toast('Declined. Nothing changed in your account.'); });
     case 'like': return busy(() => Store.toggleLike(id));
     case 'comments': ui.openComments.has(id) ? ui.openComments.delete(id) : ui.openComments.add(id); return render();
-    case 'comment': return busy(async () => { await Store.comment(id, ui.drafts['c:' + id]); ui.drafts['c:' + id] = ''; });
-    case 'post': return busy(async () => { await Store.post(ui.drafts.feed); ui.drafts.feed = ''; toast('Posted.'); });
-    case 'gpost': return busy(async () => { const k = 'g:' + el.dataset.gid; await Store.post(ui.drafts[k], el.dataset.gid); ui.drafts[k] = ''; });
+    case 'comment': return busy(async () => { const k = 'c:' + id; await Store.comment(id, ui.drafts[k], mentionsFor(k, ui.drafts[k])); ui.drafts[k] = ''; clearMentions(k); });
+    case 'post': return busy(async () => { await Store.post(ui.drafts.feed, null, mentionsFor('feed', ui.drafts.feed)); ui.drafts.feed = ''; clearMentions('feed'); toast('Posted.'); });
+    case 'gpost': return busy(async () => { const k = 'g:' + el.dataset.gid; await Store.post(ui.drafts[k], el.dataset.gid, mentionsFor(k, ui.drafts[k])); ui.drafts[k] = ''; clearMentions(k); });
     case 'ftab': ev.preventDefault(); ui.feedTab = el.dataset.k; return render();
     case 'span': ui.chartSpan = el.dataset.k; ui.ichSel = {}; return render();
     case 'pfspan': ui.pfSpan = el.dataset.k; ui.ichSel = {}; return render();
@@ -304,5 +309,6 @@ async function act(el, ev){ /* eslint-disable-line */
     case 'demoapprove': return busy(async () => { const n = await Store.simulateApprovals(el.dataset.gid); toast(n ? `${n} sample member${n === 1 ? '' : 's'} responded.` : 'No sample members have pending requests in that group.'); });
     case 'demovote': return busy(async () => { const n = await Store.simulateVotes(id); toast(n ? `${n} sample member${n === 1 ? '' : 's'} voted.` : 'All sample members have already voted.'); });
     case 'reset': return busy(async () => { if (!confirm('Reset your demo account to $100,000 cash?')) return; await Store.resetMe(); toast('Account reset.'); });
+    default: return act2(a, el, ev, busy, id);
   }
 }

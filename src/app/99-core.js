@@ -83,7 +83,7 @@ const Clock = (() => {
    on the server, which prices trades and enforces permissions.
    ===================================================================== */
 const Store = (() => {
-  const COLS = ['blocks', 'profiles','portfolios','groups','memberships','posts','reactions','comments','follows','proposals','votes','copyRequests','trades','copies','reports','joinRequests','reviews','suggestions','dividends','meetings','groupWatch','studies','badges','recurring'];
+  const COLS = ['blocks', 'profiles','portfolios','groups','memberships','posts','reactions','comments','follows','proposals','votes','copyRequests','trades','copies','reports','joinRequests','reviews','suggestions','dividends','meetings','groupWatch','studies','badges','recurring','saves','goals'];
   const cache = Object.fromEntries(COLS.map(c => [c, new Map()]));
   const listeners = new Set(), realListeners = new Set(), newsCache = new Map();
   let settings = { announcement:null, inviteOnly:true }, me = { signedIn:false }, myPid = null, canWrite = false, canEdit = false, ready = false, hasDb = false, viewSaved = null, ws = null;
@@ -254,6 +254,8 @@ const Store = (() => {
       if (j.pid === me && j.decidedTs) out.push({ ts: j.decidedTs, text: `Your request to join ${gname(j.gid)} was ${j.status}`, href:'#/group/' + j.gid });
       if (manage.has(j.gid) && j.status === 'pending') out.push({ ts: j.ts, text: `${nm(j.pid)} asked to join ${gname(j.gid)}`, href:`#/group/${j.gid}/members` });
     }
+    for (const p of all('posts').filter(p => p.pid !== me && (p.mentions || []).includes(me))) out.push({ ts: p.editedTs || p.ts, text: `${nm(p.pid)} mentioned you in a post${p.groupId ? ' in ' + gname(p.groupId) : ''}`, href: p.groupId ? '#/group/' + p.groupId : '#/u/' + p.pid });
+    for (const c of all('comments').filter(c => c.pid !== me && (c.mentions || []).includes(me))){ const p = get('posts', c.postId); out.push({ ts: c.editedTs || c.ts, text: `${nm(c.pid)} mentioned you in a comment`, href: p && p.groupId ? '#/group/' + p.groupId : '#/u/' + (p ? p.pid : c.pid) }); }
     for (const m of all('memberships').filter(m => m.invitedBy === me)) out.push({ ts: m.joinedTs, text: `${nm(m.pid)} joined ${gname(m.gid)} from your invite`, href:`#/group/${m.gid}/members` });
     return out.sort((a, b) => b.ts - a.ts).slice(0, 80);
   }
@@ -355,7 +357,8 @@ const Store = (() => {
     setRole: (gid, pid, role) => api('setRole', { gid, pid, role }), setCopyPct: (gid, pct) => api('setCopyPct', { gid, pct }),
     propose: (gid, o) => api('propose', Object.assign({ gid }, o)), vote: (prid, v) => api('vote', { prid, vote: v }), closeProposal: prid => api('closeProposal', { prid }),
     executeProposal: (prid, leaderPid) => leaderPid && leaderPid === myPid ? api('executeProposal', { prid }) : api('demoExec', { prid }),
-    post: (text, groupId) => api('post', { text, groupId: groupId || null }), toggleLike: postId => api('toggleLike', { postId }), comment: (postId, text) => api('comment', { postId, text }),
+    post: (text, groupId, mentions) => api('post', { text, groupId: groupId || null, mentions: mentions || [] }), toggleLike: postId => api('toggleLike', { postId }), comment: (postId, text, mentions) => api('comment', { postId, text, mentions: mentions || [] }),
+    act: (name, args) => api(name, args || {}),
     deletePost: id => api('deletePost', { id }), deleteComment: id => api('deleteComment', { id }),
     follow: pid => api('follow', { pid }), unfollow: pid => api('unfollow', { pid }),
     upgradePro: wouldPay => api('upgradePro', wouldPay ? { wouldPay } : {}), cancelPro: () => api('cancelPro'), copyInvestor: pid => api('copyInvestor', { pid }), stopCopying: pid => api('stopCopying', { pid }),
@@ -385,7 +388,7 @@ const sgn = n => n > 0.00005 ? 'gain' : n < -0.00005 ? 'loss' : 'muted';
 
 const shs = n => (+n).toLocaleString('en-US', { maximumFractionDigits: 3 });
 
-const AV = ['#2f6fe4','#0f8a72','#7a4fd6','#c2413a','#b8660f','#14213d','#2b7a9b','#8a3f7a'];
+const AV = ['#2563d9','#0d7d67','#7a4fd6','#c2413a','#a65a0b','#14213d','#2b7a9b','#8a3f7a'];
 
 const nameLink = pid => `<a href="#/u/${esc(pid)}" style="color:inherit;font-weight:600">${esc(Store.displayName(pid))}${pid === Store.myPid ? ' <span class="muted" style="font-weight:400">(you)</span>' : ''}</a>`;
 
@@ -407,12 +410,12 @@ const ICON = {
 (function captureSource(){ try { const p = new URLSearchParams(location.search), s = p.get('utm_source');
   if (s && !localStorage.getItem('pi_src')){ const med = (p.get('utm_medium') || '').toLowerCase(); localStorage.setItem('pi_src', JSON.stringify({ kind: /^(paid|cpc|ppc|ad|ads|paid_social|paidsocial)$/.test(med) ? 'ad' : 'campaign', detail: [s, med, p.get('utm_campaign')].filter(Boolean).join('/').slice(0, 120) })); } } catch(e){} })();
 
-const ui = { ametrics: null, ichSel: {}, pfSpan: '1d', spTab: null, spRange: 'all', recon: null, anchorInfo: null, ensuring: {}, bars: {}, search: null, searchQ: '', feedLimit: 30, lastSeenPost: Date.now(), lastRoute: null, groupCat: 'all', homeTab:'practice', real:null, realLoading:false, rquotes:null, openForm:null, openStep:0, sec:null, docs:null, areal:null, adminTab:'metrics', admin:null, usage:null, pushState:null, inviteFor:null, inviteCode:null, inviteBy:null, feedTab:'everyone', openComments:new Set(), drafts:{}, chartSpan:'1d', seenReqs:null, onb:0, presenter:null, risk:'balanced', tour:null, copyFrac:{} };
+const ui = { ametrics: null, ichSel: {}, pfSpan: '1d', spTab: null, spRange: 'all', recon: null, anchorInfo: null, ensuring: {}, bars: {}, search: null, searchQ: '', feedLimit: 30, lastSeenPost: Date.now(), lastRoute: null, groupCat: 'all', homeTab:'practice', real:null, realLoading:false, rquotes:null, openForm:null, openStep:0, sec:null, docs:null, areal:null, adminTab:'metrics', admin:null, usage:null, pushState:null, inviteFor:null, inviteCode:null, inviteBy:null, feedTab:'foryou', openComments:new Set(), drafts:{}, chartSpan:'1d', seenReqs:null, onb:0, presenter:null, risk:'balanced', tour:null, copyFrac:{} };
 
 const SECTOR = { AAPL:'Technology', MSFT:'Technology', NVDA:'Technology', AMD:'Technology', GOOGL:'Communication', META:'Communication', NFLX:'Communication', DIS:'Communication',
   AMZN:'Consumer', TSLA:'Consumer', KO:'Consumer staples', COST:'Consumer staples', JPM:'Financials', V:'Financials', XOM:'Energy', JNJ:'Health care', O:'Real estate', SPY:'Broad market ETF', QQQ:'Broad market ETF', SCHD:'Dividend ETF' };
 
-const SECTOR_COLOR = { 'Technology':'#2f6fe4', 'Communication':'#7a4fd6', 'Consumer':'#b8660f', 'Consumer staples':'#0f8a72', 'Financials':'#14213d', 'Energy':'#c2413a', 'Health care':'#2b7a9b', 'Real estate':'#8a3f7a', 'Broad market ETF':'#5b6577', 'Dividend ETF':'#12805a' };
+const SECTOR_COLOR = { 'Technology':'#2563d9', 'Communication':'#7a4fd6', 'Consumer':'#a65a0b', 'Consumer staples':'#0d7d67', 'Financials':'#14213d', 'Energy':'#c2413a', 'Health care':'#2b7a9b', 'Real estate':'#8a3f7a', 'Broad market ETF':'#5b6577', 'Dividend ETF':'#12805a' };
 
 const CATS = [['growth','Growth'],['dividends','Dividends'],['value','Value'],['beginners','Beginners'],['index','Index'],['consumer','Consumer brands']];
 

@@ -100,6 +100,9 @@ function render(){
     case 'markets': html = vMarkets(); break;
     case 'security': html = vSecurity(); break;
     case 'verify': html = vVerifyEmail(r.a); break;
+    case 'unsub': html = vUnsub(r.a); break;
+    case 'saved': html = vSaved(); break;
+    case 'glossary': html = vGlossary(); break;
     case 'reset': html = vResetLink(r.a); break;
     case 'statements': html = vPocketStatements(); break;
     case 'help': html = vHelp(); break;
@@ -123,7 +126,7 @@ function render(){
   const demoVals = route().name === 'demo' ? Object.fromEntries($$('#view select, #view input').map(e => [e.id, e.value])) : null;
   const ann = Store.settings.announcement; let annOff = ''; try { annOff = localStorage.getItem('pi_ann_off') || ''; } catch(e){}
   if (ann && ann.text && String(ann.ts) !== annOff && ui.tour == null) html = `<div class="banner ember" style="margin-bottom:16px"><div style="flex:1"><b>From the Pocket team</b><div class="small">${esc(ann.text)}</div></div><button class="btn sm ghost" data-act="annoff" data-k="${ann.ts}">Dismiss</button></div>` + html;
-  if (r.name !== 'verify' && r.name !== 'reset') html = emailBanner() + html;
+  if (r.name !== 'verify' && r.name !== 'reset' && r.name !== 'unsub') html = emailBanner() + html;
   const site = Store.site, strip = site.demoSite ? `<div class="banner" style="margin-bottom:16px" role="note"><div style="flex:1"><b>Demo</b>: sample people and simulated prices. Nothing here is real.</div><a class="btn sm" href="https://www.pocketinvesting.com/#invite">Request an invite</a></div>`
     : site.realMoney ? (site.alpacaEnv === 'sandbox' ? `<div class="site-strip" role="note"><b>Test environment</b> · balances and trades are simulated. No money moves.</div>` : '')
     : `<div class="site-strip" role="note"><b>Beta</b> · practice money${site.realPrices ? ', real market prices' : ''}</div>`;
@@ -133,6 +136,9 @@ function render(){
   view.innerHTML = (Store.signedIn ? statusBanner() : '') + html; maybeWalkthrough();
   try { ichRestore(); } catch(e){}
   renderFeedbackButton();
+  /* Item 109: toggle buttons and tabs say which one is selected, for screen readers. */
+  $$('.seg button, .chips button, .exchips button', view).forEach(b => { if (!b.hasAttribute('aria-pressed') && !b.getAttribute('role')) b.setAttribute('aria-pressed', b.classList.contains('on') ? 'true' : 'false'); });
+  $$('nav.tabs a', view).forEach(t => { if (t.classList.contains('on')) t.setAttribute('aria-current', 'page'); });
   if (demoVals) for (const [id, v] of Object.entries(demoVals)){ const e = document.getElementById(id); if (e) e.value = v; }
   $$('[data-draft]', view).forEach(el => { if (ui.drafts[el.dataset.draft] != null) el.value = ui.drafts[el.dataset.draft]; });
   if (ak){ const el = view.querySelector(`[data-draft="${CSS.escape(ak)}"]`); if (el){ el.focus({ preventScroll:true }); try { el.setSelectionRange(sel[0], sel[1]); } catch(e){} } }
@@ -163,18 +169,23 @@ function toast(msg, opt = {}){
 
 function errToast(e){ toast(e && e.userFacing ? e.message : 'Something went wrong. Try again.'); if (!(e && e.userFacing)) console.error(e); }
 
+let modalOpener = null;
 function openModal(html, mount){
+  if (!$('#modal').innerHTML) modalOpener = document.activeElement && document.activeElement !== document.body ? document.activeElement : null;
   if (!(history.state && history.state.pkModal)) try { history.pushState({ pkModal: 1, h: location.hash, pi_idx: NAV.cur }, ''); } catch(e){}
   $('#modal').innerHTML = `<div class="scrim" data-scrim><div class="sheet" role="dialog" aria-modal="true">${html}</div></div>`;
   const s = $('#modal [data-scrim]'); s.addEventListener('click', e => { if (e.target === s) closeModal(); });
   $$('#modal [data-close]').forEach(b => b.onclick = closeModal);
+  { const sh = $('#modal .sheet'), h = sh && sh.querySelector('h1, h2'); if (h){ h.id = h.id || 'sheet-title'; sh.setAttribute('aria-labelledby', h.id); } }
   if (mount) mount($('#modal .sheet'));
   { const sh = $('#modal .sheet'); if (sh && sh.scrollHeight > innerHeight * 0.85 && !sh.querySelector('[data-cancel]')){ sh.insertAdjacentHTML('beforeend', '<button class="btn ghost" data-close data-cancel style="width:100%;margin-top:10px">Cancel</button>'); sh.querySelector('[data-cancel]').onclick = closeModal; } }
   const f = $('#modal input, #modal select, #modal textarea'); if (f && !(f.hasAttribute('data-nofocus') && window.matchMedia && matchMedia('(max-width: 760px)').matches)) f.focus();
 }
 
 /* Closing a sheet removes its history entry, but only if the app is still on the same page (an action may have just moved to another page). */
-function closeModal(){ const had = !!$('#modal').innerHTML; $('#modal').innerHTML = ''; if (had) setTimeout(() => { const st = history.state; if (st && st.pkModal && st.h === location.hash && !$('#modal').innerHTML) try { history.back(); } catch(e){} }, 0); }
+function closeModal(){ const had = !!$('#modal').innerHTML; $('#modal').innerHTML = '';
+  /* Item 109: focus goes back to whatever opened the sheet. */
+  if (had && modalOpener){ const o = modalOpener; modalOpener = null; setTimeout(() => { if (document.contains(o) && !$('#modal').innerHTML) try { o.focus({ preventScroll: true }); } catch(e){} }, 0); } if (had) setTimeout(() => { const st = history.state; if (st && st.pkModal && st.h === location.hash && !$('#modal').innerHTML) try { history.back(); } catch(e){} }, 0); }
 /* Back closes an open sheet instead of leaving the page; a leftover sheet entry is simply cleared. */
 window.addEventListener('popstate', () => { if ($('#modal').innerHTML){ $('#modal').innerHTML = ''; return; } if (history.state && history.state.pkModal) try { history.replaceState({ pi_idx: history.state.pi_idx != null ? history.state.pi_idx : NAV.cur }, ''); } catch(e){} });
 

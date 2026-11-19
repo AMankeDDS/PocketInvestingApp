@@ -1,7 +1,9 @@
 /* Web push: approval requests and other alerts reach phones even when the app is closed.
    VAPID keys come from env vars, or are generated once and stored in the database. */
 const webpush = require('web-push');
-let publicKey = null, ready = false;
+let publicKey = null, ready = false, mailer = null;
+/* Emails for some of these (approval requests) are handled by notices.js. */
+function setMailer(fn){ mailer = fn; }
 
 async function init(pool){
   let keys = process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY ? { publicKey: process.env.VAPID_PUBLIC_KEY, privateKey: process.env.VAPID_PRIVATE_KEY } : null;
@@ -75,11 +77,13 @@ async function fromChanges(pool, changes){
         out.push({ pids: [d.to], kind: 'social', payload: { title: c.col === 'copies' ? 'New copier' : 'New follower', body: `${await name(d.from)} ${c.col === 'copies' ? 'started copying your trades' : 'started following you'}.`, url: '/#/u/' + d.from, tag: c.col + '-' + c.id } });
       }
     } catch (e){ /* never let notifications break an action */ }
+    if (out.length && !out[out.length - 1].c) out[out.length - 1].c = c;
   }
   for (const o of out){
+    if (mailer && o.c){ try { await mailer(o, o.c); } catch (e){} }
     const keep = [];
     for (const pid of o.pids){ if (!pid || !pid.startsWith('u_')) continue; if (allowed(await prof(pid), o.kind, o.gid)) keep.push(pid); }
     await send(pool, keep, o.payload);
   }
 }
-module.exports = { init, send, fromChanges, allowed, get publicKey(){ return publicKey; } };
+module.exports = { init, send, fromChanges, allowed, setMailer, get publicKey(){ return publicKey; } };

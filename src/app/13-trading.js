@@ -9,12 +9,12 @@ function recurringList(){
     <p class="hint">Recurring buys use your practice cash and run during market hours.</p></section>`;
 }
 
-function recurringSheet(sym){
+function recurringSheet(sym, pre){
   const cur = Store.get('recurring', Store.myPid + '__' + sym);
   openModal(`<header><h2>Invest in ${sym} automatically</h2><button class="x" data-close aria-label="Close">×</button></header>
     <p class="muted" style="margin-top:0">Buy a set dollar amount on a schedule, whatever the price. Uses your practice cash.</p>
-    <div class="grid2"><div class="field"><label for="rc-a">Amount each time</label><input class="input num" id="rc-a" inputmode="decimal" value="${cur ? cur.amount : 100}"></div>
-    <div class="field"><label for="rc-f">How often</label><select class="input" id="rc-f">${[['weekly','Every week'],['biweekly','Every 2 weeks'],['monthly','Every month']].map(([k, l]) => `<option value="${k}" ${(cur ? cur.freq : 'biweekly') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>
+    <div class="grid2"><div class="field"><label for="rc-a">Amount each time</label><input class="input num" id="rc-a" inputmode="decimal" value="${cur ? cur.amount : (pre && pre.amount) || 100}"></div>
+    <div class="field"><label for="rc-f">How often</label><select class="input" id="rc-f">${[['weekly','Every week'],['biweekly','Every 2 weeks'],['monthly','Every month']].map(([k, l]) => `<option value="${k}" ${(cur ? cur.freq : (pre && pre.freq) || 'biweekly') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>
     <button class="btn" id="rc-go" style="width:100%">${cur ? 'Update schedule' : 'Start investing'}</button><p class="hint" style="text-align:center;margin-top:10px">The first buy happens at the next market open. Pause or stop anytime from Home.</p>`, sh => {
     sh.querySelector('#rc-go').onclick = async () => { try { await Store.setRecurring({ sym, amount: Number(sh.querySelector('#rc-a').value), freq: sh.querySelector('#rc-f').value }); closeModal(); toast('Recurring investment set.'); } catch(e){ errToast(e); } };
   });
@@ -84,7 +84,7 @@ function tradeSheet({ sym = 'AAPL', side = 'buy', gid = null } = {}){
         ${grp() ? '' : `<div class="field"><label style="display:flex;gap:10px;align-items:center;font-weight:500"><input type="checkbox" id="t-share" ${st.share ? 'checked' : ''}> Share this trade to the feed</label></div>`}
         <div class="field" id="t-note-f" style="${grp() || st.share ? '' : 'display:none'}"><label for="t-note">${grp() ? 'Note to the group (optional)' : 'Note (optional)'}</label><input class="input" id="t-note" value="${esc(st.note || '')}" placeholder="Why this trade"></div>
         <button class="btn ${grp() ? 'ember' : ''}" id="t-rev" style="width:100%">Review order</button>
-        <p class="hint" style="text-align:center;margin-top:10px">Market order at the current ${Store.site.realPrices ? 'market' : 'simulated'} price, with practice money. Investing involves risk, including loss of principal.</p>`;
+        <p class="hint" style="text-align:center;margin-top:10px">${term('market', 'Market order')} at the current ${Store.site.realPrices ? 'market' : 'simulated'} price, with practice money. Investing involves risk, including loss of principal.</p>`;
       wireEdit(); upd();
       if (focusAmt){ const a = q('t-amt'); a.focus(); const v = a.value; a.value = ''; a.value = v; }
     }
