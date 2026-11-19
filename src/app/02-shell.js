@@ -99,6 +99,8 @@ function render(){
     case 'open': html = vOpenAccount(); break;
     case 'markets': html = vMarkets(); break;
     case 'security': html = vSecurity(); break;
+    case 'verify': html = vVerifyEmail(r.a); break;
+    case 'reset': html = vResetLink(r.a); break;
     case 'statements': html = vPocketStatements(); break;
     case 'help': html = vHelp(); break;
     case 'portfolio': html = vPortfolio(); break;
@@ -121,6 +123,7 @@ function render(){
   const demoVals = route().name === 'demo' ? Object.fromEntries($$('#view select, #view input').map(e => [e.id, e.value])) : null;
   const ann = Store.settings.announcement; let annOff = ''; try { annOff = localStorage.getItem('pi_ann_off') || ''; } catch(e){}
   if (ann && ann.text && String(ann.ts) !== annOff && ui.tour == null) html = `<div class="banner ember" style="margin-bottom:16px"><div style="flex:1"><b>From the Pocket team</b><div class="small">${esc(ann.text)}</div></div><button class="btn sm ghost" data-act="annoff" data-k="${ann.ts}">Dismiss</button></div>` + html;
+  if (r.name !== 'verify' && r.name !== 'reset') html = emailBanner() + html;
   const site = Store.site, strip = site.demoSite ? `<div class="banner" style="margin-bottom:16px" role="note"><div style="flex:1"><b>Demo</b>: sample people and simulated prices. Nothing here is real.</div><a class="btn sm" href="https://www.pocketinvesting.com/#invite">Request an invite</a></div>`
     : site.realMoney ? (site.alpacaEnv === 'sandbox' ? `<div class="site-strip" role="note"><b>Test environment</b> · balances and trades are simulated. No money moves.</div>` : '')
     : `<div class="site-strip" role="note"><b>Beta</b> · practice money${site.realPrices ? ', real market prices' : ''}</div>`;

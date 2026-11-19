@@ -98,6 +98,18 @@ Without keys, both sites work as before with the 20 built-in stocks and no news.
 - **Market brief:** a short daily summary on Home (the S&P 500 and Nasdaq-100, the biggest movers, top headlines), built from a fixed template, never AI-written, and labeled as information, not a recommendation.
 - Confirm news display rights and the market data plan with Alpaca before a public launch.
 
+## Email (Resend) and company details
+
+Set these on the **beta** and **real-money** services (the demo doesn't send email):
+- `RESEND_API_KEY`: a Resend key with "Sending access" (one per service). Without it, nothing is sent; emails are logged in Beta admin → Security as "not sent (no key)".
+- `EMAIL_FROM`: e.g. `Pocket Investing <no-reply@pocketinvesting.com>`. The domain must show "Verified" in Resend.
+- `EMAIL_REPLY_TO`: e.g. `support@pocketinvesting.com`. It must be a real inbox or forwarding address.
+- `COMPANY_ADDRESS` (optional): the company's mailing address. It appears in email footers and on the website footer. Until it's set, optional emails (recaps, news) stay off, because the law requires an address in them; resets and security emails go out regardless.
+- `APP_URL` (optional): the address used in emailed links. Defaults to https://app.pocketinvesting.com on the beta and https://my.pocketinvesting.com on the real-money site. Links are never built from the incoming request.
+- `EMAIL_DAILY_LIMIT` (optional, default 100, Resend's free daily limit). Near the limit, only security emails go out.
+
+What gets emailed: a confirmation link at sign-up and on email change (the old address is told), password reset links (1 hour, single use, at most 3 an hour), and security alerts (new-device sign-ins, pauses and locks, unlocks, password and two-step changes, devices signed out, new bank, withdrawals). New members need an email to sign up; existing members see a banner to add one. Opening a brokerage account needs a confirmed email, and the brokerage gets that address.
+
 ## Security settings
 
 - `APP_SECRET` (**required on the real-money site; set it on the beta too**): a long random value (at least 24 characters) that encrypts two-step sign-in secrets. The real-money site won't start without it. Set it once and never change it: changing it means everyone sets up two-step again.

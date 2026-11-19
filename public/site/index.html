@@ -253,8 +253,8 @@ footer .legal{ margin-top:22px; max-width:820px; line-height:1.55 }
 <footer><div class="wrap">
   <div class="row"><a class="brand" href="#top"><img src="/icons/icon-192.png" alt="">Pocket Investing</a><span><a href="https://demo.pocketinvesting.com">Try the demo</a> &nbsp; <a href="#invite">Request an invite</a> &nbsp; <a href="https://app.pocketinvesting.com">Beta sign in</a> &nbsp; <a href="mailto:admin@pocketinvesting.com">Contact</a> &nbsp; <a href="https://app.pocketinvesting.com/#/privacy">Privacy</a> &nbsp; <a href="https://app.pocketinvesting.com/#/terms">Terms</a></span></div>
   <nav class="footlinks" aria-label="Site"><a href="/site/pricing.html">Pricing</a> <a href="/site/faq.html">FAQ</a> <a href="/site/about.html">About</a> <a href="/site/security.html">Security</a> <a href="/site/disclosures.html">Disclosures</a> <a href="/site/guidelines.html">Community guidelines</a> <a href="/status">Status</a> <a href="https://app.pocketinvesting.com/#/privacy">Privacy</a> <a href="https://app.pocketinvesting.com/#/terms">Terms</a></nav>
-  <p class="legal">Pocket Investing is in beta, and beta accounts use practice money only. Pocket Investing is not a broker-dealer or investment adviser and does not provide investment, legal or tax advice. Investing involves risk, including the possible loss of principal. Past performance does not guarantee future results.</p>
-  <p class="legal">© <span id="yr">2026</span> Pocket Investing</p>
+  <p class="legal">Pocket Investing is in beta, and beta accounts use practice money only. Pocket Investing, Inc. is not a broker-dealer or investment adviser and does not provide investment, legal or tax advice. Investing involves risk, including the possible loss of principal. Past performance does not guarantee future results.</p>
+  <p class="legal">© <span id="yr">2026</span> Pocket Investing, Inc.<span data-co-addr></span></p>
 </div></footer>
 
 <script>
@@ -263,7 +263,7 @@ const how = document.getElementById('how'), sizeL = document.getElementById('siz
 how.addEventListener('change', () => { sizeL.hidden = !['group', 'club'].includes(how.value); });
 /* Bot check (Cloudflare Turnstile), shown only when the site has its keys set. */
 let botToken = () => null;
-fetch('/api/site').then(r => r.ok ? r.json() : {}).then(site => { if (!site.turnstileSite) return;
+fetch('/api/site').then(r => r.ok ? r.json() : {}).then(site => { const a = site.company && site.company.address; if (a) document.querySelectorAll('[data-co-addr]').forEach(e => { e.textContent = ' · ' + a; }); if (!site.turnstileSite) return;
   const s = document.createElement('script'); s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'; s.async = true;
   s.onload = () => { const id = turnstile.render('#bot', { sitekey: site.turnstileSite, theme: 'auto' }); botToken = () => turnstile.getResponse(id) || null; }; document.head.appendChild(s); }).catch(() => {});
 document.getElementById('f').addEventListener('submit', async ev => {

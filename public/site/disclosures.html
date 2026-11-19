@@ -127,7 +127,7 @@ details.q{background:var(--surface);border:1px solid var(--line);border-radius:1
   <a class="btn primary" href="/#invite"><span class="long">Request an invite</span><span class="short">Get an invite</span></a>
 </div></header><main class="page"><h1>Disclosures <span class="pending">Pending legal review</span></h1>
 <p><b>Risk.</b> Investing involves risk, including the possible loss of principal. Past performance does not guarantee future results.</p>
-<p><b>No advice.</b> Pocket Investing is not a broker-dealer or investment adviser and does not provide investment, legal or tax advice. Posts, group discussions, member votes and the weekly outlook are member opinions, not recommendations.</p>
+<p><b>No advice.</b> Pocket Investing, Inc. is not a broker-dealer or investment adviser and does not provide investment, legal or tax advice. Posts, group discussions, member votes and the weekly outlook are member opinions, not recommendations.</p>
 <p><b>Copying.</b> Copying a trade doesn't guarantee the same price or result. Copies are sized to your account and placed only when you approve them, so fills can differ from the leader's.</p>
 <p><b>Practice money.</b> Beta and practice accounts use simulated money. Practice results don't reflect real trading.</p>
 <p><b>Sample data.</b> The demo and screenshots use sample people and sample data, which aren't real investors or real results.</p>
@@ -135,6 +135,7 @@ details.q{background:var(--surface);border:1px solid var(--line);border-radius:1
 <p><b>Low-priced stocks.</b> Stocks under $5 can be very volatile and easier to manipulate.</p></main><footer><div class="wrap">
   <div class="row"><a class="brand" href="/"><img src="/icons/icon-192.png" alt="">Pocket Investing</a><span><a href="https://demo.pocketinvesting.com">Try the demo</a> &nbsp; <a href="/#invite">Request an invite</a> &nbsp; <a href="https://app.pocketinvesting.com">Beta sign in</a></span></div>
   <nav class="footlinks" aria-label="Site"><a href="/site/pricing.html">Pricing</a> <a href="/site/faq.html">FAQ</a> <a href="/site/about.html">About</a> <a href="/site/security.html">Security</a> <a href="/site/disclosures.html">Disclosures</a> <a href="/site/guidelines.html">Community guidelines</a> <a href="/status">Status</a> <a href="https://app.pocketinvesting.com/#/privacy">Privacy</a> <a href="https://app.pocketinvesting.com/#/terms">Terms</a></nav>
-  <p class="legal">Pocket Investing is in beta, and beta accounts use practice money only. Pocket Investing is not a broker-dealer or investment adviser and does not provide investment, legal or tax advice. Brokerage services for real-money accounts will be provided by Alpaca Securities LLC, member FINRA/SIPC. Investing involves risk, including the possible loss of principal. Past performance does not guarantee future results.</p>
-  <p class="legal">© 2026 Pocket Investing</p>
-</div></footer></body></html>
+  <p class="legal">Pocket Investing is in beta, and beta accounts use practice money only. Pocket Investing, Inc. is not a broker-dealer or investment adviser and does not provide investment, legal or tax advice. Brokerage services for real-money accounts will be provided by Alpaca Securities LLC, member FINRA/SIPC. Investing involves risk, including the possible loss of principal. Past performance does not guarantee future results.</p>
+  <p class="legal">© 2026 Pocket Investing, Inc.<span data-co-addr></span></p>
+</div></footer>
+<script>fetch('/api/site').then(r => r.ok ? r.json() : {}).then(s => { const a = s.company && s.company.address; if (a) document.querySelectorAll('[data-co-addr]').forEach(e => { e.textContent = ' · ' + a; }); }).catch(() => {});</script></body></html>

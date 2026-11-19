@@ -34,6 +34,7 @@ async function migrate(q){
 
 function create(d){
   const { q, logEvent, securityEvent } = d;
+  let em = null; const attachEmail = x => { em = x; };
   const ipOf = req => String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim().slice(0, 60);
 
   /* Is sign-in (and code entry) paused or locked for this account? */
@@ -123,6 +124,8 @@ function create(d){
         const ref = 'S-' + crypto.randomBytes(4).toString('hex').toUpperCase().slice(0, 6);
         await q('INSERT INTO support_requests (id, ref, user_id, topic, body) VALUES ($1, $2, $3, $4, $5)', [crypto.randomBytes(10).toString('hex'), ref, u.id, 'unlock', `Unlock request for @${username}.\nHow to reach them: ${contact}${note ? '\nNote: ' + note : ''}`]);
         logEvent(u.id, 'sec:unlock-request');
+        const e = (await q('SELECT email, email_verified_at, display_name FROM users WHERE id = $1', [u.id])).rows[0];
+        if (em && e && e.email && e.email_verified_at) em.sendRaw(u.id, e.email, 'unlock-request', 'We received your unlock request', [`Hi ${e.display_name},`, `We received a request to unlock your Pocket Investing account (reference ${ref}). The Pocket team will contact you to confirm it's really you, then unlock it.`, "If you didn't ask for this, you don't need to do anything: your account stays locked and safe."]).catch(() => {});
       }
       ok(res, { message: "Thanks. If that account is locked, the Pocket team will contact you to confirm it's you, then unlock it." }); }));
 
@@ -131,7 +134,7 @@ function create(d){
       const s = await stats();
       const locked = (await q(`SELECT id, username, display_name, locked_at FROM users WHERE locked_at IS NOT NULL ORDER BY locked_at DESC LIMIT 100`)).rows;
       const frozen = (await q(`SELECT id, username, freeze_until FROM users WHERE freeze_until > now() ORDER BY freeze_until DESC LIMIT 100`)).rows;
-      ok(res, { stats: s.counts, alerts: s.alerts, locked, frozen, appSecret: config.appSecret ? (config.appSecret.length >= 24 ? 'ok' : 'short') : 'missing', demo: config.demoSite,
+      ok(res, { email: em ? await em.status() : null, stats: s.counts, alerts: s.alerts, locked, frozen, appSecret: config.appSecret ? (config.appSecret.length >= 24 ? 'ok' : 'short') : 'missing', demo: config.demoSite,
         turnstile: !!(config.turnstile.site && config.turnstile.secret), dailyWithdrawCap: await setting('dailyWithdrawCap', 50000), realMoney: config.realMoney }); }));
     app.post('/api/admin/security/cap', wrap(async (req, res) => { if (!(await needAdmin(req, res))) return;
       const v = Math.round(Number(req.body.cap)); if (!(v >= 100 && v <= 1000000)) return bad(res, 'Enter a daily cap between $100 and $1,000,000.');
@@ -198,7 +201,7 @@ function create(d){
     } catch (e){ console.error('turnstile', e.message); return false; }
   }
 
-  return { gate, wrong, signedIn, checkCode, newSession, mount, holdWithdrawals, withdrawCheck, verifyBot, stats };
+  return { attachEmail, gate, wrong, signedIn, checkCode, newSession, mount, holdWithdrawals, withdrawCheck, verifyBot, stats };
 }
 
 module.exports = { migrate, create, hashToken, reservedUsername, reservedName, LOCKED_MSG };

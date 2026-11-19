@@ -2,7 +2,7 @@
 
 function loadReal(){ if (ui.realLoading) return; ui.realLoading = true; Store.real.summary().then(r => { ui.real = r; ui.realTs = Date.now(); }, e => { ui.real = { error: e.userFacing ? e.message : "Couldn't load your account." }; }).finally(() => { ui.realLoading = false; render(); }); }
 
-function brokerLine(){ return `<p class="hint" style="margin-top:22px">Brokerage services are provided by Alpaca Securities LLC, member FINRA/SIPC. ${isTestBroker() ? '<b>' + TEST_NOTE + '</b> ' : ''}Investing involves risk, including loss of principal. <span class="muted">[Final wording to be confirmed with Alpaca and counsel.]</span></p>`; }
+function brokerLine(){ return `<p class="hint" style="margin-top:22px">Brokerage services are provided by Alpaca Securities LLC, member FINRA/SIPC. Pocket Investing, Inc. is not a broker-dealer. ${isTestBroker() ? '<b>' + TEST_NOTE + '</b> ' : ''}Investing involves risk, including loss of principal. <span class="muted">[Final wording to be confirmed with Alpaca and counsel.]</span></p>`; }
 
 function vReal(){
   const R = ui.real;
@@ -40,7 +40,10 @@ function vOpenAccount(){
   if (!Store.site.realMoney) return '<div class="empty">Brokerage accounts open on my.pocketinvesting.com.</div>';
   if (!Store.signedIn) return vProfile(null);
   if (Store.site.require2fa && !Store.twofa) return `<div class="panel" style="padding:24px"><h2>Turn on two-step sign-in first</h2><a class="btn" href="#/security">Set up two-step sign-in</a></div>`;
+  const E = Store.email || {};
+  if (!Store.isTest && (!E.address || !E.verified)) return `<div class="panel" style="padding:24px;max-width:560px"><h2>Confirm your email first</h2><p class="muted">Your brokerage account uses your confirmed Pocket email for statements and notices.${E.address ? ` We sent a link to ${esc(E.address)}.` : ''}</p>${E.address ? '<button class="btn" data-act="emailresend">Send the link again</button> ' : ''}<button class="btn ghost" data-act="emailchange">${E.address ? 'Change email' : 'Add your email'}</button></div>`;
   const f = ui.openForm = ui.openForm || { citizenship:'USA', employment:'employed', funding:['employment_income'] }, st = ui.openStep || 0;
+  if (E.address && !Store.isTest) f.email = E.address;
   const inp = (k, label, attrs = '', hint = '') => `<div class="field"><label for="o-${k}">${label}</label><input class="input" id="o-${k}" data-of="${k}" value="${esc(f[k] || '')}" ${attrs}>${hint ? `<span class="hint">${hint}</span>` : ''}</div>`;
   const yn = (k, q) => `<div class="row"><div class="grow small">${q}</div><div class="seg"><button class="${f[k] ? 'on' : ''}" data-act="ofyn" data-k="${k}" data-v="1">Yes</button><button class="${f[k] ? '' : 'on'}" data-act="ofyn" data-k="${k}" data-v="0">No</button></div></div>`;
   const steps = ['About you', 'Contact', 'Work and money', 'Agreements'];
@@ -48,7 +51,7 @@ function vOpenAccount(){
   if (st === 0) body = `<div class="grid2">${inp('givenName', 'Legal first name', 'autocomplete="given-name"')}${inp('familyName', 'Legal last name', 'autocomplete="family-name"')}</div>
     <div class="grid2">${inp('dob', 'Date of birth', 'type="date"')}${inp('ssn', 'Social Security number', 'inputmode="numeric" autocomplete="off" maxlength="11" placeholder="123-45-6789"', "Sent securely to the brokerage to verify your identity. Pocket doesn't store it.")}</div>
     <div class="field"><label for="o-citizenship">Citizenship</label><select class="input" id="o-citizenship" data-of="citizenship"><option value="USA">United States</option></select><span class="hint">US citizens and residents only during the beta.</span></div>`;
-  else if (st === 1) body = `${inp('email', 'Email', 'type="email" autocomplete="email"')}${inp('phone', 'Mobile phone', 'type="tel" autocomplete="tel"')}${inp('street', 'Street address', 'autocomplete="address-line1"')}${inp('unit', 'Apartment or unit (optional)', 'autocomplete="address-line2"')}
+  else if (st === 1) body = `${inp('email', 'Email', 'type="email" autocomplete="email"' + (E.address && !Store.isTest ? ' readonly' : ''), E.address && !Store.isTest ? 'Your confirmed Pocket email. To change it, use Profile.' : '')}${inp('phone', 'Mobile phone', 'type="tel" autocomplete="tel"')}${inp('street', 'Street address', 'autocomplete="address-line1"')}${inp('unit', 'Apartment or unit (optional)', 'autocomplete="address-line2"')}
     <div class="grid2">${inp('city', 'City', 'autocomplete="address-level2"')}<div class="grid2" style="gap:12px">${inp('state', 'State', 'maxlength="2" autocapitalize="characters" placeholder="CT" autocomplete="address-level1"')}${inp('postal', 'ZIP code', 'inputmode="numeric" autocomplete="postal-code" maxlength="10"')}</div></div>`;
   else if (st === 2) body = `<div class="field"><label for="o-employment">Employment</label><select class="input" id="o-employment" data-of="employment">${[['employed','Employed'],['unemployed','Not employed'],['retired','Retired'],['student','Student']].map(([k, l]) => `<option value="${k}" ${f.employment === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
     ${f.employment === 'employed' ? `<div class="grid2">${inp('employer', 'Employer')}${inp('position', 'Job title')}</div>` : ''}

@@ -269,6 +269,12 @@ async function act(el, ev){ /* eslint-disable-line */
     case 'opublic': return busy(async () => { await Store.http('POST', '/api/outlook-public', { on: el.checked }); delete ui.outlook['rec:' + Store.myPid]; render(); });
     case 'support': return supportSheet();
     case 'reload': return location.reload();
+    case 'emailchange': return emailSheet();
+    case 'emailresend': return busy(async () => { const r = await Store.http('POST', '/api/email/resend'); toast(`Sent. Check ${r.to} (and your spam folder).`); });
+    case 'emailbanneroff': try { sessionStorage.setItem('pi_email_banner_off', el.dataset.k); } catch(e){} return render();
+    case 'emailpref': return busy(async () => { await Store.http('POST', '/api/email/prefs', { recap: el.dataset.k === '1' }); if (Store.refreshMe) await Store.refreshMe(); toast('Saved.'); render(); });
+    case 'resetlink': return busy(async () => { const p = $('#rl-p').value, p2 = $('#rl-p2').value; if (p !== p2){ $('#rl-e').textContent = "The two passwords don't match."; return; }
+      try { await Store.http('POST', '/api/password/reset-link', { token: el.dataset.k, password: p }); ui.resetDone = el.dataset.k; render(); } catch(e){ $('#rl-e').textContent = e.message; } });
     case 'adm-cap': return busy(async () => { await Store.http('POST', '/api/admin/security/cap', { cap: Number($('#sec-cap').value) }); ui.asec = null; toast('Daily withdrawal limit saved.'); render(); });
     case 'devout': return busy(async () => { await Store.http('POST', '/api/sessions/revoke', { sid: id }); ui.devices = null; toast('Signed out of that device.'); render(); });
     case 'devoutall': if (!confirm('Sign out of every other device? You stay signed in here.')) return; return busy(async () => { const r = await Store.http('POST', '/api/sessions/revoke', { others: true }); ui.devices = null; toast(`Signed out of ${r.removed} other device${r.removed === 1 ? '' : 's'}.`); render(); });

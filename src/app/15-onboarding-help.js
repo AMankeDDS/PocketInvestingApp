@@ -16,6 +16,7 @@ function vHelp(){
     <div class="list">${Q.map(([q, a]) => `<details class="row" style="display:block"><summary style="cursor:pointer;font-weight:600">${esc(q)}</summary><p class="muted" style="margin:8px 0 0">${esc(a)}</p></details>`).join('')}</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px"><button class="btn sm ghost" data-act="walkthrough">Take the tour again</button><a class="btn sm ghost" href="#/badges">Badges</a><a class="btn sm ghost" href="/site/guidelines.html" target="_blank">Community guidelines</a><a class="btn sm ghost" href="/status" target="_blank">Status</a></div>
     ${mySupportSection()}
+    <p class="hint" style="margin-top:18px">Pocket Investing, Inc.${(Store.site.company || {}).address ? ' · ' + esc(Store.site.company.address) : ''}</p>
     <p class="hint" style="margin-top:16px">Still stuck? Email <a href="mailto:admin@pocketinvesting.com">admin@pocketinvesting.com</a>. See also the <a href="#/terms">Terms of use</a> and <a href="#/privacy">Privacy policy</a>.</p>`;
 }
 
@@ -36,7 +37,7 @@ function gettingStarted(){
 function securityActivity(){
   if (!ui.secEv){ ui.secEv = 'loading'; Store.http('GET', '/api/security-events').then(r => { ui.secEv = r.events; render(); }, () => { ui.secEv = []; }); }
   const E = Array.isArray(ui.secEv) ? ui.secEv : []; if (!E.length) return '';
-  const W = { 'sign-in': 'Signed in', password: 'Password', 'two-step': 'Two-step sign-in', lockout: 'Sign-in paused' };
+  const W = { 'sign-in': 'Signed in', password: 'Password', 'two-step': 'Two-step sign-in', lockout: 'Sign-in paused', freeze: 'Sign-in paused', lock: 'Account locked', unlock: 'Account unlocked', 'sign-out': 'Signed out', bank: 'Bank linked', withdrawal: 'Withdrawal', email: 'Email address' };
   return `<section class="block"><header><h2>Recent security activity</h2></header><div class="list">${E.slice(0, 8).map(e => `<div class="row"><div class="grow"><b>${esc(W[e.kind] || e.kind)}</b> <span class="small muted">${esc(e.detail || '')}</span></div><span class="small muted">${ago(new Date(e.ts).getTime())} ago</span></div>`).join('')}</div>
     <p class="hint">Don't recognize something? Change your password, which signs out every other device.</p></section>`;
 }

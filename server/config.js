@@ -50,7 +50,13 @@ config.sec = {
   wwwUrl: process.env.SEC_WWW_URL || 'https://www.sec.gov'
 };
 config.turnstile = { site: String(process.env.TURNSTILE_SITE_KEY || '').trim(), secret: String(process.env.TURNSTILE_SECRET_KEY || '').trim() };
+/* Email (Resend). Off until RESEND_API_KEY is set; EMAIL_API_URL is for tests. */
+config.email = { key: String(process.env.RESEND_API_KEY || '').trim(), from: String(process.env.EMAIL_FROM || 'Pocket Investing <no-reply@pocketinvesting.com>').trim(),
+  replyTo: String(process.env.EMAIL_REPLY_TO || 'support@pocketinvesting.com').trim(), apiUrl: process.env.EMAIL_API_URL || 'https://api.resend.com/emails', dailyLimit: num(process.env.EMAIL_DAILY_LIMIT, 100) };
+config.company = { name: 'Pocket Investing, Inc.', address: String(process.env.COMPANY_ADDRESS || '').trim() };
+/* The address used in emailed links. Never taken from the request, so a link can't be pointed at another site. */
+config.appUrl = String(process.env.APP_URL || (MODE === 'live' ? 'https://my.pocketinvesting.com' : config.demoSite ? 'https://demo.pocketinvesting.com' : 'https://app.pocketinvesting.com')).replace(/\/+$/, '');
 config.logoKey = /^pk_[A-Za-z0-9_-]{6,80}$/.test(process.env.LOGO_DEV_KEY || '') ? process.env.LOGO_DEV_KEY : '';
-config.publicInfo = () => ({ turnstileSite: config.turnstile.site && config.turnstile.secret ? config.turnstile.site : null, logoKey: config.logoKey || null, demoSite: config.demoSite, mode: config.mode, news: config.marketData || config.sec.mode === 'on', realMoney: config.realMoney, marketData: config.marketData, realPrices: config.realPrices, alpacaEnv: config.realMoney ? config.alpaca.env : null, demoTools: config.demoTools, require2fa: config.require2fa,
+config.publicInfo = () => ({ company: config.company, emailOn: !!config.email.key, turnstileSite: config.turnstile.site && config.turnstile.secret ? config.turnstile.site : null, logoKey: config.logoKey || null, demoSite: config.demoSite, mode: config.mode, news: config.marketData || config.sec.mode === 'on', realMoney: config.realMoney, marketData: config.marketData, realPrices: config.realPrices, alpacaEnv: config.realMoney ? config.alpaca.env : null, demoTools: config.demoTools, require2fa: config.require2fa,
   instantDeposits: { enabled: config.instant.enabled, perDeposit: config.instant.perDeposit } });
 module.exports = config;

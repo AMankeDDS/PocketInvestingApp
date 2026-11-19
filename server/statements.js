@@ -255,7 +255,7 @@ function pdf(S0, res, filename){
       let x = 54; const y = doc.y; cells.forEach((t, i) => { doc.font('Helvetica').fontSize(8.5).text(t, x, y, { width: cw[i] - 4, align: T.types[i] === 's' ? 'left' : 'right' }); x += cw[i]; }); doc.y = y + h; doc.x = 54; });
   });
   if (S.contact){ if (doc.y > doc.page.height - 110) doc.addPage(); doc.moveDown(1); doc.font('Helvetica').fontSize(8.5).fillColor(muted).text(pdfSafe(S.contact), 54, doc.y, { width: W }); }
-  for (let i = startPage; i < doc.bufferedPageRange().count; i++) footers[i] = `${S.holder}  |  ${S.account}  |  ${S.period.label}`; });
+  for (let i = startPage; i < doc.bufferedPageRange().count; i++) footers[i] = `Pocket Investing, Inc.  |  ${S.holder}  |  ${S.account}  |  ${S.period.label}`; });
   const range = doc.bufferedPageRange();
   for (let i = 0; i < range.count; i++){ doc.switchToPage(i); const bottom = doc.page.margins.bottom; doc.page.margins.bottom = 0;
     doc.font('Helvetica').fontSize(8).fillColor(muted).text(pdfSafe(`${footers[i] || ''}  |  Page ${i + 1} of ${range.count}`), 54, doc.page.height - 40, { width: W, align: 'center' }); doc.page.margins.bottom = bottom; }

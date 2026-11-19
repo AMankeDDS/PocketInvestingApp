@@ -13,6 +13,7 @@ const { actions, housekeeping, deleteAccountDocs } = require('./logic');
 const { createAccount, seedIfEmpty } = require('./seed');
 const config = require('./config');
 const security = require('./security');
+const emailMod = require('./email');
 const real = require('./real');
 const marketdata = require('./marketdata');
 const metrics = require('./metrics');
@@ -133,6 +134,7 @@ async function adminStepUp(req, res, admin){
 const needAdmin = async (req, res) => { const u = await currentUser(req); if (!isAdmin(u)){ bad(res, isAdminAccount(u) ? 'Turn on two-step sign-in in your Profile to use admin tools.' : 'Only demo admins can do that.', 403); return null; } return u; };
 const logEvent = (userId, name, props) => q('INSERT INTO events (user_id, name, props) VALUES ($1, $2, $3)', [userId || null, String(name).slice(0, 60), props ? JSON.stringify(props) : null]).catch(() => {});
 const sec = security.create({ q, logEvent, securityEvent: (...a) => securityEvent(...a), pool: db.pool });
+const em = emailMod.create({ q }); sec.attachEmail(em);
 
 /* ---------- live updates ---------- */
 const server = http.createServer(app);
@@ -190,6 +192,9 @@ app.post('/api/signup', authLimit, wrap(async (req, res) => {
   if (!ENV_ADMINS.includes(username) && security.reservedName(name)) return bad(res, "That name could be mistaken for the Pocket team. Choose another.");
   if (!validPassword(password)) return bad(res, 'Use a password of at least 8 characters.');
   if (!name) return bad(res, 'Add the name others will see.');
+  const email = emailMod.normEmail(req.body.email);
+  if (!config.demoSite){ if (!emailMod.validEmail(email)) return bad(res, 'Enter a valid email address. We use it to reset your password and send security alerts.');
+    if ((await q('SELECT 1 FROM users WHERE lower(email) = $1', [email])).rows.length) return bad(res, 'That email address is already used by another account. Sign in, or use "Forgot your password?".'); }
   if (!req.body.terms) return bad(res, 'Please accept the terms and privacy policy to continue.');
   if (req.body.adult !== true) return bad(res, 'Please confirm you are 18 or older to use Pocket.');
   if ((await q('SELECT 1 FROM users WHERE username = $1', [username])).rows.length) return bad(res, 'That username is taken.');
@@ -214,15 +219,20 @@ app.post('/api/signup', authLimit, wrap(async (req, res) => {
     await tx.query('INSERT INTO users (id, username, display_name, pass_hash, invite_code, terms_accepted_at, terms_version, signup_source, signup_detail) VALUES ($1, $2, $3, $4, $5, now(), $6, $7, $8)', [id, username, name, hash, useCode, TERMS_VERSION, source, sourceDetail]);
     if (useCode) await tx.query('UPDATE invite_codes SET uses = uses + 1 WHERE code = $1', [useCode]);
     if (refBy) await tx.query('UPDATE users SET referred_by = $2 WHERE id = $1', [id, refBy.id]);
-    await tx.query('UPDATE users SET adult_confirmed_at = now() WHERE id = $1', [id]);
+    await tx.query('UPDATE users SET adult_confirmed_at = now(), email = $2 WHERE id = $1', [id, config.demoSite ? null : email]);
     await createAccount(tx, id, name, risk);
   });
-  broadcast(changes); logEvent(id, 'signup', { source }); if (ENV_ADMINS.includes(username)) syncStaff().catch(() => {});
+  broadcast(changes); logEvent(id, 'signup', { source }); if (!config.demoSite) em.sendVerify(id, email, name).catch(e => console.error('email', e.message)); if (ENV_ADMINS.includes(username)) syncStaff().catch(() => {});
   await startSession(req, res, id); ok(res);
 }));
 /* Security activity: recorded for the account holder to review, with a push alert for sign-ins and changes. */
+const EMAIL_SUBJECT = { 'sign-in': 'New sign-in to your Pocket account', freeze: 'Sign-in paused on your Pocket account', lock: 'Your Pocket account is locked', unlock: 'Your Pocket account was unlocked',
+  password: 'Your Pocket password was changed', 'two-step': 'Two-step sign-in changed on your Pocket account', 'sign-out': 'Devices signed out of your Pocket account', bank: 'New bank account linked to Pocket', withdrawal: 'Withdrawal requested from your Pocket account' };
 async function securityEvent(req, userId, kind, detail, alert){
   const ip = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim().slice(0, 60), ua = String(req.headers['user-agent'] || '').slice(0, 200);
+  let mail = !!EMAIL_SUBJECT[kind];
+  if (kind === 'sign-in') mail = !(await q(`SELECT 1 FROM security_events WHERE user_id = $1 AND kind = 'sign-in' AND detail = $2 AND ts > now() - interval '90 days' LIMIT 1`, [userId, detail || '']).catch(() => ({ rows: [1] }))).rows.length;
+  if (mail) em.sendSecurity(userId, EMAIL_SUBJECT[kind], [kind === 'sign-in' ? `Your Pocket Investing account was signed in to on ${detail} (from ${ip.replace(/\.\d+$/, '.x') || 'an unknown address'}).` : (alert || detail || '')]).catch(e => console.error('email', e.message));
   await q('INSERT INTO security_events (user_id, kind, detail, ip, ua) VALUES ($1, $2, $3, $4, $5)', [userId, kind, detail || null, ip, ua]).catch(() => {});
   if (alert) push.send(db.pool, ['u_' + userId], { title: 'Pocket Investing security', body: alert, url: '/#/u/u_' + userId, tag: 'security' }).catch(() => {});
 }
@@ -254,11 +264,11 @@ app.post('/api/confirm-adult', wrap(async (req, res) => { const u = await needUs
 app.get('/api/me', wrap(async (req, res) => {
   const u = await currentUser(req); const c = ctxFor(u);
   if (u && !u.acting_admin){ const day = new Date().toISOString().slice(0, 10); if (visitSeen.get(u.id) !== day){ visitSeen.set(u.id, day); logEvent(u.id, 'visit', {}); db.withTx(async tx => { if (await tx.get('profiles', 'u_' + u.id)) await tx.update('profiles', 'u_' + u.id, { lastActiveTs: Date.now() }); }).then(r => broadcast(r.changes)).catch(() => {}); } }
-  const tf = u ? (await q('SELECT totp_enabled FROM users WHERE id = $1', [u.id])).rows[0] : null;
+  const tf = u ? (await q('SELECT totp_enabled, email, email_verified_at, email_pending, email_prefs FROM users WHERE id = $1', [u.id])).rows[0] : null;
   const needsAdult = u && !u.acting_admin ? !(await q('SELECT adult_confirmed_at FROM users WHERE id = $1', [u.id])).rows[0].adult_confirmed_at : false;
   res.json({ needsAdult, signedIn: !!u, pid: c.pid, username: u && u.username, name: u && u.display_name, isAdmin: c.isAdmin, inviteOnly: (await setting('inviteOnly', true)) !== false, pushKey: push.publicKey,
     actingAs: u && u.acting_admin ? { admin: ((await q('SELECT display_name FROM users WHERE id = $1', [u.acting_admin])).rows[0] || {}).display_name || 'Admin', until: new Date(u.session_expires).getTime() } : null, isTest: !!(u && u.is_test),
-    twofa: !!(tf && tf.totp_enabled), adminAccount: isAdminAccount(u), adminNeeds2fa: isAdminAccount(u) && !isAdmin(u), maintenance: await setting('maintenance', null), site: config.publicInfo(), accountNumber: u ? await require('./accounts').personal('u_' + u.id).catch(() => null) : null });
+    twofa: !!(tf && tf.totp_enabled), email: tf && !u.acting_admin ? { address: tf.email, verified: !!tf.email_verified_at, pending: tf.email_pending, prefs: tf.email_prefs || {} } : null, adminAccount: isAdminAccount(u), adminNeeds2fa: isAdminAccount(u) && !isAdmin(u), maintenance: await setting('maintenance', null), site: config.publicInfo(), accountNumber: u ? await require('./accounts').personal('u_' + u.id).catch(() => null) : null });
 }));
 app.post('/api/reset-password', authLimit, wrap(async (req, res) => {
   const username = clean(req.body.username).toLowerCase(), code = clean(req.body.code).toUpperCase();
@@ -271,7 +281,62 @@ app.post('/api/reset-password', authLimit, wrap(async (req, res) => {
   await q('UPDATE password_resets SET used = true WHERE token_hash = $1', [hashCode]);
   await q('DELETE FROM sessions WHERE user_id = $1', [u.id]); await sec.holdWithdrawals(u.id, 'password');
   securityEvent(req, u.id, 'password', 'Password reset with a code', 'Your password was reset and other devices were signed out. Withdrawals are paused for 48 hours.');
+  if ((await q('SELECT totp_enabled FROM users WHERE id = $1', [u.id])).rows[0].totp_enabled) return ok(res, { signIn: true }); /* two-step still needed */
   await startSession(req, res, u.id); ok(res);
+}));
+/* ---------- email: confirm, change, forgot password ---------- */
+app.post('/api/email/set', authLimit, wrap(async (req, res) => {
+  const u = await needUser(req, res); if (!u) return; if (u.acting_admin) return bad(res, "That isn't available while acting as a test account.");
+  { const g = await sec.gate(u.id); if (g) return res.status(g.code).json(g.body); }
+  const row = (await q('SELECT pass_hash, totp_enabled, email, email_verified_at FROM users WHERE id = $1', [u.id])).rows[0];
+  if (!(await bcrypt.compare(String(req.body.password || ''), row.pass_hash))){ const w = await sec.wrong(req, u.id, 'password'); if (w) return res.status(w.code).json(w.body); return bad(res, "That password isn't right."); }
+  if (row.totp_enabled){ const c = await sec.checkCode(req, u.id, req.body.code); if (c) return res.status(c.code).json(c.body); }
+  const email = emailMod.normEmail(req.body.email); if (!emailMod.validEmail(email)) return bad(res, 'Enter a valid email address.');
+  if ((await q('SELECT 1 FROM users WHERE lower(email) = $1 AND id <> $2', [email, u.id])).rows.length) return bad(res, 'That email address is already used by another account.');
+  if (row.email && row.email_verified_at && row.email.toLowerCase() === email) return bad(res, "That's already your email address.");
+  if (row.email && row.email_verified_at){ /* changing a confirmed address: confirm the new one first, and tell the old one */
+    await q('UPDATE users SET email_pending = $2 WHERE id = $1', [u.id, email]);
+    await em.sendVerify(u.id, email, u.display_name, true);
+    await em.sendRaw(u.id, row.email, 'change-old', 'Your Pocket email address is being changed', [`Hi ${u.display_name},`, `Someone asked to change the email address on your Pocket Investing account to ${emailMod.maskEmail(email)}. It changes once the new address is confirmed.`, "If this wasn't you, change your password right away and contact the Pocket team."]);
+  } else { await q('UPDATE users SET email = $2, email_verified_at = NULL, email_pending = NULL WHERE id = $1', [u.id, email]); await em.sendVerify(u.id, email, u.display_name, false); }
+  securityEvent(req, u.id, 'email', 'Email address change requested', null);
+  ok(res, { pending: email });
+}));
+app.post('/api/email/resend', authLimit, wrap(async (req, res) => {
+  const u = await needUser(req, res); if (!u) return;
+  const row = (await q('SELECT email, email_verified_at, email_pending FROM users WHERE id = $1', [u.id])).rows[0]; const to = row.email_pending || (!row.email_verified_at && row.email);
+  if (!to) return bad(res, 'Your email is already confirmed.');
+  if (Number((await q(`SELECT count(*)::int n FROM email_log WHERE user_id = $1 AND kind IN ('verify', 'change-new') AND created_at > now() - interval '1 hour'`, [u.id])).rows[0].n) >= 3) return bad(res, 'We sent a few links already. Check your inbox and spam folder, or try again in an hour.');
+  await em.sendVerify(u.id, to, u.display_name, !!row.email_pending); ok(res, { to: emailMod.maskEmail(to) });
+}));
+app.post('/api/email/verify', authLimit, wrap(async (req, res) => {
+  const t = await em.useToken(String(req.body.token || ''), 'verify'); if (!t) return bad(res, 'That confirmation link has expired or was already used. Sign in and ask for a new one from Profile.');
+  const row = (await q('SELECT email, email_pending FROM users WHERE id = $1', [t.user_id])).rows[0]; if (!row) return bad(res, 'That account no longer exists.');
+  if (row.email_pending && row.email_pending === t.email){
+    if ((await q('SELECT 1 FROM users WHERE lower(email) = $1 AND id <> $2', [t.email, t.user_id])).rows.length) return bad(res, 'That email address is already used by another account.');
+    await q('UPDATE users SET email = email_pending, email_pending = NULL, email_verified_at = now() WHERE id = $1', [t.user_id]);
+  } else if (row.email && row.email.toLowerCase() === t.email) await q('UPDATE users SET email_verified_at = now() WHERE id = $1', [t.user_id]);
+  else return bad(res, 'That link is for an older email address. Use the newest link we sent.');
+  ok(res, { email: t.email });
+}));
+app.post('/api/email/prefs', wrap(async (req, res) => { const u = await needUser(req, res); if (!u) return;
+  const prefs = {}; if (typeof req.body.recap === 'boolean') prefs.recap = req.body.recap;
+  await q(`UPDATE users SET email_prefs = email_prefs || $2::jsonb WHERE id = $1`, [u.id, JSON.stringify(prefs)]); ok(res); }));
+/* Forgot password: the same answer whether or not the account exists. */
+app.post('/api/password/forgot', authLimit, wrap(async (req, res) => {
+  const who = clean(req.body.who).toLowerCase().slice(0, 160);
+  const u = who ? (await q('SELECT id, display_name, email, email_verified_at, disabled FROM users WHERE username = $1 OR lower(email) = $1 LIMIT 1', [who])).rows[0] : null;
+  if (u && u.email && u.email_verified_at && !u.disabled && Number((await q(`SELECT count(*)::int n FROM email_log WHERE user_id = $1 AND kind = 'reset' AND created_at > now() - interval '1 hour'`, [u.id])).rows[0].n) < 3)
+    await em.sendReset(u.id, u.email, u.display_name);
+  ok(res, { message: "If that account has a confirmed email, we've sent a link to reset the password. It works for 1 hour." });
+}));
+app.post('/api/password/reset-link', authLimit, wrap(async (req, res) => {
+  if (!validPassword(req.body.password)) return bad(res, 'Use a password of at least 8 characters.');
+  const t = await em.useToken(String(req.body.token || ''), 'reset'); if (!t) return bad(res, 'That reset link has expired or was already used. Ask for a new one from the sign-in screen.');
+  await q('UPDATE users SET pass_hash = $1 WHERE id = $2', [await bcrypt.hash(req.body.password, 10), t.user_id]);
+  await q('DELETE FROM sessions WHERE user_id = $1', [t.user_id]); if (config.realMoney) await sec.holdWithdrawals(t.user_id, 'password');
+  securityEvent(req, t.user_id, 'password', 'Password reset by email link', 'Your password was reset with an emailed link, and all devices were signed out.' + (config.realMoney ? ' Withdrawals are paused for 48 hours.' : ''));
+  ok(res, { message: 'Password updated. Sign in with your new password.' });
 }));
 app.post('/api/change-password', authLimit, wrap(async (req, res) => {
   const u = await needUser(req, res); if (!u) return;
@@ -313,9 +378,10 @@ app.post('/api/delete-account', authLimit, wrap(async (req, res) => {
   await q('INSERT INTO admin_log (user_id, action, detail, status) VALUES ($1, $2, $3, $4)', [u.id, 'account-deleted', JSON.stringify({ username: row.username, brokerage: !!ba }), 200]).catch(() => {});
   const { changes } = await db.withTx(async tx => {
     await deleteAccountDocs(tx, 'u_' + u.id); await tx.query('DELETE FROM events WHERE user_id = $1', [u.id]);
+    await tx.query('DELETE FROM email_log WHERE user_id = $1', [u.id]).catch(() => {}); await tx.query('DELETE FROM email_tokens WHERE user_id = $1', [u.id]).catch(() => {});
     await tx.query('DELETE FROM photos WHERE key = $1', ['u_' + u.id]).catch(() => {});
     if (ba){ /* keep the user row (and with it the brokerage records), but remove anything personal and any way to sign in */
-      await tx.query(`UPDATE users SET username = $2, display_name = 'Deleted member', pass_hash = $3, totp_enabled = false, totp_secret = NULL WHERE id = $1`, [u.id, 'deleted_' + u.id, await bcrypt.hash(require('crypto').randomBytes(24).toString('hex'), 10)]);
+      await tx.query(`UPDATE users SET username = $2, display_name = 'Deleted member', pass_hash = $3, totp_enabled = false, totp_secret = NULL, email = NULL, email_pending = NULL, email_verified_at = NULL WHERE id = $1`, [u.id, 'deleted_' + u.id, await bcrypt.hash(require('crypto').randomBytes(24).toString('hex'), 10)]);
       await tx.query('DELETE FROM sessions WHERE user_id = $1', [u.id]).catch(() => {});
     } else await tx.query('DELETE FROM users WHERE id = $1', [u.id]);
   });
@@ -489,7 +555,7 @@ app.post('/api/push/test', lightLimit, wrap(async (req, res) => {
 /* ---------- admin ---------- */
 app.get('/api/admin/overview', wrap(async (req, res) => {
   if (!(await needAdmin(req, res))) return;
-  const users = (await q(`SELECT u.id, u.username, u.display_name, u.is_admin, u.disabled, u.locked_at, u.freeze_until, u.invite_code, u.created_at, u.last_seen_at, (SELECT count(*)::int FROM push_subs p WHERE p.user_id = u.id) AS push FROM users u ORDER BY u.created_at DESC`)).rows
+  const users = (await q(`SELECT u.id, u.username, u.display_name, u.email, (u.email_verified_at IS NOT NULL) AS email_ok, u.is_admin, u.disabled, u.locked_at, u.freeze_until, u.invite_code, u.created_at, u.last_seen_at, (SELECT count(*)::int FROM push_subs p WHERE p.user_id = u.id) AS push FROM users u ORDER BY u.created_at DESC`)).rows
     .map(x => Object.assign(x, { env_admin: ENV_ADMINS.includes(x.username) }));
   const invites = (await q('SELECT * FROM invite_codes ORDER BY created_at DESC')).rows;
   const feedback = (await q(`SELECT f.*, u.username FROM feedback f LEFT JOIN users u ON u.id = f.user_id ORDER BY f.created_at DESC LIMIT 200`)).rows;
@@ -602,9 +668,10 @@ app.get('*', (req, res) => res.sendFile(path.join(pub, 'index.html')));
 /* ---------- boot ---------- */
 (async () => {
   /* 79: two-step secrets on the live site must be encrypted with a real key */
+  require('./email'); /* loaded early so a syntax problem shows at startup */
   if (config.mode === 'live' && !config.appSecret) throw new Error('APP_SECRET is not set. The real-money site needs it to encrypt two-step sign-in secrets. Add a long random APP_SECRET in Railway Variables, keep it safe, and never change it.');
   await db.migrate();
-  await security.migrate(q);
+  await security.migrate(q); await emailMod.migrate(q);
   await require('./referrals').migrate(q); await require('./community').migrate(q); await require('./outlook').migrate(q);
   await real.migrate(q); await require('./realcopy').migrate(q); await require('./alerts').migrate(q); await require('./photos').migrate(q);
   if (!config.demoTools) await q(`INSERT INTO settings (key, value) VALUES ('clock', '"live"') ON CONFLICT (key) DO UPDATE SET value = '"live"'`).catch(() => {}); /* without demo tools, the market follows real hours */

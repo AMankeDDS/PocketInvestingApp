@@ -135,7 +135,10 @@ function mount(app, d){
   app.post('/api/real/account', wrap(async (req, res) => {
     const u = await needReal(req, res); if (!u) return;
     if (await acctOf(u.id)) return bad(res, 'You already have a brokerage account application.');
-    const b = req.body || {};
+    const b = Object.assign({}, req.body || {});
+    /* the brokerage account uses the member's confirmed Pocket email (test accounts in the sandbox excepted) */
+    if (!(u.is_test && config.alpaca.env === 'sandbox')){ const e = (await q('SELECT email, email_verified_at FROM users WHERE id = $1', [u.id])).rows[0];
+      if (!e || !e.email || !e.email_verified_at) return bad(res, 'Confirm your email address first. Use the link we emailed you, or add your email in Profile.'); b.email = e.email; }
     const ssn = String(b.ssn || '').replace(/\D/g, '');
     const need = { 'first name': b.givenName, 'last name': b.familyName, 'date of birth': b.dob, email: b.email, phone: b.phone, street: b.street, city: b.city, state: b.state, 'ZIP code': b.postal };
     for (const [k, v] of Object.entries(need)) if (!clean(v, 200)) return bad(res, `Add your ${k}.`);
@@ -202,7 +205,8 @@ function mount(app, d){
     const instant = dir === 'INCOMING' ? await instantInfo(x.u.id, 'u_' + x.u.id, x.a) : null;
     const t = await alpaca.createTransfer(x.a.alpaca_id, { transfer_type: 'ach', relationship_id: bank.id, amount: amount.toFixed(2), direction: dir });
     await q('INSERT INTO real_transfers (id, user_id, direction, amount, status) VALUES ($1, $2, $3, $4, $5)', [t.id, x.u.id, dir, amount, t.status || 'QUEUED']);
-    if (dir === 'OUTGOING') q("INSERT INTO events (user_id, name) VALUES ($1, 'sec:withdraw')", [x.u.id]).catch(() => {});
+    if (dir === 'OUTGOING'){ q("INSERT INTO events (user_id, name) VALUES ($1, 'sec:withdraw')", [x.u.id]).catch(() => {});
+      if (d.securityEvent && !x.u.is_test) d.securityEvent(req, x.u.id, 'withdrawal', `Withdrawal of $${amount.toFixed(2)} requested`, `A withdrawal of $${amount.toLocaleString('en-US', { minimumFractionDigits: 2 })} to your linked bank was requested. It usually arrives in 1 to 3 business days.`); }
     let instantAmount = 0;
     if (instant && instant.eligible && !(await getSetting('realPaused', false))){
       instantAmount = Math.min(amount, config.instant.perDeposit);
