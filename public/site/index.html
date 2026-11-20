@@ -3,11 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Pocket Investing: invest on your own, copy with approval, or invest together</title>
-<meta name="description" content="A social investing app. Invest on your own, copy investors you trust with approval on every trade, or invest together in a group or investment club.">
+<title>Pocket Investing: Investing, right in your pocket.</title>
+<meta name="description" content="Pocket Investing is the free investing app where you can follow real investors and invest as a group.">
 <meta property="og:title" content="Pocket Investing">
 <meta property="og:image" content="https://pocketinvesting.com/site/img/og.png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta name="twitter:card" content="summary_large_image">
-<meta property="og:description" content="Invest on your own, copy investors you trust, or invest together. Every copied trade waits for your approval.">
+<meta property="og:description" content="Investing, right in your pocket. Trade free. Follow real investors. Invest together as a group.">
 <link rel="icon" href="/icons/icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
@@ -122,12 +122,18 @@ footer .legal{ margin-top:22px; max-width:820px; line-height:1.55 }
 @media (prefers-color-scheme: dark){.soon{color:var(--ember)} .hownum{background:var(--blue)}}
 .howlabel{color:var(--muted);font-size:14px;margin-top:12px}
 .footlinks{display:flex;flex-wrap:wrap;gap:6px 16px;margin:14px 0 4px;font-size:14px}.footlinks a{color:inherit;opacity:.85}
+[hidden]{ display:none !important }
+.kicker{ font:600 14px var(--f-body); letter-spacing:.04em; text-transform:uppercase; color:var(--muted); margin:0 0 10px }
+.founder{ margin:0 auto; max-width:760px }
+.founder blockquote{ margin:0 }
+.founder blockquote p{ font:500 clamp(20px, 2.4vw, 26px)/1.45 var(--f-head); color:var(--ink); margin:0 }
+.founder figcaption{ margin-top:18px; color:var(--muted); font-size:16px }
 </style>
 </head>
 <body>
 <header class="top"><div class="wrap">
   <a class="brand" href="#top" aria-label="Pocket Investing home"><img src="/icons/icon-192.png" alt="">Pocket Investing</a>
-  <nav class="links" aria-label="Sections"><a href="#how-it-works">How it works</a><a href="#ways">Ways to invest</a><a href="#clubs">For clubs</a><a href="#control">Safety</a><a href="#pricing">Pricing</a><a href="#faq">FAQ</a><a href="https://app.pocketinvesting.com">Sign in</a></nav>
+  <nav class="links" aria-label="Sections"><a href="#how-it-works">How it works</a><a href="#ways">Ways to invest</a><a href="#clubs">For clubs</a><a href="#leaders">For creators</a><a href="#control">Safety</a><a href="#pricing">Pricing</a><a href="#faq">FAQ</a><a href="https://app.pocketinvesting.com">Sign in</a></nav>
   <a class="btn secondary" href="https://demo.pocketinvesting.com">Try the demo</a>
   <a class="btn primary" href="#invite"><span class="long">Request an invite</span><span class="short">Get an invite</span></a>
 </div></header>
@@ -135,10 +141,10 @@ footer .legal{ margin-top:22px; max-width:820px; line-height:1.55 }
 <main id="top">
 <section class="hero"><div class="wrap">
   <div>
-    <h1>Invest on your own, with people you trust, or together.</h1>
-    <p class="lede">Pocket Investing is a social investing app. Every copied trade waits for your approval, and groups can vote, pool money and keep their books in one place.</p>
+    <h1>Investing, right in your pocket.</h1>
+    <p class="lede">Trade free. Follow real investors. Invest together as a group.</p>
     <div class="ctas"><a class="btn primary" href="#invite">Request a beta invite</a><a class="btn secondary" href="https://demo.pocketinvesting.com">Try the demo</a></div>
-    <p class="fine">Free during the beta. Beta accounts use practice money.</p>
+    <p class="fine">Beta accounts use practice money, and everything is free. At launch, trading in your own account is commission-free; regulatory and other fees may apply.</p>
     <p class="fine fine-next">iPhone and Android apps coming soon. Connecting your existing brokerage account is coming soon too.</p>
   </div>
   <div class="phone" role="img" aria-label="The Pocket Investing app showing a trade request waiting for approval">
@@ -192,7 +198,7 @@ footer .legal{ margin-top:22px; max-width:820px; line-height:1.55 }
 </div></section>
 
 <section class="band clubs" id="clubs"><div class="wrap">
-  <div class="intro"><h2>Run your investment club here.</h2><p>Clubs have run on spreadsheets, email threads and a shared brokerage login for decades. Pocket keeps the money, the decisions and the records together.</p></div>
+  <div class="intro"><h2>Run your investment club on Pocket Investing.</h2><p>Clubs have run on spreadsheets, email threads and a shared brokerage login for decades. Pocket keeps the money, the decisions and the records together.</p></div>
   <div class="feat">
     <div><h3>Pooled club accounts</h3><p>Members add money and own units of the club. Every trade is decided by a member vote.</p></div>
     <div><h3>Club books</h3><p>Unit values, dues and withdrawals, with a Treasurer role and a monthly close that a second officer signs off.</p></div>
@@ -204,13 +210,34 @@ footer .legal{ margin-top:22px; max-width:820px; line-height:1.55 }
   <p class="note">Pooled club accounts use practice money during the beta. Clubs that keep their money at their own brokerage can use the books, meetings and statements today.</p>
 </div></section>
 
+<section class="band" id="leaders"><div class="wrap invite">
+  <div class="intro"><p class="kicker">For creators &amp; leaders</p><h2>Your followers already ask what you’re buying.</h2><p>Show them on Pocket Investing, trade by trade, and build a group around your investing. Your followers choose whether to copy each trade.</p>
+    <p><button class="btn primary" type="button" id="lead-open" aria-expanded="false" aria-controls="lf">Become a Founding Leader</button></p></div>
+  <form id="lf" novalidate hidden aria-label="Founding Leader application">
+    <div class="two"><label>Your name<input name="name" autocomplete="name" required maxlength="80"></label><label>Email<input name="email" type="email" autocomplete="email" required maxlength="160"></label></div>
+    <label>Social handle(s)<input name="handles" required maxlength="300" placeholder="@yourname, youtube.com/@yourname"></label>
+    <div class="two"><label>Main platform<select name="platform"><option value="instagram">Instagram</option><option value="tiktok">TikTok</option><option value="youtube">YouTube</option><option value="x">X</option><option value="linkedin">LinkedIn</option><option value="newsletter">Newsletter or blog</option><option value="podcast">Podcast</option><option value="other">Other</option></select></label>
+    <label>Followers there<select name="followers"><option value="under-1k">Under 1,000</option><option value="1k-10k">1,000 to 10,000</option><option value="10k-100k">10,000 to 100,000</option><option value="100k-1m">100,000 to 1 million</option><option value="1m-plus">Over 1 million</option></select></label></div>
+    <label>What do you invest in?<textarea name="invests" rows="3" maxlength="500" required placeholder="e.g. dividend stocks, index funds, tech"></textarea></label>
+    <div class="hp" aria-hidden="true"><label>Leave this empty<input name="website" tabindex="-1" autocomplete="off"></label></div>
+    <button class="btn primary" type="submit">Apply</button>
+    <div id="bot2" style="margin:6px 0 10px"></div>
+    <p class="msg" id="lmsg" role="status" aria-live="polite"></p>
+  </form>
+</div></section>
+
+<section class="band" id="founder"><div class="wrap">
+  <figure class="founder"><blockquote><p>“I’m a finance executive who helped scale a company from zero. I’ve watched friends and family want to invest but not know who to trust, so I’m building the investing app I wanted: one where you can see what real investors do, and decide together.”</p></blockquote>
+  <figcaption>Andrew Manke, Founder and CEO, Pocket Investing</figcaption></figure>
+</div></section>
+
 <section class="band" id="control"><div class="wrap control">
   <div class="intro"><h2>You stay in control.</h2><p>Social investing shouldn’t mean handing someone else the keys.</p></div>
   <ul class="checks">
-    <li><b>Nothing trades without your approval</b><span>Copied and group trades arrive as requests. You approve, take half, or skip.</span></li>
+    <li><b>Your money, your call</b><span>You choose who to follow and how copying works. Today, every copied and group trade arrives as a request: you approve, take half, or skip.</span></li>
     <li><b>Two-step sign-in</b><span>Protect your account with an authenticator app. Club officers are required to use it.</span></li>
     <li><b>Private groups stay private</b><span>A group’s posts, votes and records are visible only to its members.</span></li>
-    <li><b>Your money stays with a broker</b><span>When real-money accounts launch, they’ll be held at a registered broker-dealer. Pocket won’t hold your money.</span></li>
+    <li><b>Your money stays with a broker</b><span>When real-money accounts launch, they’ll be held at a registered broker-dealer. Pocket Investing won’t hold your money.</span></li>
   </ul>
 </div></section>
 
@@ -228,9 +255,10 @@ footer .legal{ margin-top:22px; max-width:820px; line-height:1.55 }
   <div class="intro"><h2>Questions</h2></div>
   <div class="faq">
     <details><summary>Is this real money?</summary><p>Not yet. During the beta, every account uses practice money, so you can learn the app and try groups with nothing at risk. Real-money accounts come next, held at a registered broker-dealer.</p></details>
-    <details><summary>Will anyone trade in my account automatically?</summary><p>No. When someone you copy trades, or your group’s Lead Trader does, you get a request sized to your account. Nothing happens until you approve it.</p></details>
-    <details><summary>Can my investment club use Pocket?</summary><p>Yes. Your club can keep its books, run meetings and votes, and send members statements here. Pooled club accounts are available with practice money during the beta.</p></details>
-    <details><summary>Does Pocket give investment advice?</summary><p>No. Pocket is a place to invest, share ideas and decide together. Track records and studies are information, not recommendations, and past results don’t predict future returns.</p></details>
+    <details><summary>Will anyone trade in my account automatically?</summary><p>Never without your permission. Today, every copied trade waits for your approval: when someone you copy trades, or your group’s Lead Trader does, you get a request sized to your account. You choose who to follow and how copying works.</p></details>
+    <details><summary>How does Pocket Investing make money?</summary><p>Trading on your own is free. We earn money from Pro and Group Pro subscriptions, and from our brokerage partnership once real-money accounts launch. We don’t charge commissions on your own trades.</p></details>
+    <details><summary>Can my investment club use Pocket Investing?</summary><p>Yes. Your club can keep its books, run meetings and votes, and send members statements here. Pooled club accounts are available with practice money during the beta.</p></details>
+    <details><summary>Does Pocket Investing give investment advice?</summary><p>No. Pocket Investing is a place to invest, share ideas and decide together. Track records and studies are information, not recommendations, and past results don’t predict future returns.</p></details>
     <details><summary>How do I get in?</summary><p>The beta is invite only. Request an invite below, or join through a link from a member of a group. You can also try the demo right away, no account needed: it uses sample people and simulated prices.</p></details>
   </div>
 </div></section>
@@ -251,7 +279,7 @@ footer .legal{ margin-top:22px; max-width:820px; line-height:1.55 }
 </main>
 
 <footer><div class="wrap">
-  <div class="row"><a class="brand" href="#top"><img src="/icons/icon-192.png" alt="">Pocket Investing</a><span><a href="https://demo.pocketinvesting.com">Try the demo</a> &nbsp; <a href="#invite">Request an invite</a> &nbsp; <a href="https://app.pocketinvesting.com">Beta sign in</a> &nbsp; <a href="mailto:admin@pocketinvesting.com">Contact</a> &nbsp; <a href="https://app.pocketinvesting.com/#/privacy">Privacy</a> &nbsp; <a href="https://app.pocketinvesting.com/#/terms">Terms</a></span></div>
+  <div class="row"><a class="brand" href="#top"><img src="/icons/icon-192.png" alt="">Pocket Investing</a><span><a href="https://demo.pocketinvesting.com">Try the demo</a> &nbsp; <a href="#invite">Request an invite</a> &nbsp; <a href="https://app.pocketinvesting.com">Beta sign in</a> &nbsp; <a href="mailto:support@pocketinvesting.com">Contact</a> &nbsp; <a href="https://app.pocketinvesting.com/#/privacy">Privacy</a> &nbsp; <a href="https://app.pocketinvesting.com/#/terms">Terms</a></span></div>
   <nav class="footlinks" aria-label="Site"><a href="/site/pricing.html">Pricing</a> <a href="/site/faq.html">FAQ</a> <a href="/site/about.html">About</a> <a href="/site/security.html">Security</a> <a href="/site/disclosures.html">Disclosures</a> <a href="/site/guidelines.html">Community guidelines</a> <a href="/status">Status</a> <a href="https://app.pocketinvesting.com/#/privacy">Privacy</a> <a href="https://app.pocketinvesting.com/#/terms">Terms</a></nav>
   <p class="legal">Pocket Investing is in beta, and beta accounts use practice money only. Pocket Investing, Inc. is not a broker-dealer or investment adviser and does not provide investment, legal or tax advice. Investing involves risk, including the possible loss of principal. Past performance does not guarantee future results.</p>
   <p class="legal">© <span id="yr">2026</span> Pocket Investing, Inc.<span data-co-addr></span></p>
@@ -265,7 +293,32 @@ how.addEventListener('change', () => { sizeL.hidden = !['group', 'club'].include
 let botToken = () => null;
 fetch('/api/site').then(r => r.ok ? r.json() : {}).then(site => { const a = site.company && site.company.address; if (a) document.querySelectorAll('[data-co-addr]').forEach(e => { e.textContent = ' · ' + a; }); if (!site.turnstileSite) return;
   const s = document.createElement('script'); s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'; s.async = true;
-  s.onload = () => { const id = turnstile.render('#bot', { sitekey: site.turnstileSite, theme: 'auto' }); botToken = () => turnstile.getResponse(id) || null; }; document.head.appendChild(s); }).catch(() => {});
+  s.onload = () => { const id = turnstile.render('#bot', { sitekey: site.turnstileSite, theme: 'auto' }); botToken = () => turnstile.getResponse(id) || null;
+    const id2 = turnstile.render('#bot2', { sitekey: site.turnstileSite, theme: 'auto' }); botToken2 = () => turnstile.getResponse(id2) || null; }; document.head.appendChild(s); }).catch(() => {});
+/* Founding Leader application. */
+let botToken2 = () => null;
+const lopen = document.getElementById('lead-open'), lf = document.getElementById('lf');
+lopen.addEventListener('click', () => { lf.hidden = false; lopen.setAttribute('aria-expanded', 'true'); lopen.hidden = true; lf.querySelector('input[name=name]').focus(); });
+lf.addEventListener('submit', async ev => {
+  ev.preventDefault();
+  const msg = document.getElementById('lmsg'), btn = lf.querySelector('button[type=submit]'), data = Object.fromEntries(new FormData(lf));
+  msg.className = 'msg'; msg.textContent = '';
+  const need = (ok, text, el) => { if (ok) return false; msg.className = 'msg err'; msg.textContent = text; el.focus(); return true; };
+  if (need(data.name.trim(), 'Enter your name.', lf.name) || need(/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(data.email), 'Enter a valid email address.', lf.email) || need(data.handles.trim(), 'Add at least one social handle.', lf.handles) || need(data.invests.trim(), 'Tell us a little about what you invest in.', lf.invests)) return;
+  if (!/(^|\.)pocketinvesting\.com$|^localhost$|^127\.0\.0\.1$/.test(location.hostname)) { msg.className = 'msg ok'; msg.textContent = 'This is a preview. On pocketinvesting.com, this sends your application.'; return; }
+  btn.disabled = true; btn.textContent = 'Sending…';
+  try {
+    data.botToken = botToken2();
+    data.source = 'website' + (location.search.includes('utm_source=') ? ':' + new URLSearchParams(location.search).get('utm_source') : '');
+    const r = await fetch('/api/leaders/apply', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'The application didn\u2019t go through. Try again in a moment.');
+    lf.reset(); msg.className = 'msg ok'; msg.textContent = 'Thanks, ' + data.name.trim().split(' ')[0] + '. We\u2019ll be in touch by email.';
+  } catch (e) {
+    msg.className = 'msg err'; msg.textContent = e.message && !/Failed to fetch|NetworkError|Load failed/.test(e.message) ? e.message : 'The application didn\u2019t go through. Check your connection and try again.';
+    if (window.turnstile) try { turnstile.reset('#bot2'); } catch (x) {}
+  } finally { btn.disabled = false; btn.textContent = 'Apply'; }
+});
 document.getElementById('f').addEventListener('submit', async ev => {
   ev.preventDefault();
   const f = ev.target, msg = document.getElementById('msg'), btn = f.querySelector('button'), data = Object.fromEntries(new FormData(f));

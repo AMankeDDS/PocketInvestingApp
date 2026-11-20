@@ -162,7 +162,7 @@ async function clubStatement(gid, from, to){
   return out;
 }
 const await0 = p => p;
-const CONTACT = () => `Questions or errors? Use Send feedback in the app or email ${process.env.SUPPORT_EMAIL || 'admin@pocketinvesting.com'} within 30 days of this statement, and include your account number.`;
+const CONTACT = () => `Questions or errors? Use Send feedback in the app or email ${process.env.SUPPORT_EMAIL || 'support@pocketinvesting.com'} within 30 days of this statement, and include your account number.`;
 async function pendingItems(pid){
   const rows = [];
   for (const r of (await q(`SELECT data FROM doc_copy_requests WHERE data->>'memberPid' = $1 AND data->>'status' IN ('pending', 'queued')`, [pid])).rows.map(x => x.data))

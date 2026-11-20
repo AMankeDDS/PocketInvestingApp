@@ -34,7 +34,7 @@ function vAdmin(){
   if (!ui.admin){ loadAdmin(); return '<div class="loading">Loading beta admin…</div>'; }
   const A = ui.admin, tab = ui.adminTab;
   const secN = ui.asec && ui.asec.alerts ? ui.asec.alerts.length + (ui.asec.appSecret !== 'ok' && !ui.asec.demo ? 1 : 0) : 0;
-  const T = [['security', 'Security' + (secN ? ' ⚠ ' + secN : '')],['metrics','Metrics'],['testacct','Test accounts'],['replication','Replication'],['requests','Invite requests'],['clubdocs','Club documents'],['adminlog','Admin log'],['testers','Testers ' + A.users.length],['invites','Invites'],['feedback','Feedback ' + A.feedback.filter(f => f.status === 'open').length],['errors','Errors ' + A.errors.length]].concat(Store.site.realMoney ? [['real','Real money']] : []).concat([['market','Market data'], ['settings','Settings']]);
+  const T = [['security', 'Security' + (secN ? ' ⚠ ' + secN : '')],['metrics','Metrics'],['testacct','Test accounts'],['replication','Replication'],['requests','Invite requests'],['leaders','Leaders'],['clubdocs','Club documents'],['adminlog','Admin log'],['testers','Testers ' + A.users.length],['invites','Invites'],['feedback','Feedback ' + A.feedback.filter(f => f.status === 'open').length],['errors','Errors ' + A.errors.length]].concat(Store.site.realMoney ? [['real','Real money']] : []).concat([['market','Market data'], ['settings','Settings']]);
   const when = t => t ? ago(new Date(t).getTime()) + ' ago' : 'never';
   let body = '';
   if (tab === 'testers') body = `<div class="list">${A.users.map(u => `<div class="row" style="flex-wrap:wrap"><div class="grow" style="min-width:200px"><b>${esc(u.display_name)}</b> <span class="muted small">@${esc(u.username)}${u.email ? ' · ' + esc(u.email) + (u.email_ok ? '' : ' (not confirmed)') : ''}</span> ${u.env_admin || u.is_admin ? '<span class="tag blue">Admin</span>' : ''} ${u.disabled ? '<span class="tag">Turned off</span>' : ''} ${u.locked_at ? '<span class="tag ember">Locked</span>' : u.freeze_until && new Date(u.freeze_until) > new Date() ? '<span class="tag">Paused</span>' : ''}
@@ -51,6 +51,7 @@ function vAdmin(){
   else if (tab === 'metrics') body = adminMetrics();
   else if (tab === 'clubdocs') body = adminClubDocs();
   else if (tab === 'requests') body = adminRequests();
+  else if (tab === 'leaders') body = adminLeaders();
   else if (tab === 'adminlog') body = adminLogView();
   else if (tab === 'testacct') body = adminTestAccounts();
   else if (tab === 'replication') body = adminReplication();
@@ -338,4 +339,23 @@ function adminErrors(list){
     <div class="small muted">${g.n} time${g.n === 1 ? '' : 's'}${g.users.size ? `, ${g.users.size} member${g.users.size === 1 ? '' : 's'}` : ''} · last ${ago(new Date(g.last.created_at).getTime())} ago${g.n > 1 ? `, first ${ago(new Date(g.first.created_at).getTime())} ago` : ''}</div></div></div></summary>
     <div class="small muted" style="margin-top:8px;overflow-wrap:anywhere">Where: ${esc([...g.pages].slice(0, 5).join(', ') || 'unknown')}${g.versions.size ? '<br>Versions: ' + esc([...g.versions].slice(0, 4).join(', ')) : ''}${g.users.size ? '<br>Members: ' + esc([...g.users].slice(0, 6).map(u => '@' + u).join(', ')) : ''}<br>Latest device: ${esc(g.last.ua || 'unknown')}</div>
     ${g.last.stack ? `<pre style="white-space:pre-wrap;font-size:12px;margin:6px 0 0;max-height:160px;overflow:auto;color:var(--muted)">${esc(g.last.stack)}</pre>` : ''}</details>`).join('')}</div>`;
+}
+
+/* Item 113: Founding Leader applications from the website. */
+function adminLeaders(){
+  const X = ui.alead;
+  if (!X){ ui.alead = 'loading'; Store.http('GET', '/api/admin/leaders').then(r => { ui.alead = r.applications; render(); }, e => { ui.alead = { error: e.message }; render(); }); }
+  if (!X || X === 'loading') return '<div class="loading" style="min-height:20vh">Loading…</div>';
+  if (X.error) return `<div class="panel empty">${esc(X.error)}</div>`;
+  const ST = { new: ['New', 'ember'], contacted: ['Contacted', ''], accepted: ['Accepted', 'blue'], declined: ['Declined', ''] };
+  const row = a => `<div class="row" style="flex-wrap:wrap;align-items:flex-start;row-gap:8px"><div class="grow" style="min-width:220px"><b>${esc(a.name)}</b> <span class="tag ${ST[a.status][1]}" style="font-size:11px">${ST[a.status][0]}</span> <span class="small muted" style="overflow-wrap:anywhere">${esc(a.email)}</span>
+    <div class="small">${esc(a.platformLabel)}${a.followersLabel ? ', ' + esc(a.followersLabel) + ' followers' : ''} · ${ago(new Date(a.created_at).getTime())} ago${a.source && a.source !== 'website' ? ' · ' + esc(a.source) : ''}</div>
+    <div class="small" style="overflow-wrap:anywhere">${esc(a.handles)}</div><div class="small muted">Invests in: ${esc(a.invests || '')}</div>
+    ${a.invited_code ? `<div class="small">Invited with <b>${esc(a.invited_code)}</b>${a.emailed_at ? ', emailed ' + ago(new Date(a.emailed_at).getTime()) + ' ago' : ''}</div>` : ''}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">${a.emailed_at ? `<button class="btn sm ghost" data-act="adm-leadinv" data-id="${a.id}" data-k="again">Email invite again</button>` : `<button class="btn sm" data-act="adm-leadinv" data-id="${a.id}">Accept and email invite</button>`}
+    ${a.status !== 'contacted' && !a.emailed_at ? `<button class="btn sm ghost" data-act="adm-leadst" data-id="${a.id}" data-k="contacted">Mark contacted</button>` : ''}${a.status !== 'declined' ? `<button class="btn sm ghost" data-act="adm-leadst" data-id="${a.id}" data-k="declined">Decline</button>` : `<button class="btn sm ghost" data-act="adm-leadst" data-id="${a.id}" data-k="new">Undo</button>`}</div></div>`;
+  const open = X.filter(a => ['new', 'contacted'].includes(a.status)), done = X.filter(a => !['new', 'contacted'].includes(a.status));
+  return `<p class="muted small" style="margin-top:0">Creators who applied on pocketinvesting.com to be Founding Leaders. They get a "we got your application" email right away. Declining sends nothing; reply to them yourself if you want to.</p>
+    <section class="block"><header><h2>To review (${open.length})</h2></header><div class="list">${open.map(row).join('') || '<div class="empty">No new applications.</div>'}</div></section>
+    ${done.length ? `<section class="block"><header><h2>Decided (${done.length})</h2></header><div class="list">${done.map(row).join('')}</div></section>` : ''}`;
 }

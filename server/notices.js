@@ -13,8 +13,13 @@ async function migrate(q){
   await q(`CREATE INDEX IF NOT EXISTS email_notices_due ON email_notices (done, due_at)`);
   await q(`CREATE TABLE IF NOT EXISTS notice_marks (key text PRIMARY KEY, at timestamptz NOT NULL DEFAULT now())`);
   for (const c of ['confirm_sent_at timestamptz', 'emailed_at timestamptz']) await q(`ALTER TABLE waitlist ADD COLUMN IF NOT EXISTS ${c}`);
+  /* Founding Leader applications from the website (item 113). */
+  await q(`CREATE TABLE IF NOT EXISTS leader_applications (id serial PRIMARY KEY, email text UNIQUE NOT NULL, name text NOT NULL, handles text NOT NULL, platform text, followers text, invests text,
+    source text, status text NOT NULL DEFAULT 'new', note text, invited_code text, emailed_at timestamptz, confirm_sent_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`);
 }
 
+const PLATFORM = { instagram: 'Instagram', tiktok: 'TikTok', youtube: 'YouTube', x: 'X', linkedin: 'LinkedIn', newsletter: 'Newsletter or blog', podcast: 'Podcast', other: 'Other' };
+const FOLLOWERS = { 'under-1k': 'under 1,000', '1k-10k': '1,000 to 10,000', '10k-100k': '10,000 to 100,000', '100k-1m': '100,000 to 1 million', '1m-plus': 'over 1 million' };
 const uidOf = pid => String(pid || '').startsWith('u_') ? String(pid).slice(2) : null;
 const hrs = ms => { const h = Math.round(ms / 3600000); return h <= 1 ? 'less than an hour' : h + ' hours'; };
 
@@ -97,16 +102,19 @@ function create(d){
     const waiting = (await one(`SELECT count(*)::int n FROM waitlist WHERE invited_code IS NULL`)).n || 0;
     const signups = (await one(`SELECT count(*)::int n FROM users WHERE created_at > now() - interval '24 hours' AND NOT coalesce(is_test, false)`)).n || 0;
     const support = await one(`SELECT count(*)::int n, min(created_at) oldest FROM support_requests WHERE status NOT IN ('answered', 'closed')`);
+    const leaders = (await q(`SELECT name, platform, followers FROM leader_applications WHERE created_at > now() - interval '24 hours' ORDER BY id DESC LIMIT 10`).catch(() => ({ rows: [] }))).rows;
+    const leadersNew = (await one(`SELECT count(*)::int n FROM leader_applications WHERE status = 'new'`)).n || 0;
     const locked = (await one(`SELECT count(*)::int n FROM users WHERE locked_at IS NOT NULL`)).n || 0;
     const errors = (await one(`SELECT count(*)::int n FROM client_errors WHERE created_at > now() - interval '24 hours'`)).n || 0;
     const failed = (await one(`SELECT count(*)::int n FROM email_log WHERE status = 'failed' AND created_at > now() - interval '24 hours'`)).n || 0;
     let alerts = []; try { alerts = ((d.secStats && await d.secStats()) || {}).alerts || []; } catch (e){}
-    return { reqs, waiting, signups, support: support.n || 0, oldest: support.oldest, locked, errors, failed, alerts };
+    return { reqs, waiting, leaders, leadersNew, signups, support: support.n || 0, oldest: support.oldest, locked, errors, failed, alerts };
   }
   async function sendSummary(force){
     const s = await summaryData();
     const lines = [
       `New invite requests: ${s.reqs.length}${s.reqs.length ? ' (' + s.reqs.map(r => r.name || r.email).join(', ') + ')' : ''}. Waiting for an invite: ${s.waiting}.`,
+      `Founding Leader applications: ${s.leaders.length}${s.leaders.length ? ' (' + s.leaders.map(l => `${l.name}, ${PLATFORM[l.platform] || l.platform}, ${FOLLOWERS[l.followers] || l.followers}`).join('; ') + ')' : ''}. Not reviewed yet: ${s.leadersNew}.`,
       `New sign-ups: ${s.signups}.`,
       `Open support requests: ${s.support}${s.oldest ? ', oldest from ' + new Date(s.oldest).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' }) : ''}.`,
       `Locked accounts: ${s.locked}.`,
@@ -141,6 +149,42 @@ function create(d){
       const t = await em.readUnsub(req.params.token); if (!t) return bad(res, "This link isn't valid. Change your email settings in Pocket instead.", 404);
       await q(`UPDATE users SET email_prefs = email_prefs || $2::jsonb WHERE id = $1`, [t.userId, JSON.stringify({ [t.kind]: false })]);
       ok(res, { kind: t.kind, label: t.label });
+    }));
+    /* Item 113: Founding Leader applications. */
+    const leadHits = new Map();
+    app.post('/api/leaders/apply', wrap(async (req, res) => {
+      const ip = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim(), now = Date.now(), h = (leadHits.get(ip) || []).filter(t => now - t < 3600000);
+      if (h.length >= 10) return bad(res, 'Too many applications from this connection. Try again in an hour.', 429); h.push(now); leadHits.set(ip, h);
+      if (req.body.website) return ok(res); /* hidden field: bots fill it in */
+      if (r.verifyBot && !(await r.verifyBot(req.body.botToken, ip))) return bad(res, "Please complete the check that you're not a bot, then try again.");
+      const t = (v, n) => String(v || '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, n);
+      const email = t(req.body.email, 160).toLowerCase(), name = t(req.body.name, 80), handles = t(req.body.handles, 300), invests = t(req.body.invests, 500);
+      if (!require('./email').validEmail(email)) return bad(res, 'Enter a valid email address.');
+      if (!name) return bad(res, 'Enter your name.'); if (!handles) return bad(res, 'Add at least one social handle.'); if (!invests) return bad(res, 'Tell us a little about what you invest in.');
+      const platform = PLATFORM[req.body.platform] ? req.body.platform : 'other', followers = FOLLOWERS[req.body.followers] ? req.body.followers : null;
+      await q(`INSERT INTO leader_applications (email, name, handles, platform, followers, invests, source) VALUES ($1, $2, $3, $4, $5, $6, $7)
+        ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, handles = EXCLUDED.handles, platform = EXCLUDED.platform, followers = EXCLUDED.followers, invests = EXCLUDED.invests, updated_at = now()`,
+        [email, name, handles, platform, followers, invests, t(req.body.source, 80) || 'website']);
+      const first = (await q(`UPDATE leader_applications SET confirm_sent_at = now() WHERE email = $1 AND confirm_sent_at IS NULL RETURNING id`, [email])).rows.length;
+      if (first) await em.sendRaw(null, email, 'leader-apply', 'We got your Founding Leader application', [`Hi ${name.split(/\s+/)[0]},`,
+        'Thanks for applying to be a Founding Leader on Pocket Investing. We read every application ourselves.', "We'll email you within a couple of weeks about next steps."],
+        null, ["Didn't apply? You can ignore this email; we won't send anything else."]).catch(e => console.error('leader email', e.message));
+      ok(res);
+    }));
+    app.get('/api/admin/leaders', wrap(async (req, res) => { if (!(await needAdmin(req, res))) return;
+      ok(res, { applications: (await q('SELECT id, email, name, handles, platform, followers, invests, source, status, note, invited_code, emailed_at, created_at FROM leader_applications ORDER BY created_at DESC LIMIT 500')).rows.map(a => Object.assign(a, { platformLabel: PLATFORM[a.platform] || a.platform, followersLabel: FOLLOWERS[a.followers] || '' })) }); }));
+    app.post('/api/admin/leaders/status', wrap(async (req, res) => { if (!(await needAdmin(req, res))) return;
+      const st = ['new', 'contacted', 'accepted', 'declined'].includes(req.body.status) ? req.body.status : null; if (!st) return bad(res, 'Pick a status.');
+      const n = (await q('UPDATE leader_applications SET status = $2, updated_at = now() WHERE id = $1 RETURNING id', [Number(req.body.id) || 0, st])).rows.length; if (!n) return bad(res, 'Application not found.', 404); ok(res); }));
+    app.post('/api/admin/leaders/invite', wrap(async (req, res) => { if (!(await needAdmin(req, res))) return;
+      const a = (await q('SELECT * FROM leader_applications WHERE id = $1', [Number(req.body.id) || 0])).rows[0]; if (!a) return bad(res, 'Application not found.', 404);
+      if (a.emailed_at && Date.now() - new Date(a.emailed_at).getTime() < 10 * 60000 && !req.body.again) return bad(res, 'An invite was emailed to them a few minutes ago.');
+      let code = a.invited_code;
+      if (!code){ code = 'PI-' + require('crypto').randomBytes(3).toString('hex').toUpperCase(); await q('INSERT INTO invite_codes (code, label, max_uses) VALUES ($1, $2, 1)', [code, ('Leader: ' + a.name).slice(0, 60)]); }
+      const id = await em.sendRaw(null, a.email, 'invite', 'Your Founding Leader invite to Pocket Investing', [`Hi ${a.name.split(/\s+/)[0]},`, "You're in. Use the button below to create your Pocket Investing account, then start a group from Groups.",
+        'The beta uses practice money, so you and your followers can try everything with nothing at risk.'], { label: 'Create your account', url: link('/#/signup/' + code) }, [`Your invite code is ${code}. It works once.`, 'Questions? Just reply to this email.']);
+      if (!id) return bad(res, "That email address doesn't look valid, so nothing was sent.");
+      await q(`UPDATE leader_applications SET invited_code = $2, emailed_at = now(), status = 'accepted', updated_at = now() WHERE id = $1`, [a.id, code]); ok(res, { code });
     }));
     /* Item 95: email an invite straight from Invite requests. */
     app.post('/api/admin/waitlist/send', wrap(async (req, res) => {

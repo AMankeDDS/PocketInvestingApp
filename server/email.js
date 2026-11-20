@@ -30,7 +30,7 @@ const SECURITY_KINDS = new Set(['verify', 'reset', 'change-old', 'change-new', '
    own account, so they don't need the postal address that promotional email does. */
 const NOTICE_KINDS = { approvals: 'approval request', alerts: 'price alert', support: 'support reply', votes: 'vote reminder', mentions: 'mention' };
 /* Sent because someone asked (an invite request, an invite) or to the Pocket team itself. No switch, no address needed. */
-const TRANSACTIONAL = new Set(['invite-request', 'invite', 'summary']);
+const TRANSACTIONAL = new Set(['invite-request', 'invite', 'summary', 'leader-apply']);
 const needsAddress = kind => !SECURITY_KINDS.has(kind) && !NOTICE_KINDS[kind] && !TRANSACTIONAL.has(kind);
 function layout({ heading, lines = [], button = null, after = [], security = true, unsub = null }){
   const addr = config.company.address;

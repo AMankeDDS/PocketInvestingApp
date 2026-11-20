@@ -80,7 +80,7 @@ async function act(el, ev){ /* eslint-disable-line */
     case 'adm-spend': return busy(async () => { const m = document.getElementById('ms-m').value, amt = Number(document.getElementById('ms-a').value); await Store.http('POST', '/api/admin/metrics/adspend', { month: m, amount: amt }); ui.ametrics = null; toast('Ad spend saved.'); render(); });
     case 'adm-utm': { const s = (document.getElementById('mu-s').value || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, ''); if (!s){ toast('Name the source first, like instagram.'); return; }
       const link = location.origin + '/?utm_source=' + s + '&utm_medium=' + (document.getElementById('mu-p').checked ? 'paid' : 'referral') + '&utm_campaign=beta'; document.getElementById('mu-l').value = link; try { navigator.clipboard.writeText(link); toast('Link copied.'); } catch(e){} return; }
-    case 'adm-tab': ev.preventDefault(); ui.adminTab = el.dataset.k; ui.asec = null; ui.ametrics = null; ui.adocs = null; ui.areq = null; ui.alog = null; ui.atest = null; ui.arepl = null; ui.areal = null; ui.amd = null; ui.amdCheck = null; return render();
+    case 'adm-tab': ev.preventDefault(); ui.adminTab = el.dataset.k; ui.asec = null; ui.ametrics = null; ui.adocs = null; ui.areq = null; ui.alead = null; ui.alog = null; ui.atest = null; ui.arepl = null; ui.areal = null; ui.amd = null; ui.amdCheck = null; return render();
     case 'adm-refresh': ui.admin = null; ui.ametrics = null; return render();
     case 'adm': return busy(async () => {
       const op = el.dataset.op;
@@ -115,6 +115,9 @@ async function act(el, ev){ /* eslint-disable-line */
     case 'onboff': try { localStorage.setItem('pi_onb_off', Store.myPid); } catch(e){} return render();
     case 'adm-reqinvite': return busy(async () => { const r = ui.areq.find(x => String(x.id) === String(id)); const inv = await Store.http('POST', '/api/admin/invite', { label: ('Website: ' + (r.name || r.email)).slice(0, 60), maxUses: 1 });
       const code = inv.code || (inv.invite || {}).code; await Store.http('POST', '/api/admin/waitlist/invited', { id: r.id, code }); r.invited_code = code; r.invited_at = new Date().toISOString(); ui.admin = null; toast('Invite created. Copy the message to send it.'); render(); });
+    case 'adm-leadst': return busy(async () => { await Store.http('POST', '/api/admin/leaders/status', { id, status: el.dataset.k }); const a = ui.alead.find(x => String(x.id) === String(id)); if (a) a.status = el.dataset.k; render(); });
+    case 'adm-leadinv': return busy(async () => { const a = ui.alead.find(x => String(x.id) === String(id)); if (el.dataset.k === 'again' && !confirm(`Email the invite to ${a.email} again?`)) return;
+      const r = await Store.http('POST', '/api/admin/leaders/invite', { id, again: el.dataset.k === 'again' }); Object.assign(a, { invited_code: r.code, emailed_at: new Date().toISOString(), status: 'accepted' }); toast('Invite emailed to ' + a.email + '.'); render(); });
     case 'adm-reqsend': return busy(async () => { const r = ui.areq.find(x => String(x.id) === String(id)); if (el.dataset.k === 'again' && !confirm(`Email the invite to ${r.email} again?`)) return;
       const out = await Store.http('POST', '/api/admin/waitlist/send', { id: r.id, again: el.dataset.k === 'again' }); r.invited_code = out.code; r.invited_at = r.invited_at || new Date().toISOString(); r.emailed_at = new Date().toISOString(); toast('Invite emailed to ' + r.email + '.'); render(); });
     case 'adm-emailtest': return busy(async () => { ui.emailTest = await Store.http('POST', '/api/admin/email/test'); ui.asec = null; render(); });

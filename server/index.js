@@ -692,7 +692,7 @@ const realDeps = { broadcastRaw: (...a) => broadcastRaw(...a), securityEvent: (.
   isPro: async pid => { const r = await q('SELECT data FROM doc_profiles WHERE id = $1', [pid]); const p = r.rows[0] && r.rows[0].data; return !!p && (p.kind === 'demo' || p.plan === 'pro'); } };
 realDeps.sec = sec; realDeps.adminStepUp = adminStepUp; real.mount(app, realDeps);
 sec.mount(app, { wrap, ok, bad, needUser, needAdmin, readCookie, deviceName, setting, setSetting, push, ENV_ADMINS, authLimit });
-notices.mount(app, { wrap, ok, bad, needUser, needAdmin, clean });
+notices.mount(app, { wrap, ok, bad, needUser, needAdmin, clean, verifyBot: (t, ip) => sec.verifyBot(t, ip) });
 realDeps.push = push; realDeps.pool = db.pool; realDeps.notices = notices; require('./realcopy').mount(app, realDeps);
 require('./outlook').mount(app, { q, wrap, ok, bad, needUser, db, broadcast: (...x) => broadcast(...x) });
 require('./community').mount(app, { q, wrap, ok, bad, needUser, needAdmin, push, db, sendTo, notices, broadcastAll: m => { for (const c of wss.clients) try { c.send(JSON.stringify(m)); } catch (e){} }, onContribution: (...a) => (global.__contrib ? global.__contrib(...a) : Promise.resolve()) });

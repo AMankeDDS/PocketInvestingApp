@@ -18,7 +18,7 @@ function vHelp(){
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px"><button class="btn sm ghost" data-act="walkthrough">Take the tour again</button><a class="btn sm ghost" href="#/badges">Badges</a><a class="btn sm ghost" href="/site/guidelines.html" target="_blank">Community guidelines</a><a class="btn sm ghost" href="/status" target="_blank">Status</a></div>
     ${mySupportSection()}
     <p class="hint" style="margin-top:18px">Pocket Investing, Inc.${(Store.site.company || {}).address ? ' · ' + esc(Store.site.company.address) : ''}</p>
-    <p class="hint" style="margin-top:16px">Still stuck? Email <a href="mailto:admin@pocketinvesting.com">admin@pocketinvesting.com</a>. See also the <a href="#/terms">Terms of use</a> and <a href="#/privacy">Privacy policy</a>.</p>`;
+    <p class="hint" style="margin-top:16px">Still stuck? Email <a href="mailto:support@pocketinvesting.com">support@pocketinvesting.com</a>. See also the <a href="#/terms">Terms of use</a> and <a href="#/privacy">Privacy policy</a>.</p>`;
 }
 
 /* ---------- getting started checklist (beta testers) ---------- */
