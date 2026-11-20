@@ -46,11 +46,15 @@ function securityActivity(){
 
 /* ---------- views ---------- */
 function vOnboard(){
+  /* Item 119: the intro fits the site: the demo, the beta (practice money, real prices) or the real-money site. */
+  const S = Store.site, real = S.realMoney, test = isTestBroker();
+  const practice = S.demoSite || !S.realPrices ? 'simulated cash' : 'practice money, with real market prices';
   const steps = [
-    { h:'Invest on your own, or together.', p:`Trade, follow investors, and join groups where members vote on strategy and copy the Lead Trader's trades. You start with ${usd(Store.START_CASH, 0)} in simulated cash.` },
-    { h:'Nothing trades without your approval.', p:'When a Lead Trader or an investor you copy makes a trade, you get a request sized to your own capital. You have 30 minutes to approve or decline. Late-day trades can be bought at the next open.' },
+    { h:'Invest on your own, or together.', p:real ? 'Trade in your own brokerage account, follow investors, and join groups where members vote on strategy and copy the Lead Trader\'s trades.' : `Trade, follow investors, and join groups where members vote on strategy and copy the Lead Trader's trades. You start with ${usd(Store.START_CASH, 0)} in ${practice}.` },
+    { h:'Your money, your call.', p:'You choose who to follow and how copying works. Today, when a Lead Trader or an investor you copy makes a trade, you get a request sized to your own account, and you approve, take half, or skip it within the time window the group sets. Late-day trades can be bought at the next open.' },
     { h:'How do you like to invest?', p:'We use this to suggest groups that fit your style. You can change it any time.' },
-    { h:'Practice first. Real money at launch.', p:'Everything here runs in simulated mode. At launch you connect a brokerage account through our registered broker partner, which holds your money and verifies your identity.' }
+    real ? { h:'Your brokerage account.', p:`After you sign up, open your account at our broker partner, which holds your money and verifies your identity. It takes a few minutes.${test ? ' This is the test environment, so the account, deposits and trades are simulated.' : ''}` }
+      : { h:'Practice first. Real money is coming.', p:`Everything here uses ${practice}. When real-money accounts launch, you'll open a brokerage account through our registered broker partner, which holds your money and verifies your identity.` }
   ];
   const i = Math.min(ui.onb, steps.length - 1), s = steps[i];
   return `<div class="panel" style="padding:28px;max-width:580px">
@@ -58,12 +62,14 @@ function vOnboard(){
     <div class="small muted" style="margin-top:18px">Step ${i + 1} of ${steps.length}</div>
     <h1 style="margin-top:6px">${s.h}</h1><p class="muted">${s.p}</p>
     ${i === 2 ? `<div class="list" style="margin:16px 0">${Object.entries(RISK).map(([k, [a, b]]) => `<button class="row" data-act="risk" data-k="${k}" style="width:100%;text-align:left;border:0;border-top:1px solid var(--line);background:${ui.risk === k ? 'var(--blue-soft)' : 'transparent'}" aria-pressed="${ui.risk === k}"><div class="grow"><b>${a}</b><div class="small muted">${b}</div></div>${ui.risk === k ? '<span class="tag blue">Selected</span>' : ''}</button>`).join('')}</div>` : ''}
-    ${i === 3 ? `<div class="list" style="margin:16px 0"><div class="row"><div class="grow"><b>Simulated account</b><div class="small muted">${usd(Store.START_CASH, 0)} to practice with</div></div><span class="tag blue">Ready</span></div>
-      <div class="row"><div class="grow"><b>Brokerage account</b><div class="small muted">Held by our broker partner, with identity verification</div></div><button class="btn sm ghost" disabled>Available at launch</button></div></div>` : ''}
+    ${i === 3 ? (real ? `<div class="list" style="margin:16px 0"><div class="row"><div class="grow"><b>${test ? 'Test brokerage account' : 'Brokerage account'}</b><div class="small muted">Held by our broker partner, with identity verification</div></div><span class="tag">Open after sign-up</span></div>
+      <div class="row"><div class="grow"><b>Practice account</b><div class="small muted">${usd(Store.START_CASH, 0)} of practice money, included</div></div><span class="tag blue">Ready</span></div></div>`
+      : `<div class="list" style="margin:16px 0"><div class="row"><div class="grow"><b>Practice account</b><div class="small muted">${usd(Store.START_CASH, 0)} to practice with</div></div><span class="tag blue">Ready</span></div>
+      <div class="row"><div class="grow"><b>Brokerage account</b><div class="small muted">Held by our broker partner, with identity verification</div></div><span class="tag">Coming soon</span></div></div>`) : ''}
     <div style="display:flex;gap:10px;margin-top:8px">${i > 0 ? `<button class="btn ghost" data-act="onb" data-k="${i - 1}">Back</button>` : ''}
     ${i < steps.length - 1 ? `<button class="btn" data-act="onb" data-k="${i + 1}">Next</button>` : `<button class="btn" data-act="start">Create my account</button>`}</div>
     <p class="small" style="margin-top:14px">Already have an account? <button class="linkbtn" data-act="signin">Sign in</button></p>
-    <p class="hint" style="margin-top:14px">Prices are simulated for this demo. No real money is involved.</p></div>`;
+    <p class="hint" style="margin-top:14px">${real ? (test ? 'Test environment: accounts, deposits and trades are simulated by the brokerage. No money moves.' : 'Investing involves risk, including the possible loss of money you invest.') : S.demoSite ? 'Prices are simulated for this demo. No real money is involved.' : 'Beta accounts use practice money. No real money is involved.'}</p></div>`;
 }
 
 function starterCard(prof, groups){

@@ -280,7 +280,7 @@ function newInviteSheet(){
     <div class="field"><label for="ni-l">Label (who it's for)</label><input class="input" id="ni-l" maxlength="60" placeholder="e.g. Tony, or Investment club pilot"></div>
     <div class="grid2"><div class="field"><label for="ni-m">Uses allowed</label><input class="input" id="ni-m" type="number" min="1" placeholder="Unlimited"></div><div class="field"><label for="ni-c">Custom code (optional)</label><input class="input" id="ni-c" maxlength="16" autocapitalize="characters" placeholder="Auto"></div></div>
     <button class="btn" id="ni-go" style="width:100%">Create code</button>`, sh => {
-    sh.querySelector('#ni-go').onclick = async () => { try { const r = await Store.http('POST', '/api/admin/invite', { label: sh.querySelector('#ni-l').value, maxUses: sh.querySelector('#ni-m').value, custom: sh.querySelector('#ni-c').value }); closeModal(); toast('Invite code ' + r.code + ' created.'); await loadAdmin(); } catch(e){ errToast(e); } };
+    sh.querySelector('#ni-go').onclick = async () => { try { const r = await Store.http('POST', '/api/admin/invite', { label: sh.querySelector('#ni-l').value, maxUses: sh.querySelector('#ni-m').value, custom: sh.querySelector('#ni-c').value }); closeModal(); await loadAdmin(); inviteReadySheet(r.code || (r.invite || {}).code); } catch(e){ errToast(e); } };
   });
 }
 

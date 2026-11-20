@@ -246,6 +246,8 @@ async function act2(a, el, ev, busy, id){
     case 'goalrecur': { const g = Store.get('goals', id); if (!g) return; const m = goalMath(g); return recurringSheet('SPY', { amount: Math.ceil(m.monthly), freq: 'monthly' }); }
     case 'interests': ev && ev.preventDefault(); return interestsSheet(() => render());
     case 'unsubgo': return busy(async () => { const t = el.dataset.k; const r = await Store.http('POST', '/api/unsubscribe/' + encodeURIComponent(t)); ui.unsub[t] = { state: 'done', label: r.label }; if (Store.refreshMe) Store.refreshMe().catch(() => {}); render(); });
+    case 'adm-quickinv': return busy(async () => { const r = await Store.http('POST', '/api/admin/invite', { label: 'Quick invite ' + new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), maxUses: 1 }); if (typeof loadAdmin === 'function') await loadAdmin(); inviteReadySheet(r.code || (r.invite || {}).code); });
+    case 'adm-shareinv': return shareInvite(el.dataset.k);
     case 'mydata': return busy(async () => { const r = await fetch('/api/export/my-data', { credentials: 'same-origin' }); if (!r.ok){ const j = await r.json().catch(() => ({})); throw Object.assign(new Error(j.error || 'Download failed.'), { userFacing: true }); }
       const blob = await r.blob(), url = URL.createObjectURL(blob), link = document.createElement('a'); link.href = url; link.download = `pocket-investing-data-${new Date().toISOString().slice(0, 10)}.json`; document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 4000); toast('Downloaded your data.'); });
   }
@@ -262,3 +264,22 @@ document.addEventListener('keydown', e => {
   if (e.shiftKey && document.activeElement === first){ e.preventDefault(); last.focus(); }
   else if (!e.shiftKey && document.activeElement === last){ e.preventDefault(); first.focus(); }
 });
+
+/* Item 120: an invite code ready to send in one or two taps. */
+function inviteLink(code){ return location.origin + '/#/signup/' + encodeURIComponent(code); }
+function inviteMessage(code){ return `You're invited to Pocket Investing${Store.site.realMoney ? '' : ' (beta, practice money)'}. Create your account here: ${inviteLink(code)}\nInvite code: ${code}`; }
+async function shareInvite(code){
+  const text = inviteMessage(code);
+  if (navigator.share){ try { await navigator.share({ title: 'Pocket Investing invite', text }); return; } catch(e){ if (e && e.name === 'AbortError') return; } }
+  try { await navigator.clipboard.writeText(text); toast('Invite message copied.'); } catch(e){ prompt('Copy this invite:', text); }
+}
+function inviteReadySheet(code){
+  if (!code) return;
+  openModal(`<header><h2>Invite ready</h2><button class="x" data-close aria-label="Close">×</button></header>
+    <p class="muted" style="margin-top:0">Code <b class="num" style="font-size:20px">${esc(code)}</b> works on this site (${esc(location.host)}).</p>
+    <div class="field"><label for="ir-l">Sign-up link</label><input class="input" id="ir-l" readonly value="${esc(inviteLink(code))}" data-nofocus></div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn" id="ir-share" style="flex:1">${navigator.share ? 'Share' : 'Copy invite message'}</button><button class="btn ghost" id="ir-copy" style="flex:1">Copy link</button></div>`, sh => {
+    sh.querySelector('#ir-share').onclick = () => shareInvite(code);
+    sh.querySelector('#ir-copy').onclick = async () => { try { await navigator.clipboard.writeText(inviteLink(code)); toast('Sign-up link copied.'); } catch(e){ sh.querySelector('#ir-l').select(); } };
+  });
+}
